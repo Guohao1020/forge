@@ -1,0 +1,4 @@
+# Declarative routes — will be expanded as services come online
+routes: []
+upstreams: []
+#END
