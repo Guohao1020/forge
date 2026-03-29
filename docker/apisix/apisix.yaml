@@ -1,4 +1,59 @@
-# Declarative routes — will be expanded as services come online
-routes: []
+# Declarative routes for Forge Platform services
+routes:
+  - uri: /api/engine/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "host.docker.internal:8081": 1
+    plugins:
+      proxy-rewrite:
+        regex_uri: ["^/api/engine/(.*)", "/$1"]
+
+  - uri: /api/identity/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "host.docker.internal:8082": 1
+    plugins:
+      proxy-rewrite:
+        regex_uri: ["^/api/identity/(.*)", "/$1"]
+
+  - uri: /api/pipeline/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "host.docker.internal:8083": 1
+    plugins:
+      proxy-rewrite:
+        regex_uri: ["^/api/pipeline/(.*)", "/$1"]
+
+  - uri: /api/specs/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "host.docker.internal:8084": 1
+    plugins:
+      proxy-rewrite:
+        regex_uri: ["^/api/specs/(.*)", "/$1"]
+
+  - uri: /api/bot/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "host.docker.internal:8085": 1
+    plugins:
+      proxy-rewrite:
+        regex_uri: ["^/api/bot/(.*)", "/$1"]
+
+  - uri: /ws/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "host.docker.internal:3001": 1
+    plugins:
+      proxy-rewrite:
+        regex_uri: ["^/ws/(.*)", "/$1"]
+    enable_websocket: true
+
 upstreams: []
 #END
