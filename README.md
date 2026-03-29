@@ -1,27 +1,38 @@
 # Forge Platform
 
-AI 驱动的快速产品孵化平台 —— 让产品经理用自然语言描述需求，AI 生成企业级代码并自动部署。
+AI-driven rapid product incubation platform — product managers describe requirements in natural language, AI generates enterprise-grade code and deploys automatically.
 
-## 子项目
+## Sub-projects
 
-| 项目 | 定位 | 状态 |
-|------|------|------|
-| [forge-foundation](./forge-foundation/) | 新一代多版本微服务基座 | Planning |
-| [forge-identity](./forge-identity/) | 统一身份认证 + 动态鉴权中心 | Planning |
-| [forge-engine](./forge-engine/) | AI 引擎核心（多模型编排 + 代码生成 + Review） | Planning |
-| [forge-pipeline](./forge-pipeline/) | DevOps 自动化（云效流水线 + ACK 部署） | Planning |
-| [forge-portal](./forge-portal/) | Web 工作台 + 代码可视化 | Planning |
-| [forge-bot](./forge-bot/) | IM 机器人（钉钉/飞书） | Planning |
-| [forge-beacon](./forge-beacon/) | 实时交互网关（Socket.IO） | Planning |
-| [forge-specs](./forge-specs/) | 规范中心（编码规范 + 脚手架模板 + Review 规则） | Planning |
+| Project | Description | Stack | Status |
+|---------|-------------|-------|--------|
+| [forge-foundation](./forge-foundation/) | Next-gen multi-version microservice base library | Maven multi-module | Planning |
+| [forge-identity](./forge-identity/) | Unified authentication + dynamic authorization center | Java / Spring Boot | Planning |
+| [forge-engine](./forge-engine/) | AI engine core (multi-model orchestration + code generation + review) | Java / Spring Boot | Planning |
+| [forge-pipeline](./forge-pipeline/) | DevOps automation (CI/CD pipeline + ACK deployment) | Java / Spring Boot | Planning |
+| [forge-portal](./forge-portal/) | Web workbench + code visualization | Vue 3 / Vite | Planning |
+| [forge-bot](./forge-bot/) | IM bot (DingTalk / Feishu) | Java / Spring Boot | Planning |
+| [forge-beacon](./forge-beacon/) | Real-time interaction gateway (Socket.IO) | Node.js | Planning |
+| [forge-specs](./forge-specs/) | Standards center (coding conventions + scaffold templates + review rules) | Maven | Planning |
 
-## 文档
+## Quick Start
 
-- [设计文档](./docs/specs/2026-03-28-forge-platform-design.md) — 完整架构设计与 MVP 路线
+```bash
+# 1. Start infrastructure (MySQL, Redis, Kafka, Nacos, ES, APISIX, etcd)
+docker compose up -d
 
-## MVP 路线
+# 2. Build all Java modules
+mvn clean compile
 
-1. **Phase 1 — 最小闭环**：forge-specs + forge-engine + forge-pipeline + forge-identity(轻) + forge-portal(轻)
-2. **Phase 2 — 可用性**：完整 forge-identity + forge-portal
-3. **Phase 3 — 扩展性**：forge-foundation + forge-bot + forge-beacon + 多模型路由
-4. **Phase 4 — 成熟化**：多版本基座 + 全链路可观测 + 灰度部署
+# 3. Start the frontend dev server
+cd forge-portal && npm install && npm run dev
+
+# 4. Start the real-time gateway
+cd forge-beacon && npm install && npm run dev
+```
+
+## Documents
+
+- [PRD](docs/PRD.md) — Product requirements
+- [Technical Design](docs/technical-design.md) — Architecture and design
+- [Milestone Plan](docs/milestone-plan.md) — Delivery roadmap

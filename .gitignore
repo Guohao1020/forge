@@ -20,3 +20,20 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Docker
+docker/mysql/data/
+docker/es/data/
+
+# Maven
+.mvn/
+mvnw
+mvnw.cmd
+
+# Build
+build/
+out/
+
+# Env
+.env
+*.env.local
