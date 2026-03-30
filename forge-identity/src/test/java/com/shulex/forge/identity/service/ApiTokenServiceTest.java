@@ -1,11 +1,13 @@
 package com.shulex.forge.identity.service;
 
+import com.shulex.forge.identity.common.BizException;
 import com.shulex.forge.identity.infrastructure.entity.ApiTokenDO;
 import com.shulex.forge.identity.infrastructure.mapper.ApiTokenMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -55,12 +57,25 @@ class ApiTokenServiceTest {
     void revokeToken_setsStatusToZero() {
         ApiTokenDO token = new ApiTokenDO();
         token.setId(1L);
+        token.setUserId(1L);
         token.setStatus(1);
         when(apiTokenMapper.selectById(1L)).thenReturn(token);
         when(apiTokenMapper.updateById(any())).thenReturn(1);
 
-        apiTokenService.revokeToken(1L);
+        apiTokenService.revokeToken(1L, 1L);
         assertThat(token.getStatus()).isEqualTo(0);
         verify(apiTokenMapper).updateById(token);
+    }
+
+    @Test
+    void revokeToken_throwsWhenNotOwner() {
+        ApiTokenDO token = new ApiTokenDO();
+        token.setId(1L);
+        token.setUserId(1L);
+        token.setStatus(1);
+        when(apiTokenMapper.selectById(1L)).thenReturn(token);
+
+        assertThatThrownBy(() -> apiTokenService.revokeToken(1L, 999L))
+                .isInstanceOf(BizException.class);
     }
 }

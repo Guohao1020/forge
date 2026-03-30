@@ -42,8 +42,10 @@ public class ApiTokenController {
     }
 
     @DeleteMapping("/{tokenId}")
-    public Result<Void> revokeToken(@PathVariable("tokenId") Long tokenId) {
-        apiTokenService.revokeToken(tokenId);
+    public Result<Void> revokeToken(@PathVariable("tokenId") Long tokenId, Authentication authentication) {
+        Claims claims = (Claims) authentication.getDetails();
+        Long userId = claims.get("userId", Long.class);
+        apiTokenService.revokeToken(tokenId, userId);
         return Result.ok(null);
     }
 }

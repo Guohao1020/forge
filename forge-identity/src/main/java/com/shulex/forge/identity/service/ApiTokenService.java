@@ -1,6 +1,8 @@
 package com.shulex.forge.identity.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.shulex.forge.identity.common.BizException;
+import com.shulex.forge.identity.common.ErrorCode;
 import com.shulex.forge.identity.entrance.vo.ApiTokenVO;
 import com.shulex.forge.identity.infrastructure.entity.ApiTokenDO;
 import com.shulex.forge.identity.infrastructure.mapper.ApiTokenMapper;
@@ -55,6 +57,9 @@ public class ApiTokenService {
         List<ApiTokenDO> tokens = apiTokenMapper.selectList(new LambdaQueryWrapper<ApiTokenDO>()
                 .eq(ApiTokenDO::getTenantId, tenantId)
                 .eq(ApiTokenDO::getUserId, userId)
+                .eq(ApiTokenDO::getStatus, 1)
+                .and(w -> w.isNull(ApiTokenDO::getExpiresAt)
+                        .or().gt(ApiTokenDO::getExpiresAt, LocalDateTime.now()))
                 .orderByDesc(ApiTokenDO::getGmtCreate));
         return tokens.stream().map(t -> ApiTokenVO.builder()
                 .id(t.getId())
@@ -65,13 +70,17 @@ public class ApiTokenService {
                 .build()).toList();
     }
 
-    public void revokeToken(Long tokenId) {
+    public void revokeToken(Long tokenId, Long userId) {
         ApiTokenDO token = apiTokenMapper.selectById(tokenId);
-        if (token != null) {
-            token.setStatus(0);
-            apiTokenMapper.updateById(token);
-            log.info("吊销 API Token: id={}", tokenId);
+        if (token == null) {
+            return;
         }
+        if (!token.getUserId().equals(userId)) {
+            throw new BizException(ErrorCode.FORBIDDEN);
+        }
+        token.setStatus(0);
+        apiTokenMapper.updateById(token);
+        log.info("吊销 API Token: id={}", tokenId);
     }
 
     public ApiTokenDO validateApiToken(String rawToken) {

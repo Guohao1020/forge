@@ -8,6 +8,10 @@ routes:
     plugins:
       proxy-rewrite:
         regex_uri: ["^/api/engine/(.*)", "/$1"]
+      forward-auth:
+        uri: "http://forge-identity:8082/api/auth/verify"
+        request_headers: ["Authorization"]
+        upstream_headers: ["X-User-Id", "X-Tenant-Id", "X-Username"]
 
   - uri: /api/identity/*
     upstream:
@@ -39,6 +43,10 @@ routes:
     plugins:
       proxy-rewrite:
         regex_uri: ["^/api/specs/(.*)", "/$1"]
+      forward-auth:
+        uri: "http://forge-identity:8082/api/auth/verify"
+        request_headers: ["Authorization"]
+        upstream_headers: ["X-User-Id", "X-Tenant-Id", "X-Username"]
 
   - uri: /api/bot/*
     upstream:
@@ -48,6 +56,10 @@ routes:
     plugins:
       proxy-rewrite:
         regex_uri: ["^/api/bot/(.*)", "/$1"]
+      forward-auth:
+        uri: "http://forge-identity:8082/api/auth/verify"
+        request_headers: ["Authorization"]
+        upstream_headers: ["X-User-Id", "X-Tenant-Id", "X-Username"]
 
   - uri: /ws/*
     upstream:

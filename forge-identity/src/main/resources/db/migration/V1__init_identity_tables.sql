@@ -72,7 +72,7 @@ INSERT INTO identity_role (tenant_id, role_code, role_name) VALUES
 
 -- 种子数据: 管理员用户 (密码: admin123, BCrypt hash)
 INSERT INTO identity_user (tenant_id, username, password_hash, nickname, status) VALUES
-(1, 'admin', '$2a$10$N.zmdr9k7uOCQb376NoUnuTJ8iAt6Z5EHsM8lE9lBOsl7iKTVKIUi', '系统管理员', 1);
+(1, 'admin', '$2a$10$bJWB1JoPwQd4H2wbTc.4LeUK1y7fA9fk93.iaLwYnatd.3BxPrMf2', '系统管理员', 1);
 
 -- 种子数据: 管理员角色绑定
 INSERT INTO identity_user_role (user_id, role_id) VALUES (1, 1);

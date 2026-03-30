@@ -34,7 +34,10 @@ public class AuthController {
 
     @PostMapping("/logout")
     public Result<Void> logout(@RequestHeader("Authorization") String authHeader) {
-        String token = authHeader.replace("Bearer ", "");
+        if (!authHeader.startsWith("Bearer ")) {
+            return Result.ok(null);
+        }
+        String token = authHeader.substring(7);
         authService.logout(token);
         return Result.ok(null);
     }

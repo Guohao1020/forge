@@ -73,6 +73,14 @@ public class AuthService {
         Long tenantId = claims.get("tenantId", Long.class);
         String username = claims.getSubject();
 
+        UserDO user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BizException(ErrorCode.USER_NOT_FOUND);
+        }
+        if (user.getStatus() == 0) {
+            throw new BizException(ErrorCode.USER_DISABLED);
+        }
+
         List<String> roles = getUserRoles(userId);
         String newAccessToken = tokenService.generateAccessToken(userId, tenantId, username, roles);
         String newRefreshToken = tokenService.generateRefreshToken(userId, tenantId, username);
@@ -95,9 +103,12 @@ public class AuthService {
     private List<String> getUserRoles(Long userId) {
         List<UserRoleDO> userRoles = userRoleMapper.selectList(
                 new LambdaQueryWrapper<UserRoleDO>().eq(UserRoleDO::getUserId, userId));
-        return userRoles.stream()
-                .map(ur -> roleMapper.selectById(ur.getRoleId()))
-                .map(RoleDO::getRoleCode)
-                .toList();
+        if (userRoles.isEmpty()) {
+            return List.of();
+        }
+        List<Long> roleIds = userRoles.stream().map(UserRoleDO::getRoleId).toList();
+        List<RoleDO> roles = roleMapper.selectList(
+                new LambdaQueryWrapper<RoleDO>().in(RoleDO::getId, roleIds));
+        return roles.stream().map(RoleDO::getRoleCode).toList();
     }
 }
