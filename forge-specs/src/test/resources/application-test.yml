@@ -1,0 +1,13 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:forge_specs_test;MODE=MYSQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  flyway:
+    enabled: true
+    locations: classpath:db/test-migration
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
