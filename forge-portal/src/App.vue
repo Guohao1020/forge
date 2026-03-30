@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import HelloWorld from './components/HelloWorld.vue'
+import { useRoute } from 'vue-router'
+import AppLayout from '@/components/AppLayout.vue'
+import { computed } from 'vue'
+
+const route = useRoute()
+const showLayout = computed(() => route.name !== 'Login')
 </script>
 
 <template>
-  <HelloWorld />
+  <AppLayout v-if="showLayout" />
+  <router-view v-else />
 </template>

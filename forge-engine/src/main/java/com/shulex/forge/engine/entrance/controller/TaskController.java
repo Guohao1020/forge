@@ -57,6 +57,7 @@ public class TaskController {
                         .inputTokens(s.getInputTokens())
                         .outputTokens(s.getOutputTokens())
                         .retryCount(s.getRetryCount())
+                        .outputSnapshot(s.getOutputSnapshot())
                         .errorMessage(s.getErrorMessage())
                         .build())
                 .toList());

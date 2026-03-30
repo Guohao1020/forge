@@ -13,5 +13,6 @@ public class TaskStepVO {
     private Long inputTokens;
     private Long outputTokens;
     private Integer retryCount;
+    private String outputSnapshot;
     private String errorMessage;
 }
