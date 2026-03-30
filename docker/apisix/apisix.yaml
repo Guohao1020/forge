@@ -4,7 +4,7 @@ routes:
     upstream:
       type: roundrobin
       nodes:
-        "host.docker.internal:8081": 1
+        "forge-engine:8081": 1
     plugins:
       proxy-rewrite:
         regex_uri: ["^/api/engine/(.*)", "/$1"]
@@ -13,7 +13,7 @@ routes:
     upstream:
       type: roundrobin
       nodes:
-        "host.docker.internal:8082": 1
+        "forge-identity:8082": 1
     plugins:
       proxy-rewrite:
         regex_uri: ["^/api/identity/(.*)", "/$1"]
@@ -22,7 +22,7 @@ routes:
     upstream:
       type: roundrobin
       nodes:
-        "host.docker.internal:8083": 1
+        "forge-pipeline:8083": 1
     plugins:
       proxy-rewrite:
         regex_uri: ["^/api/pipeline/(.*)", "/$1"]
@@ -31,7 +31,7 @@ routes:
     upstream:
       type: roundrobin
       nodes:
-        "host.docker.internal:8084": 1
+        "forge-specs:8084": 1
     plugins:
       proxy-rewrite:
         regex_uri: ["^/api/specs/(.*)", "/$1"]
@@ -40,7 +40,7 @@ routes:
     upstream:
       type: roundrobin
       nodes:
-        "host.docker.internal:8085": 1
+        "forge-bot:8085": 1
     plugins:
       proxy-rewrite:
         regex_uri: ["^/api/bot/(.*)", "/$1"]
@@ -49,7 +49,7 @@ routes:
     upstream:
       type: roundrobin
       nodes:
-        "host.docker.internal:3001": 1
+        "forge-beacon:3001": 1
     plugins:
       proxy-rewrite:
         regex_uri: ["^/ws/(.*)", "/$1"]
