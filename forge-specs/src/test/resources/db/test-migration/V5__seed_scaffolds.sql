@@ -1,0 +1,1 @@
+-- V5 test stub: no seed data for scaffold templates in tests

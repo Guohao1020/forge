@@ -7,6 +7,7 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/test-migration
+    placeholder-replacement: false
 
 mybatis-plus:
   configuration:
