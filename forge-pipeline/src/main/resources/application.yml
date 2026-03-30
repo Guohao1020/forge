@@ -4,3 +4,32 @@ server:
 spring:
   application:
     name: forge-pipeline
+  datasource:
+    url: jdbc:mysql://localhost:3306/forge_pipeline?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: root
+    password: forge_root_2026
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  flyway:
+    enabled: false
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+forge:
+  adapter:
+    codeup:
+      base-url: https://codeup.aliyun.com
+      org-id: ${CODEUP_ORG_ID:}
+      access-token: ${CODEUP_ACCESS_TOKEN:}
+    flow:
+      base-url: https://devops.aliyun.com
+      org-id: ${FLOW_ORG_ID:}
+      access-token: ${FLOW_ACCESS_TOKEN:}
+    ack:
+      kube-config-path: ${KUBE_CONFIG_PATH:}
+
+mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
