@@ -10,7 +10,8 @@ spring:
     password: forge_root_2026
     driver-class-name: com.mysql.cj.jdbc.Driver
   flyway:
-    enabled: false
+    enabled: true
+    locations: classpath:db/migration
   data:
     redis:
       host: localhost
@@ -28,6 +29,8 @@ forge:
       access-token: ${FLOW_ACCESS_TOKEN:}
     ack:
       kube-config-path: ${KUBE_CONFIG_PATH:}
+  engine:
+    base-url: http://localhost:8081
 
 mybatis-plus:
   mapper-locations: classpath*:mapper/**/*.xml

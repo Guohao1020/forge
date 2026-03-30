@@ -5,7 +5,8 @@ spring:
     username: sa
     password:
   flyway:
-    enabled: false
+    enabled: true
+    locations: classpath:db/test-migration
   data:
     redis:
       host: localhost
@@ -21,3 +22,5 @@ forge:
       org-id: test-org
     ack:
       kube-config-path: ""
+  engine:
+    base-url: http://localhost:8081
