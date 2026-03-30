@@ -5,6 +5,8 @@ import { message } from 'ant-design-vue'
 import { getTask, getTaskSteps, cancelTask, getTokenUsage } from '@/api/task'
 import type { TaskVO, TaskStepVO, TokenUsageVO } from '@/api/types'
 import StepTimeline from '@/components/StepTimeline.vue'
+import CodeBrowser from '@/components/CodeBrowser.vue'
+import DiffViewer from '@/components/DiffViewer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -114,6 +116,17 @@ onUnmounted(() => clearInterval(timer))
       <a-card title="执行步骤" style="margin-top: 16px;">
         <StepTimeline :steps="steps" />
         <a-empty v-if="steps.length === 0" description="暂无步骤" />
+      </a-card>
+
+      <a-card style="margin-top: 16px;">
+        <a-tabs>
+          <a-tab-pane key="code" tab="生成代码">
+            <CodeBrowser :steps="steps" />
+          </a-tab-pane>
+          <a-tab-pane key="diff" tab="AI Diff">
+            <DiffViewer :steps="steps" />
+          </a-tab-pane>
+        </a-tabs>
       </a-card>
     </div>
   </a-spin>
