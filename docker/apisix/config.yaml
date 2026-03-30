@@ -1,15 +1,8 @@
 apisix:
   node_listen: 9080
-  enable_admin: true
-  admin_key:
-    - name: admin
-      key: forge-apisix-admin-2026
-      role: admin
+  enable_admin: false
 
 deployment:
-  role: traditional
-  role_traditional:
-    config_provider: etcd
-  etcd:
-    host:
-      - "http://etcd:2379"
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
