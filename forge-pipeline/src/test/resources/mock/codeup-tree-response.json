@@ -1,0 +1,6 @@
+{
+  "result": [
+    {"path": "src/main/java", "name": "java", "type": "tree"},
+    {"path": "pom.xml", "name": "pom.xml", "type": "blob", "size": 1024}
+  ]
+}
