@@ -1,1543 +1,932 @@
-# M6 — Web 工作台（轻量版）实施计划
+# M6 — Web 工作台（完整重做）实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 构建 forge-portal Vue 3 前端工作台，实现登录、需求输入、任务看板、代码浏览、AI Diff 预览、任务详情查看、紧急停止的完整 Web 交互闭环。
+**Goal:** 基于 `docs/product-design.md` 全面重做 forge-portal，实现"深空指挥中心"视觉风格、项目优先导航、角色分页、混合式需求输入、三级进度视图、AI 工作过程可视化、四层测试报告、分支管理、MR 审批的完整 Web 交互闭环。同时补充 forge-engine 缺失的 SSE 流式输出能力。
 
-**Architecture:** forge-portal 是一个 Vue 3 SPA，使用 Ant Design Vue 作为 UI 组件库，Pinia 做状态管理，Vue Router 做路由，Axios 做 HTTP 请求。通过 APISIX 网关代理到后端三个服务（forge-identity:8082、forge-engine:8081、forge-pipeline:8083）。前端按页面组织，每页一个 `.vue` 文件 + 对应的 API 模块 + Pinia store。
+**Architecture:** forge-portal 是 Vue 3 SPA，通过 Vite 代理按路径前缀路由到各后端服务。前端采用项目优先导航 + 角色路由守卫。
 
-**Tech Stack:** Vue 3.5, TypeScript, Ant Design Vue 4.x, Pinia 3.x, Vue Router 4.x, Axios, Vite 8.x
+**Tech Stack:**
+- Vue 3.5, TypeScript, Vite
+- Ant Design Vue 4.x（深度定制暗色主题）
+- Pinia 3.x（状态管理）
+- Vue Router 4.x（路由 + 角色守卫）
+- Axios（HTTP 请求）
+- Geist Sans + Geist Mono（字体）
+- Lucide Icons（图标）
 
-**M6 轻量版简化说明：**
-- 不做 SSE 流式输出（用轮询替代）
-- 不做 WebSocket 实时更新（用 5s 轮询替代）
-- 代码浏览器仅展示文件列表和内容（不做完整的 Monaco Editor）
-- AI Diff 预览用简单的 side-by-side 文本对比（不做语法高亮 diff 库）
-- 不做多租户切换 UI（固定 tenantId=1）
-- 不做国际化
-- 不做响应式移动端适配
+**关键设计参考:** `docs/product-design.md` Section 9（视觉规范）
 
 ---
 
-## 文件结构总览
+## 前置工作：forge-engine SSE 支持
+
+M4 实现中缺少 SSE 流式输出，M6 前端需要实时推送。需要先在 forge-engine 补充 SSE 端点。
+
+---
+
+## Task 0 — forge-engine SSE 端点补充
+
+**目标：** 为 forge-engine 添加 SSE 推送能力，支持任务步骤状态变更、AI 流式输出的实时推送。
+
+### 0.1 SSE 基础设施
+
+- [ ] 创建 `forge-engine/src/main/java/com/shulex/forge/engine/entrance/controller/SseController.java`
+  - `GET /api/tasks/{taskId}/stream` — 建立 SSE 连接，返回 `SseEmitter`
+  - 超时设置 30 分钟（长连接）
+  - 心跳：每 15 秒发送 `event: heartbeat`
+
+- [ ] 创建 `forge-engine/src/main/java/com/shulex/forge/engine/service/SseService.java`
+  - `ConcurrentHashMap<Long, Set<SseEmitter>>` 管理连接（按 taskId 分组）
+  - `subscribe(taskId, emitter)` — 注册连接
+  - `unsubscribe(taskId, emitter)` — 移除连接
+  - `pushEvent(taskId, eventType, data)` — 向该任务所有连接推送
+  - 连接断开自动清理
+
+### 0.2 事件推送集成
+
+- [ ] 修改 `StepResultListener` — 步骤完成时调用 `sseService.pushEvent(taskId, "step-update", stepData)`
+- [ ] 修改 `TaskDispatcher` — 步骤开始时推送 `event: step-start`
+- [ ] 修改 `TaskService.transitionStatus()` — 状态变更时推送 `event: task-status`
+- [ ] 修改 `CodeGenerator` — 在代码生成过程中按文件推送 `event: file-generated`
+
+### 0.3 SSE 事件格式定义
+
+```
+事件类型：
+- step-start     {stepType, stepOrder, startTime}
+- step-update    {stepType, status, output, tokens, duration}
+- task-status    {taskId, oldStatus, newStatus}
+- file-generated {fileName, fileType, lineCount}
+- heartbeat      {}
+```
+
+### 0.4 测试
+
+- [ ] 单元测试：SseService 连接管理、推送、清理
+- [ ] 集成测试：创建任务 → 建立 SSE 连接 → 收到步骤事件流
+
+**完成标准：** `curl -N http://localhost:8081/api/tasks/{id}/stream` 能收到实时事件流
+
+---
+
+## 文件结构总览（前端）
 
 ```
 forge-portal/src/
-├── main.ts                          ← 修改：注册路由、Pinia、AntDesign
-├── App.vue                          ← 修改：添加 RouterView + Layout
-├── style.css                        ← 修改：全局样式重置
+├── main.ts
+├── App.vue
+├── assets/
+│   └── fonts/                           ← Geist Sans + Geist Mono 字体文件
+├── styles/
+│   ├── variables.css                    ← 设计系统 CSS 变量（颜色、字体、间距）
+│   ├── global.css                       ← 全局样式（暗色主题基础）
+│   ├── aurora.css                       ← Aurora 极光背景动画
+│   ├── components.css                   ← 通用组件样式覆盖（Ant Design 暗色定制）
+│   └── animations.css                   ← 动画定义（过渡、呼吸灯、骨架屏）
 ├── api/
-│   ├── request.ts                   ← 新建：Axios 实例 + 拦截器
-│   ├── auth.ts                      ← 新建：登录/登出 API
-│   ├── task.ts                      ← 新建：任务 CRUD API
-│   ├── pipeline.ts                  ← 新建：流水线/部署/环境 API
-│   └── types.ts                     ← 新建：后端接口类型定义
+│   ├── request.ts                       ← Axios 实例 + Token 拦截器
+│   ├── types.ts                         ← 全局类型定义
+│   ├── auth.ts                          ← 鉴权 API
+│   ├── project.ts                       ← 项目管理 API（新增）
+│   ├── task.ts                          ← 任务 API（扩展 SSE）
+│   ├── pipeline.ts                      ← 流水线 API
+│   ├── specs.ts                         ← 规范 API（新增）
+│   └── sse.ts                           ← SSE 客户端封装（新增）
 ├── stores/
-│   ├── user.ts                      ← 新建：用户/Token 状态
-│   └── task.ts                      ← 新建：任务列表状态
+│   ├── user.ts                          ← 用户状态（扩展角色信息）
+│   ├── project.ts                       ← 当前项目状态（新增）
+│   ├── task.ts                          ← 任务列表状态
+│   └── ui.ts                            ← UI 状态（侧栏、视图模式）（新增）
 ├── router/
-│   └── index.ts                     ← 新建：路由配置 + 守卫
-├── views/
-│   ├── LoginView.vue                ← 新建：登录页
-│   ├── DashboardView.vue            ← 新建：任务看板页
-│   ├── TaskCreateView.vue           ← 新建：需求输入页
-│   ├── TaskDetailView.vue           ← 新建：任务详情页
-│   └── EnvironmentView.vue          ← 新建：环境管理页
+│   ├── index.ts                         ← 路由定义 + 角色守卫
+│   └── guards.ts                        ← 路由守卫逻辑（新增）
+├── composables/
+│   ├── useSse.ts                        ← SSE 连接管理 composable（新增）
+│   ├── useRole.ts                       ← 角色判断 composable（新增）
+│   └── useTheme.ts                      ← 主题变量 composable（新增）
 ├── components/
-│   ├── AppLayout.vue                ← 新建：全局 Layout
-│   ├── TaskCard.vue                 ← 新建：任务卡片
-│   ├── StepTimeline.vue             ← 新建：步骤时间线
-│   ├── CodeBrowser.vue              ← 新建：代码浏览器
-│   ├── DiffViewer.vue               ← 新建：Diff 查看器
-│   └── KillSwitch.vue               ← 新建：紧急停止按钮
-└── vite-env.d.ts                    ← 已有
+│   ├── layout/
+│   │   ├── AppLayout.vue                ← 重写：项目优先导航布局
+│   │   ├── ProjectSidebar.vue           ← 新增：项目内侧栏（按角色显示菜单）
+│   │   └── TopBar.vue                   ← 新增：顶部栏（项目切换、用户菜单）
+│   ├── common/
+│   │   ├── AiBadge.vue                  ← 新增：AI 生成内容标记
+│   │   ├── SkeletonLoader.vue           ← 新增：骨架屏加载
+│   │   ├── EmptyState.vue               ← 新增：空状态插画
+│   │   ├── GlowButton.vue              ← 新增：发光按钮
+│   │   ├── GlassCard.vue               ← 新增：毛玻璃卡片
+│   │   └── StatusDot.vue               ← 新增：状态指示灯
+│   ├── task/
+│   │   ├── TaskCard.vue                 ← 重写：匹配新设计
+│   │   ├── TaskKanban.vue               ← 新增：看板视图
+│   │   ├── TaskTimeline.vue             ← 新增：AI 工作时间线
+│   │   ├── TaskRealtimeView.vue         ← 新增：实时工作区
+│   │   └── DecisionCard.vue             ← 新增：AI 决策卡片
+│   ├── code/
+│   │   ├── CodeBrowser.vue              ← 保留优化
+│   │   ├── DiffViewer.vue               ← 保留优化
+│   │   └── AiDiffAnnotation.vue         ← 新增：AI Diff 注释
+│   ├── test/
+│   │   ├── TestLayerCard.vue            ← 新增：单层测试结果卡片
+│   │   └── TestReport.vue              ← 新增：四层测试报告组合
+│   └── project/
+│       ├── ProjectCard.vue              ← 新增：项目卡片
+│       ├── ProjectImportModal.vue       ← 新增：一键接入弹窗
+│       └── ProjectCreateWizard.vue      ← 新增：创建项目向导
+├── views/
+│   ├── LoginView.vue                    ← 重写：Aurora 背景 + 毛玻璃登录卡片
+│   ├── ProjectLobbyView.vue             ← 新增：项目大厅
+│   ├── project/
+│   │   ├── RequirementChatView.vue      ← 新增：需求对话页
+│   │   ├── TaskDashboardView.vue        ← 重写：三级进度视图
+│   │   ├── TaskDetailView.vue           ← 重写：AI 工作过程可视化
+│   │   ├── ChangeResultView.vue         ← 新增：变更结果三层展示
+│   │   ├── TestReportView.vue           ← 新增：四层测试报告
+│   │   ├── DeploymentView.vue           ← 重写：部署环境页
+│   │   ├── BranchManageView.vue         ← 新增：分支管理页（技术管理者）
+│   │   └── MrReviewView.vue             ← 新增：MR 审批页（技术管理者）
+│   └── admin/
+│       └── SystemSettingsView.vue       ← 新增：简化版系统设置
 ```
 
 ---
 
-### Task 1: 项目基础设施（路由 + Axios + 全局样式 + Layout）
+## Task 1 — 设计系统 + 全局样式基础
 
-**前置修改（forge-engine 后端）：**
+**目标：** 搭建"深空指挥中心"视觉基础，定义 CSS 变量、暗色主题、Aurora 背景、动画、Ant Design 暗色覆盖。
 
-M6 的代码浏览器需要从 TaskStepVO 获取 `outputSnapshot` 字段，但 M4 实现时未暴露该字段。在开始前端工作之前，需要先修改 forge-engine 后端：
+### 1.1 字体安装
 
-1. 修改 `forge-engine/src/main/java/com/shulex/forge/engine/entrance/vo/TaskStepVO.java`，添加 `private String outputSnapshot;` 字段
-2. 修改 `forge-engine/src/main/java/com/shulex/forge/engine/entrance/controller/TaskController.java` 中构造 TaskStepVO 的代码，将 `step.getOutputSnapshot()` 映射到 VO
-3. 安装 `@ant-design/icons-vue` 依赖：`cd forge-portal && npm install @ant-design/icons-vue`
+- [ ] 下载 Geist Sans 和 Geist Mono 字体文件（woff2 格式）放入 `src/assets/fonts/`
+- [ ] 在 `global.css` 中 `@font-face` 声明
 
-**Files:**
-- Modify: `forge-engine/src/main/java/com/shulex/forge/engine/entrance/vo/TaskStepVO.java`
-- Modify: `forge-engine/src/main/java/com/shulex/forge/engine/entrance/controller/TaskController.java`
-- Modify: `forge-portal/package.json`（npm install）
-- Modify: `forge-portal/src/main.ts`
-- Modify: `forge-portal/src/App.vue`
-- Modify: `forge-portal/src/style.css`
-- Modify: `forge-portal/vite.config.ts`
-- Create: `forge-portal/src/api/request.ts`
-- Create: `forge-portal/src/api/types.ts`
-- Create: `forge-portal/src/router/index.ts`
-- Create: `forge-portal/src/stores/user.ts`
-- Create: `forge-portal/src/components/AppLayout.vue`
-- Create: `forge-portal/src/views/LoginView.vue`（空占位）
-- Create: `forge-portal/src/views/DashboardView.vue`（空占位）
+### 1.2 CSS 变量系统 (`styles/variables.css`)
 
-- [ ] **Step 1: 配置 vite.config.ts — 添加代理和路径别名**
+- [ ] 定义完整颜色变量（照搬 product-design.md Section 9.2）：
+  ```css
+  :root {
+    /* Base */
+    --bg: #050510;
+    --surface-1: #0F0F1A;
+    --surface-2: #1A1A2E;
+    --border: #2A2A3E;
+    --border-glow: rgba(139, 92, 246, 0.2);
 
-```typescript
-import { defineConfig } from 'vite'
-import vue from '@vitejs/plugin-vue'
-import { fileURLToPath } from 'node:url'
+    /* Brand */
+    --primary: #8B5CF6;
+    --primary-hover: #7C3AED;
+    --primary-glow: rgba(139, 92, 246, 0.3);
+    --accent: #06B6D4;
+    --accent-glow: rgba(6, 182, 212, 0.3);
 
-export default defineConfig({
-  plugins: [vue()],
-  resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url))
-    }
-  },
-  server: {
-    port: 5173,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:9080',
-        changeOrigin: true
-      }
-    }
+    /* Semantic */
+    --success: #10B981;
+    --warning: #F59E0B;
+    --error: #EF4444;
+    --info: #3B82F6;
+
+    /* Text */
+    --text-primary: #F1F1F3;
+    --text-secondary: #8888A0;
+    --text-muted: #555570;
+
+    /* Gradients */
+    --gradient-ai: linear-gradient(135deg, #8B5CF6, #06B6D4);
+    --gradient-success: linear-gradient(135deg, #10B981, #06B6D4);
+    --gradient-brand: linear-gradient(135deg, #8B5CF6, #3B82F6);
+
+    /* Typography */
+    --font-sans: 'Geist Sans', Inter, system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --font-mono: 'Geist Mono', 'JetBrains Mono', monospace;
+
+    /* Spacing */
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+
+    /* Shadows */
+    --shadow-glow-purple: 0 0 20px rgba(139, 92, 246, 0.3);
+    --shadow-glow-cyan: 0 0 20px rgba(6, 182, 212, 0.3);
   }
-})
-```
+  ```
 
-- [ ] **Step 2: 创建 api/types.ts — 后端接口通用类型**
+### 1.3 全局样式 (`styles/global.css`)
 
-```typescript
-export interface Result<T> {
-  code: number
-  message: string
-  data: T
-  timestamp: number
-}
+- [ ] 全局 `body` 设置：`background: var(--bg); color: var(--text-primary); font-family: var(--font-sans);`
+- [ ] 全局滚动条暗色定制
+- [ ] 全局 `::selection` 紫色高亮
+- [ ] 链接、输入框等基础元素暗色重置
 
-export interface LoginRequest {
-  tenantId: number
-  username: string
-  password: string
-}
+### 1.4 Aurora 背景 (`styles/aurora.css`)
 
-export interface LoginResponse {
-  accessToken: string
-  refreshToken: string
-  userId: number
-  username: string
-  roles: string[]
-}
+- [ ] `.aurora-bg` 类：2-3 个大模糊渐变块，低透明度（5-15%），慢速漂移动画（20-30s 循环）
+- [ ] 颜色组合：深紫 + 青色 + 午夜蓝
+- [ ] `position: fixed; z-index: -1;` 不干扰内容
 
-export interface TaskVO {
-  id: number
-  tenantId: number
-  userId: number
-  requirement: string
-  taskType: string
-  status: string
-  repoId: string
-  branchName: string | null
-  mrId: number | null
-  riskLevel: string | null
-  reviewScore: number | null
-  totalInputTokens: number
-  totalOutputTokens: number
-  gmtCreate: string
-}
+### 1.5 动画定义 (`styles/animations.css`)
 
-export interface TaskStepVO {
-  id: number
-  stepType: string
-  stepOrder: number
-  status: string
-  inputTokens: number
-  outputTokens: number
-  retryCount: number
-  outputSnapshot: string | null
-  errorMessage: string | null
-  gmtCreate: string
-}
+- [ ] `@keyframes skeleton-sweep` — 骨架屏渐变扫光（1.5s 循环）
+- [ ] `@keyframes pulse-glow` — 呼吸灯效果（2s 循环）
+- [ ] `@keyframes fade-in-up` — 页面淡入上移 8px（200-300ms）
+- [ ] `@keyframes breathing-dots` — AI 思考状态三点呼吸
+- [ ] CSS `transition` 工具类：`.transition-fast` (150ms)、`.transition-normal` (300ms)
 
-export interface CreateTaskRequest {
-  tenantId: number
-  userId: number
-  requirement: string
-  taskType: string
-  repoId: string
-}
+### 1.6 Ant Design 暗色覆盖 (`styles/components.css`)
 
-export interface PipelineExecutionVO {
-  id: number
-  repoId: string
-  branch: string
-  projectType: string
-  status: string
-  compilePassed: boolean | null
-  testPassed: boolean | null
-  reviewPassed: boolean | null
-  qualityGatePassed: boolean | null
-  triggerType: string
-  gmtCreate: string
-}
+- [ ] 使用 Ant Design Vue 的 `ConfigProvider` theme token 覆盖：
+  - `colorPrimary: '#8B5CF6'`
+  - `colorBgContainer: '#0F0F1A'`
+  - `colorBgElevated: '#1A1A2E'`
+  - `colorBorder: '#2A2A3E'`
+  - `colorText: '#F1F1F3'`
+  - `colorTextSecondary: '#8888A0'`
+  - `borderRadius: 8`
+  - `fontFamily: var(--font-sans)`
+- [ ] 卡片、按钮、输入框、表格、标签等组件样式微调
 
-export interface EnvironmentVO {
-  id: number
-  name: string
-  envType: string
-  namespace: string
-  boundBranch: string | null
-  status: string
-  autoDestroyAt: string | null
-  gmtCreate: string
-}
+### 1.7 Lucide Icons 安装
 
-export interface TokenUsageVO {
-  taskId: number
-  totalInputTokens: number
-  totalOutputTokens: number
-}
-```
+- [ ] `npm install lucide-vue-next`
+- [ ] 创建图标使用示例，确认图标风格一致
 
-- [ ] **Step 3: 创建 api/request.ts — Axios 实例 + Token 拦截器**
-
-```typescript
-import axios from 'axios'
-import type { Result } from './types'
-
-const request = axios.create({
-  baseURL: '',
-  timeout: 30000
-})
-
-request.interceptors.request.use((config) => {
-  const token = localStorage.getItem('accessToken')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
-
-request.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('accessToken')
-      localStorage.removeItem('refreshToken')
-      window.location.href = '/login'
-    }
-    return Promise.reject(error)
-  }
-)
-
-export async function get<T>(url: string, params?: Record<string, unknown>): Promise<T> {
-  const res = await request.get<Result<T>>(url, { params })
-  return res.data.data
-}
-
-export async function post<T>(url: string, data?: unknown): Promise<T> {
-  const res = await request.post<Result<T>>(url, data)
-  return res.data.data
-}
-
-export async function del<T>(url: string): Promise<T> {
-  const res = await request.delete<Result<T>>(url)
-  return res.data.data
-}
-
-export default request
-```
-
-- [ ] **Step 4: 创建 stores/user.ts — 用户状态管理**
-
-```typescript
-import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-
-export const useUserStore = defineStore('user', () => {
-  const accessToken = ref(localStorage.getItem('accessToken') || '')
-  const username = ref(localStorage.getItem('username') || '')
-  const userId = ref(Number(localStorage.getItem('userId')) || 0)
-
-  const isLoggedIn = computed(() => !!accessToken.value)
-
-  function setLoginInfo(token: string, name: string, id: number) {
-    accessToken.value = token
-    username.value = name
-    userId.value = id
-    localStorage.setItem('accessToken', token)
-    localStorage.setItem('username', name)
-    localStorage.setItem('userId', String(id))
-  }
-
-  function logout() {
-    accessToken.value = ''
-    username.value = ''
-    userId.value = 0
-    localStorage.removeItem('accessToken')
-    localStorage.removeItem('refreshToken')
-    localStorage.removeItem('username')
-    localStorage.removeItem('userId')
-  }
-
-  return { accessToken, username, userId, isLoggedIn, setLoginInfo, logout }
-})
-```
-
-- [ ] **Step 5: 创建 router/index.ts — 路由配置 + 登录守卫**
-
-```typescript
-import { createRouter, createWebHistory } from 'vue-router'
-
-const router = createRouter({
-  history: createWebHistory(),
-  routes: [
-    {
-      path: '/login',
-      name: 'Login',
-      component: () => import('@/views/LoginView.vue'),
-      meta: { requiresAuth: false }
-    },
-    {
-      path: '/',
-      redirect: '/dashboard'
-    },
-    {
-      path: '/dashboard',
-      name: 'Dashboard',
-      component: () => import('@/views/DashboardView.vue')
-    },
-    {
-      path: '/tasks/create',
-      name: 'TaskCreate',
-      component: () => import('@/views/TaskCreateView.vue')
-    },
-    {
-      path: '/tasks/:id',
-      name: 'TaskDetail',
-      component: () => import('@/views/TaskDetailView.vue')
-    },
-    {
-      path: '/environments',
-      name: 'Environments',
-      component: () => import('@/views/EnvironmentView.vue')
-    }
-  ]
-})
-
-router.beforeEach((to) => {
-  const token = localStorage.getItem('accessToken')
-  if (to.meta.requiresAuth !== false && !token) {
-    return { name: 'Login' }
-  }
-})
-
-export default router
-```
-
-- [ ] **Step 6: 创建 AppLayout.vue — 侧边栏导航 Layout**
-
-```vue
-<script setup lang="ts">
-import { useRouter } from 'vue-router'
-import { useUserStore } from '@/stores/user'
-import {
-  DashboardOutlined,
-  PlusOutlined,
-  CloudServerOutlined,
-  LogoutOutlined
-} from '@ant-design/icons-vue'
-
-const router = useRouter()
-const userStore = useUserStore()
-
-function handleLogout() {
-  userStore.logout()
-  router.push('/login')
-}
-</script>
-
-<template>
-  <a-layout style="min-height: 100vh">
-    <a-layout-sider :width="200" theme="dark">
-      <div style="height: 48px; line-height: 48px; text-align: center; color: #fff; font-size: 18px; font-weight: bold;">
-        Forge
-      </div>
-      <a-menu theme="dark" mode="inline" @click="({ key }: { key: string }) => router.push(key)">
-        <a-menu-item key="/dashboard">
-          <DashboardOutlined />
-          <span>任务看板</span>
-        </a-menu-item>
-        <a-menu-item key="/tasks/create">
-          <PlusOutlined />
-          <span>创建任务</span>
-        </a-menu-item>
-        <a-menu-item key="/environments">
-          <CloudServerOutlined />
-          <span>环境管理</span>
-        </a-menu-item>
-      </a-menu>
-    </a-layout-sider>
-    <a-layout>
-      <a-layout-header style="background: #fff; padding: 0 24px; display: flex; justify-content: flex-end; align-items: center;">
-        <span style="margin-right: 16px;">{{ userStore.username }}</span>
-        <a-button type="text" @click="handleLogout">
-          <LogoutOutlined /> 登出
-        </a-button>
-      </a-layout-header>
-      <a-layout-content style="margin: 24px; padding: 24px; background: #fff; min-height: 280px;">
-        <router-view />
-      </a-layout-content>
-    </a-layout>
-  </a-layout>
-</template>
-```
-
-- [ ] **Step 7: 创建占位页面 LoginView.vue + DashboardView.vue**
-
-```vue
-<!-- LoginView.vue -->
-<template>
-  <div>登录页 - 待实现</div>
-</template>
-```
-
-```vue
-<!-- DashboardView.vue -->
-<template>
-  <div>看板页 - 待实现</div>
-</template>
-```
-
-- [ ] **Step 8: 创建占位页面 TaskCreateView.vue + TaskDetailView.vue + EnvironmentView.vue**
-
-```vue
-<!-- TaskCreateView.vue -->
-<template>
-  <div>创建任务 - 待实现</div>
-</template>
-```
-
-```vue
-<!-- TaskDetailView.vue -->
-<template>
-  <div>任务详情 - 待实现</div>
-</template>
-```
-
-```vue
-<!-- EnvironmentView.vue -->
-<template>
-  <div>环境管理 - 待实现</div>
-</template>
-```
-
-- [ ] **Step 9: 修改 main.ts — 注册路由、Pinia、AntDesign**
-
-```typescript
-import { createApp } from 'vue'
-import { createPinia } from 'pinia'
-import Antd from 'ant-design-vue'
-import 'ant-design-vue/dist/reset.css'
-import App from './App.vue'
-import router from './router'
-
-const app = createApp(App)
-app.use(createPinia())
-app.use(router)
-app.use(Antd)
-app.mount('#app')
-```
-
-- [ ] **Step 10: 修改 App.vue — 条件 Layout**
-
-```vue
-<script setup lang="ts">
-import { useRoute } from 'vue-router'
-import AppLayout from '@/components/AppLayout.vue'
-import { computed } from 'vue'
-
-const route = useRoute()
-const showLayout = computed(() => route.name !== 'Login')
-</script>
-
-<template>
-  <AppLayout v-if="showLayout" />
-  <router-view v-else />
-</template>
-```
-
-- [ ] **Step 11: 修改 style.css — 最小样式重置**
-
-```css
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-```
-
-- [ ] **Step 12: 删除不再需要的文件**
-
-删除 `src/components/HelloWorld.vue`（已被替代）。
-
-- [ ] **Step 13: 编译验证**
-
-Run: `cd forge-portal && npm run build 2>&1 | tail -20`
-Expected: 编译通过（可能有 unused 变量 warning，不影响）
-
-注意：如果 TypeScript 报 `@` 别名找不到，需要在 `tsconfig.app.json` 中添加 paths 配置：
-```json
-"paths": {
-  "@/*": ["./src/*"]
-}
-```
-
-- [ ] **Step 14: Commit**
-
-```bash
-git add forge-portal/src/ forge-portal/vite.config.ts
-git commit -m "feat(m6): add project infrastructure with routing, axios, layout, and stores"
-```
+**完成标准：** 打开空白页面，Aurora 背景可见，暗色主题生效，Ant Design 组件颜色正确。
 
 ---
 
-### Task 2: 登录页 + Auth API
+## Task 2 — 通用组件库
 
-**Files:**
-- Create: `forge-portal/src/api/auth.ts`
-- Modify: `forge-portal/src/views/LoginView.vue`
+**目标：** 构建可复用的基础组件，后续页面直接使用。
 
-- [ ] **Step 1: 创建 api/auth.ts**
+### 2.1 GlowButton 组件
 
-```typescript
-import { post } from './request'
-import type { LoginRequest, LoginResponse } from './types'
+- [ ] `components/common/GlowButton.vue`
+  - Props: `type` (primary/secondary/danger)、`loading`、`disabled`、`size`
+  - Primary：紫色背景 + 外发光 `box-shadow`
+  - Secondary：透明背景 + 边框
+  - Danger：红色背景 + 红色外发光
+  - 按下效果：`scale(0.97)`，100ms
 
-export function login(data: LoginRequest): Promise<LoginResponse> {
-  return post<LoginResponse>('/api/auth/login', data)
-}
+### 2.2 GlassCard 组件
 
-export function logout(): Promise<void> {
-  return post<void>('/api/auth/logout')
-}
-```
+- [ ] `components/common/GlassCard.vue`
+  - Props: `hoverable`、`padding`
+  - 毛玻璃效果：`rgba(15, 15, 26, 0.8) + backdrop-filter: blur(20px)`
+  - 顶部高光线：`border-top: 1px solid rgba(255, 255, 255, 0.12)`
+  - Hover：边框亮度增加 + 微上移 1px
 
-- [ ] **Step 2: 实现 LoginView.vue**
+### 2.3 SkeletonLoader 组件
 
-```vue
-<script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
-import { useUserStore } from '@/stores/user'
-import { login } from '@/api/auth'
+- [ ] `components/common/SkeletonLoader.vue`
+  - Props: `type` (card/list/text/avatar)、`rows`
+  - 骨架屏布局匹配真实内容
+  - 渐变扫光动画（左到右）
 
-const router = useRouter()
-const userStore = useUserStore()
-const loading = ref(false)
-const form = ref({
-  username: '',
-  password: ''
-})
+### 2.4 EmptyState 组件
 
-async function handleLogin() {
-  if (!form.value.username || !form.value.password) {
-    message.warning('请输入用户名和密码')
-    return
-  }
-  loading.value = true
-  try {
-    const res = await login({
-      tenantId: 1,
-      username: form.value.username,
-      password: form.value.password
-    })
-    userStore.setLoginInfo(res.accessToken, res.username, res.userId)
-    localStorage.setItem('refreshToken', res.refreshToken)
-    message.success('登录成功')
-    router.push('/dashboard')
-  } catch {
-    message.error('登录失败，请检查用户名和密码')
-  } finally {
-    loading.value = false
-  }
-}
-</script>
+- [ ] `components/common/EmptyState.vue`
+  - Props: `title`、`description`、`icon`、`actions` (按钮列表)
+  - 居中显示插画 + 文字 + 操作按钮
 
-<template>
-  <div style="display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #f0f2f5;">
-    <a-card title="Forge 工作台" style="width: 400px;">
-      <a-form layout="vertical">
-        <a-form-item label="用户名">
-          <a-input v-model:value="form.username" placeholder="请输入用户名" @pressEnter="handleLogin" />
-        </a-form-item>
-        <a-form-item label="密码">
-          <a-input-password v-model:value="form.password" placeholder="请输入密码" @pressEnter="handleLogin" />
-        </a-form-item>
-        <a-form-item>
-          <a-button type="primary" block :loading="loading" @click="handleLogin">
-            登 录
-          </a-button>
-        </a-form-item>
-      </a-form>
-    </a-card>
-  </div>
-</template>
-```
+### 2.5 AiBadge 组件
 
-- [ ] **Step 3: 编译验证**
+- [ ] `components/common/AiBadge.vue`
+  - AI 生成内容标记：左侧 2px 紫→青渐变线 + 淡紫背景 + "AI" 小标签
+  - Props: `showBadge`（是否显示"AI"标签）
 
-Run: `cd forge-portal && npm run build 2>&1 | tail -10`
-Expected: 编译通过
+### 2.6 StatusDot 组件
 
-- [ ] **Step 4: Commit**
+- [ ] `components/common/StatusDot.vue`
+  - Props: `status` (running/waiting/error/success)
+  - running：绿色脉冲呼吸动画
+  - waiting：灰色静态
+  - error：红色静态
+  - success：绿色静态
 
-```bash
-git add forge-portal/src/
-git commit -m "feat(m6): add login page and auth API"
-```
+**完成标准：** 每个组件独立可用，视觉效果符合 product-design.md Section 9.5。
 
 ---
 
-### Task 3: 任务看板页（Dashboard）+ Task API + Store
+## Task 3 — 路由 + 布局 + 角色守卫
 
-**Files:**
-- Create: `forge-portal/src/api/task.ts`
-- Create: `forge-portal/src/stores/task.ts`
-- Create: `forge-portal/src/components/TaskCard.vue`
-- Modify: `forge-portal/src/views/DashboardView.vue`
+**目标：** 实现项目优先导航架构、角色路由守卫、响应式布局。
 
-- [ ] **Step 1: 创建 api/task.ts**
+### 3.1 路由定义 (`router/index.ts`)
 
-```typescript
-import { get, post } from './request'
-import type { TaskVO, TaskStepVO, CreateTaskRequest, TokenUsageVO } from './types'
+- [ ] 路由结构：
+  ```
+  /login                              → LoginView
+  /projects                           → ProjectLobbyView（项目大厅）
+  /projects/:projectId/               → 项目内布局（AppLayout + ProjectSidebar）
+    /requirements                     → RequirementChatView
+    /tasks                            → TaskDashboardView
+    /tasks/:taskId                    → TaskDetailView（AI 工作过程可视化）
+    /tasks/:taskId/changes            → ChangeResultView
+    /tasks/:taskId/tests              → TestReportView
+    /deployments                      → DeploymentView
+    /branches                         → BranchManageView（需要角色：tech_manager）
+    /merge-requests                   → MrReviewView（需要角色：tech_manager）
+  /admin/settings                     → SystemSettingsView（需要角色：admin）
+  ```
 
-export function createTask(data: CreateTaskRequest): Promise<TaskVO> {
-  return post<TaskVO>('/api/tasks', data)
-}
+### 3.2 路由守卫 (`router/guards.ts`)
 
-export function listTasks(tenantId: number, userId: number): Promise<TaskVO[]> {
-  return get<TaskVO[]>('/api/tasks', { tenantId, userId })
-}
+- [ ] `beforeEach` 守卫：
+  - 未登录 → 跳转 `/login`
+  - 已登录访问 `/login` → 跳转 `/projects`
+  - 访问需要特定角色的路由 → 检查用户角色
+  - 访问项目内页面 → 检查 `projectId` 有效性
 
-export function getTask(taskId: number): Promise<TaskVO> {
-  return get<TaskVO>(`/api/tasks/${taskId}`)
-}
+### 3.3 主布局 (`components/layout/AppLayout.vue`)
 
-export function getTaskSteps(taskId: number): Promise<TaskStepVO[]> {
-  return get<TaskStepVO[]>(`/api/tasks/${taskId}/steps`)
-}
+- [ ] 重写布局结构：
+  - 顶部栏 `TopBar`（项目切换下拉 + 用户头像菜单 + 紧急停止入口）
+  - 左侧栏 `ProjectSidebar`（项目内导航菜单，按角色显示不同菜单项）
+  - 主内容区 `<router-view>` + 页面过渡动画 `fade-in-up`
+  - 整体暗色基调
 
-export function cancelTask(taskId: number): Promise<void> {
-  return post<void>(`/api/tasks/${taskId}/cancel`)
-}
+### 3.4 顶部栏 (`components/layout/TopBar.vue`)
 
-export function getTokenUsage(taskId: number): Promise<TokenUsageVO> {
-  return get<TokenUsageVO>(`/api/token-usage/${taskId}`)
-}
+- [ ] 左侧：Forge Logo + 当前项目名称（点击切换项目下拉）
+- [ ] 中间：面包屑导航（项目 > 页面名）
+- [ ] 右侧：紧急停止按钮（红色）+ 用户头像下拉（设置、登出）
 
-export async function getKillSwitchLevel(): Promise<string> {
-  const result = await get<{ level: string }>('/api/killswitch')
-  return result.level
-}
+### 3.5 项目侧栏 (`components/layout/ProjectSidebar.vue`)
 
-export function activateKillSwitch(level: string): Promise<void> {
-  return post<void>(`/api/killswitch/activate?level=${level}`)
-}
+- [ ] 使用 Lucide Icons
+- [ ] 菜单项按角色条件渲染：
+  - 所有用户：需求对话、任务看板、部署环境
+  - 技术管理者+管理员：分支管理、MR 审批
+- [ ] 当前激活项高亮（紫色左边框 + 淡紫背景）
+- [ ] 底部：项目设置入口
 
-export function deactivateKillSwitch(): Promise<void> {
-  return post<void>('/api/killswitch/deactivate')
-}
-```
+### 3.6 用户 Store 扩展 (`stores/user.ts`)
 
-- [ ] **Step 2: 创建 stores/task.ts**
+- [ ] 扩展用户信息：`roles: string[]`、`tenantId: number`
+- [ ] 添加 `hasRole(role)` 方法
+- [ ] 添加 `isAdmin`、`isTechManager` 计算属性
 
-```typescript
-import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { listTasks } from '@/api/task'
-import type { TaskVO } from '@/api/types'
+### 3.7 项目 Store (`stores/project.ts`)
 
-export const useTaskStore = defineStore('task', () => {
-  const tasks = ref<TaskVO[]>([])
-  const loading = ref(false)
+- [ ] `currentProject` — 当前选中的项目
+- [ ] `projects` — 项目列表（星标置顶）
+- [ ] `fetchProjects()` / `setCurrentProject(id)`
+- [ ] 持久化 `currentProjectId` 到 `localStorage`
 
-  async function fetchTasks() {
-    loading.value = true
-    try {
-      const userId = Number(localStorage.getItem('userId')) || 0
-      tasks.value = await listTasks(1, userId)
-    } finally {
-      loading.value = false
-    }
-  }
+### 3.8 UI Store (`stores/ui.ts`)
 
-  return { tasks, loading, fetchTasks }
-})
-```
+- [ ] `sidebarCollapsed` — 侧栏折叠状态
+- [ ] `progressViewMode` — 进度视图模式（overview/detail/realtime）
 
-- [ ] **Step 3: 创建 components/TaskCard.vue**
-
-```vue
-<script setup lang="ts">
-import type { TaskVO } from '@/api/types'
-
-defineProps<{ task: TaskVO }>()
-defineEmits<{ click: [id: number] }>()
-
-function statusColor(status: string): string {
-  const map: Record<string, string> = {
-    PENDING: 'default',
-    RISK_ASSESSING: 'processing',
-    DISPATCHING: 'processing',
-    EXECUTING: 'processing',
-    REVIEWING: 'processing',
-    COMMITTING: 'processing',
-    COMPLETED: 'success',
-    FAILED: 'error',
-    CANCELLED: 'warning'
-  }
-  return map[status] || 'default'
-}
-
-function riskColor(level: string | null): string {
-  if (!level) return 'default'
-  const map: Record<string, string> = { LOW: 'green', MEDIUM: 'orange', HIGH: 'red' }
-  return map[level] || 'default'
-}
-</script>
-
-<template>
-  <a-card hoverable size="small" style="margin-bottom: 12px;" @click="$emit('click', task.id)">
-    <template #title>
-      <span style="font-size: 14px;">#{{ task.id }}</span>
-      <a-tag :color="statusColor(task.status)" style="margin-left: 8px;">{{ task.status }}</a-tag>
-      <a-tag v-if="task.riskLevel" :color="riskColor(task.riskLevel)" style="margin-left: 4px;">
-        {{ task.riskLevel }}
-      </a-tag>
-    </template>
-    <p style="margin: 0; color: #666; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-      {{ task.requirement }}
-    </p>
-    <div style="margin-top: 8px; font-size: 12px; color: #999;">
-      <span>{{ task.taskType }}</span>
-      <span style="margin-left: 12px;">Token: {{ task.totalInputTokens + task.totalOutputTokens }}</span>
-      <span style="margin-left: 12px;">{{ task.gmtCreate }}</span>
-    </div>
-  </a-card>
-</template>
-```
-
-- [ ] **Step 4: 实现 DashboardView.vue — 任务看板**
-
-```vue
-<script setup lang="ts">
-import { onMounted, onUnmounted, computed } from 'vue'
-import { useRouter } from 'vue-router'
-import { useTaskStore } from '@/stores/task'
-import TaskCard from '@/components/TaskCard.vue'
-import KillSwitch from '@/components/KillSwitch.vue'
-
-const router = useRouter()
-const taskStore = useTaskStore()
-
-const activeTasks = computed(() =>
-  taskStore.tasks.filter(t => !['COMPLETED', 'FAILED', 'CANCELLED'].includes(t.status))
-)
-const completedTasks = computed(() =>
-  taskStore.tasks.filter(t => ['COMPLETED', 'FAILED', 'CANCELLED'].includes(t.status))
-)
-
-let timer: ReturnType<typeof setInterval>
-
-onMounted(() => {
-  taskStore.fetchTasks()
-  timer = setInterval(() => taskStore.fetchTasks(), 5000)
-})
-
-onUnmounted(() => clearInterval(timer))
-
-function goToDetail(id: number) {
-  router.push(`/tasks/${id}`)
-}
-</script>
-
-<template>
-  <div>
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-      <h2 style="margin: 0;">任务看板</h2>
-      <div style="display: flex; gap: 12px; align-items: center;">
-        <KillSwitch />
-        <a-button type="primary" @click="router.push('/tasks/create')">创建任务</a-button>
-      </div>
-    </div>
-
-    <a-spin :spinning="taskStore.loading">
-      <a-row :gutter="24">
-        <a-col :span="12">
-          <h3>进行中 ({{ activeTasks.length }})</h3>
-          <TaskCard v-for="t in activeTasks" :key="t.id" :task="t" @click="goToDetail" />
-          <a-empty v-if="activeTasks.length === 0" description="暂无进行中的任务" />
-        </a-col>
-        <a-col :span="12">
-          <h3>已完成 ({{ completedTasks.length }})</h3>
-          <TaskCard v-for="t in completedTasks" :key="t.id" :task="t" @click="goToDetail" />
-          <a-empty v-if="completedTasks.length === 0" description="暂无已完成的任务" />
-        </a-col>
-      </a-row>
-    </a-spin>
-  </div>
-</template>
-```
-
-- [ ] **Step 5: 创建 components/KillSwitch.vue — 紧急停止按钮**
-
-```vue
-<script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { message, Modal } from 'ant-design-vue'
-import { getKillSwitchLevel, activateKillSwitch, deactivateKillSwitch } from '@/api/task'
-
-const level = ref('NONE')
-const loading = ref(false)
-
-async function fetchLevel() {
-  try {
-    level.value = await getKillSwitchLevel()
-  } catch {
-    // ignore
-  }
-}
-
-function handleToggle() {
-  if (level.value === 'NONE') {
-    Modal.confirm({
-      title: '确认激活紧急停止？',
-      content: '激活后所有正在执行的 AI 任务将被暂停。',
-      okText: '确认激活',
-      okType: 'danger',
-      async onOk() {
-        loading.value = true
-        try {
-          await activateKillSwitch('GLOBAL')
-          level.value = 'GLOBAL'
-          message.success('紧急停止已激活')
-        } catch {
-          message.error('操作失败')
-        } finally {
-          loading.value = false
-        }
-      }
-    })
-  } else {
-    Modal.confirm({
-      title: '确认解除紧急停止？',
-      content: '解除后 AI 任务将恢复执行。',
-      okText: '确认解除',
-      async onOk() {
-        loading.value = true
-        try {
-          await deactivateKillSwitch()
-          level.value = 'NONE'
-          message.success('紧急停止已解除')
-        } catch {
-          message.error('操作失败')
-        } finally {
-          loading.value = false
-        }
-      }
-    })
-  }
-}
-
-onMounted(fetchLevel)
-</script>
-
-<template>
-  <a-button
-    :type="level === 'NONE' ? 'default' : 'primary'"
-    :danger="level !== 'NONE'"
-    :loading="loading"
-    @click="handleToggle"
-  >
-    {{ level === 'NONE' ? '紧急停止' : '解除停止 (' + level + ')' }}
-  </a-button>
-</template>
-```
-
-- [ ] **Step 6: 编译验证**
-
-Run: `cd forge-portal && npm run build 2>&1 | tail -10`
-Expected: 编译通过
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add forge-portal/src/
-git commit -m "feat(m6): add dashboard with task kanban, kill switch, and task API"
-```
+**完成标准：** 登录后进入项目大厅 → 选择项目 → 进入项目内页面 → 侧栏按角色显示菜单 → 路由守卫工作正常。
 
 ---
 
-### Task 4: 需求输入页（TaskCreate）
+## Task 4 — 登录页
 
-**Files:**
-- Modify: `forge-portal/src/views/TaskCreateView.vue`
+**目标：** 实现 Aurora 极光背景 + 毛玻璃登录卡片。
 
-- [ ] **Step 1: 实现 TaskCreateView.vue**
+### 4.1 重写 LoginView
 
-```vue
-<script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
-import { createTask } from '@/api/task'
+- [ ] 全屏 Aurora 背景（`.aurora-bg`）
+- [ ] 居中毛玻璃登录卡片（480px 宽）：
+  - Forge Logo + 渐变标题
+  - 用户名输入框（暗色背景，聚焦紫色发光边框）
+  - 密码输入框
+  - GlowButton [登录]（紫色发光）
+  - 底部版本号
+- [ ] 交互：
+  - 聚焦输入框：紫色发光边框过渡
+  - 登录失败：卡片水平抖动 + 红色错误提示
+  - 登录成功：卡片淡出 → 跳转项目大厅
 
-const router = useRouter()
-const loading = ref(false)
-const form = ref({
-  requirement: '',
-  taskType: 'CREATE',
-  repoId: ''
-})
+### 4.2 登录 API 对接
 
-const taskTypes = [
-  { label: '创建项目', value: 'CREATE' },
-  { label: '迭代功能', value: 'ITERATE' },
-  { label: '修复缺陷', value: 'FIX' }
-]
+- [ ] 调用 `POST /api/auth/login`
+- [ ] 存储 `accessToken`、`username`、`userId`、`roles` 到 user store
+- [ ] 错误处理：账号密码错误、网络异常
 
-async function handleSubmit() {
-  if (!form.value.requirement.trim()) {
-    message.warning('请输入需求描述')
-    return
-  }
-  if (!form.value.repoId.trim()) {
-    message.warning('请输入仓库 ID')
-    return
-  }
-  loading.value = true
-  try {
-    const userId = Number(localStorage.getItem('userId')) || 1
-    const task = await createTask({
-      tenantId: 1,
-      userId,
-      requirement: form.value.requirement,
-      taskType: form.value.taskType,
-      repoId: form.value.repoId
-    })
-    message.success('任务已创建')
-    router.push(`/tasks/${task.id}`)
-  } catch {
-    message.error('创建任务失败')
-  } finally {
-    loading.value = false
-  }
-}
-</script>
-
-<template>
-  <div style="max-width: 800px; margin: 0 auto;">
-    <h2>创建 AI 任务</h2>
-    <a-form layout="vertical" style="margin-top: 24px;">
-      <a-form-item label="任务类型">
-        <a-radio-group v-model:value="form.taskType" :options="taskTypes" option-type="button" />
-      </a-form-item>
-      <a-form-item label="仓库 ID">
-        <a-input v-model:value="form.repoId" placeholder="Codeup 仓库 ID" />
-      </a-form-item>
-      <a-form-item label="需求描述">
-        <a-textarea
-          v-model:value="form.requirement"
-          placeholder="请用自然语言描述你的需求，例如：创建一个用户管理服务，包含用户注册、登录、信息修改功能"
-          :rows="8"
-          show-count
-          :maxlength="5000"
-        />
-      </a-form-item>
-      <a-form-item>
-        <a-space>
-          <a-button type="primary" :loading="loading" @click="handleSubmit">提交任务</a-button>
-          <a-button @click="router.push('/dashboard')">取消</a-button>
-        </a-space>
-      </a-form-item>
-    </a-form>
-  </div>
-</template>
-```
-
-- [ ] **Step 2: 编译验证**
-
-Run: `cd forge-portal && npm run build 2>&1 | tail -10`
-Expected: 编译通过
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add forge-portal/src/
-git commit -m "feat(m6): add task creation page with requirement input"
-```
+**完成标准：** 登录页视觉效果完整，Aurora 背景 + 毛玻璃卡片 + 发光按钮 + 交互动画。
 
 ---
 
-### Task 5: 任务详情页 + 步骤时间线 + Token 消耗
+## Task 5 — 项目大厅
 
-**Files:**
-- Create: `forge-portal/src/components/StepTimeline.vue`
-- Modify: `forge-portal/src/views/TaskDetailView.vue`
+**目标：** 实现项目列表、一键接入、创建新项目。
 
-- [ ] **Step 1: 创建 StepTimeline.vue**
+### 5.1 ProjectLobbyView
 
-```vue
-<script setup lang="ts">
-import type { TaskStepVO } from '@/api/types'
-import { CheckCircleOutlined, ClockCircleOutlined, CloseCircleOutlined, LoadingOutlined } from '@ant-design/icons-vue'
+- [ ] 顶部：标题 "项目大厅" + 操作按钮 [一键接入] [创建项目]
+- [ ] 搜索栏（暗色输入框）
+- [ ] 项目卡片网格布局：
+  - 星标置顶区
+  - 按组织分组
+  - 每个卡片：项目名、描述、技术栈标签、最近活动时间、星标按钮
+  - 点击卡片 → 进入项目内页面
 
-defineProps<{ steps: TaskStepVO[] }>()
+### 5.2 ProjectCard 组件
 
-function stepIcon(status: string) {
-  switch (status) {
-    case 'COMPLETED': return CheckCircleOutlined
-    case 'EXECUTING': return LoadingOutlined
-    case 'FAILED': return CloseCircleOutlined
-    default: return ClockCircleOutlined
-  }
-}
+- [ ] `components/project/ProjectCard.vue`
+  - Surface-1 背景 + hover 边框亮度增加
+  - 项目名（text-lg）+ 描述（text-secondary）
+  - 技术栈标签（语义色 badge）
+  - 星标图标（点击切换）
+  - 最近更新时间
+  - 项目状态指示灯（StatusDot）
 
-function stepColor(status: string): string {
-  switch (status) {
-    case 'COMPLETED': return 'green'
-    case 'EXECUTING': return 'blue'
-    case 'FAILED': return 'red'
-    default: return 'gray'
-  }
-}
-</script>
+### 5.3 一键接入弹窗 (`ProjectImportModal`)
 
-<template>
-  <a-timeline>
-    <a-timeline-item v-for="step in steps" :key="step.id" :color="stepColor(step.status)">
-      <template #dot>
-        <component :is="stepIcon(step.status)" />
-      </template>
-      <div>
-        <strong>{{ step.stepType }}</strong>
-        <a-tag :color="stepColor(step.status)" style="margin-left: 8px;">{{ step.status }}</a-tag>
-      </div>
-      <div style="font-size: 12px; color: #999; margin-top: 4px;">
-        Token: {{ step.inputTokens + step.outputTokens }}
-        <span style="margin-left: 8px;">{{ step.gmtCreate }}</span>
-      </div>
-      <div v-if="step.errorMessage" style="color: red; font-size: 12px; margin-top: 4px;">
-        {{ step.errorMessage }}
-      </div>
-    </a-timeline-item>
-  </a-timeline>
-</template>
-```
+- [ ] 毛玻璃弹窗
+- [ ] Step 1：选择平台（GitHub / Codeup）按钮选择
+- [ ] Step 2：OAuth 授权（跳转授权页 → 回调）
+- [ ] Step 3：显示同步到的仓库列表，批量勾选要关注的项目
+- [ ] Step 4：确认导入 → 后台异步进行项目画像分析
+- [ ] **Phase 1 简化：** OAuth 授权用手动填写 Token 替代（实际 OAuth 在 M7 完整实现），或直接输入仓库地址
 
-- [ ] **Step 2: 实现 TaskDetailView.vue**
+### 5.4 创建项目向导 (`ProjectCreateWizard`)
 
-```vue
-<script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
-import { getTask, getTaskSteps, cancelTask, getTokenUsage } from '@/api/task'
-import type { TaskVO, TaskStepVO, TokenUsageVO } from '@/api/types'
-import StepTimeline from '@/components/StepTimeline.vue'
+- [ ] 分步向导（3 步）：
+  - Step 1：选择模板（标准 Java 微服务 / Vue 3 前端 / 全栈 / SDK / 空项目）
+  - Step 2：配置（项目名 + 描述 + 代码平台 + 部署环境 + CI/CD 平台）
+  - Step 3：确认创建
+- [ ] 底部进度指示器（1/3 → 2/3 → 3/3）
 
-const route = useRoute()
-const router = useRouter()
-const taskId = Number(route.params.id)
+### 5.5 项目 API (`api/project.ts`)
 
-const task = ref<TaskVO | null>(null)
-const steps = ref<TaskStepVO[]>([])
-const tokenUsage = ref<TokenUsageVO | null>(null)
-const loading = ref(true)
-const cancelling = ref(false)
+- [ ] 项目 API 可能需要 forge-engine 新增端点（或在 forge-pipeline 中）：
+  - `GET /api/projects` — 项目列表
+  - `POST /api/projects` — 创建项目
+  - `PUT /api/projects/:id/star` — 星标切换
+  - `POST /api/projects/import` — 一键导入
+- [ ] **注意：** 如果后端无项目管理 API，需要在 Task 5 中同时添加后端端点
 
-async function fetchData() {
-  try {
-    const [t, s, u] = await Promise.all([
-      getTask(taskId),
-      getTaskSteps(taskId),
-      getTokenUsage(taskId)
-    ])
-    task.value = t
-    steps.value = s
-    tokenUsage.value = u
-  } catch {
-    message.error('加载任务详情失败')
-  } finally {
-    loading.value = false
-  }
-}
-
-async function handleCancel() {
-  cancelling.value = true
-  try {
-    await cancelTask(taskId)
-    message.success('任务已取消')
-    await fetchData()
-  } catch {
-    message.error('取消失败')
-  } finally {
-    cancelling.value = false
-  }
-}
-
-const isRunning = (status: string) =>
-  !['COMPLETED', 'FAILED', 'CANCELLED'].includes(status)
-
-let timer: ReturnType<typeof setInterval>
-
-onMounted(() => {
-  fetchData()
-  timer = setInterval(fetchData, 5000)
-})
-
-onUnmounted(() => clearInterval(timer))
-</script>
-
-<template>
-  <a-spin :spinning="loading">
-    <div v-if="task">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h2>任务 #{{ task.id }}</h2>
-        <a-space>
-          <a-button v-if="isRunning(task.status)" danger :loading="cancelling" @click="handleCancel">
-            取消任务
-          </a-button>
-          <a-button @click="router.push('/dashboard')">返回看板</a-button>
-        </a-space>
-      </div>
-
-      <a-descriptions bordered :column="2" style="margin-top: 16px;">
-        <a-descriptions-item label="状态">
-          <a-tag>{{ task.status }}</a-tag>
-        </a-descriptions-item>
-        <a-descriptions-item label="类型">{{ task.taskType }}</a-descriptions-item>
-        <a-descriptions-item label="仓库">{{ task.repoId }}</a-descriptions-item>
-        <a-descriptions-item label="分支">{{ task.branchName || '-' }}</a-descriptions-item>
-        <a-descriptions-item label="风险等级">
-          <a-tag v-if="task.riskLevel" :color="task.riskLevel === 'HIGH' ? 'red' : task.riskLevel === 'MEDIUM' ? 'orange' : 'green'">
-            {{ task.riskLevel }}
-          </a-tag>
-          <span v-else>-</span>
-        </a-descriptions-item>
-        <a-descriptions-item label="Review 评分">
-          <span v-if="task.reviewScore !== null">{{ task.reviewScore }}</span>
-          <span v-else>-</span>
-        </a-descriptions-item>
-        <a-descriptions-item label="MR ID">{{ task.mrId || '-' }}</a-descriptions-item>
-        <a-descriptions-item label="创建时间">{{ task.gmtCreate }}</a-descriptions-item>
-      </a-descriptions>
-
-      <a-card title="Token 消耗" style="margin-top: 16px;" v-if="tokenUsage">
-        <a-row :gutter="16">
-          <a-col :span="8">
-            <a-statistic title="输入 Token" :value="tokenUsage.totalInputTokens" />
-          </a-col>
-          <a-col :span="8">
-            <a-statistic title="输出 Token" :value="tokenUsage.totalOutputTokens" />
-          </a-col>
-          <a-col :span="8">
-            <a-statistic title="总计" :value="tokenUsage.totalInputTokens + tokenUsage.totalOutputTokens" />
-          </a-col>
-        </a-row>
-      </a-card>
-
-      <a-card title="需求描述" style="margin-top: 16px;">
-        <pre style="white-space: pre-wrap; word-break: break-word; margin: 0;">{{ task.requirement }}</pre>
-      </a-card>
-
-      <a-card title="执行步骤" style="margin-top: 16px;">
-        <StepTimeline :steps="steps" />
-        <a-empty v-if="steps.length === 0" description="暂无步骤" />
-      </a-card>
-    </div>
-  </a-spin>
-</template>
-```
-
-- [ ] **Step 3: 编译验证**
-
-Run: `cd forge-portal && npm run build 2>&1 | tail -10`
-Expected: 编译通过
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add forge-portal/src/
-git commit -m "feat(m6): add task detail page with step timeline and token usage"
-```
+**完成标准：** 项目大厅页面展示项目卡片列表，支持搜索、星标、创建。
 
 ---
 
-### Task 6: 环境管理页 + Pipeline API
+## Task 6 — 需求对话页
 
-**Files:**
-- Create: `forge-portal/src/api/pipeline.ts`
-- Modify: `forge-portal/src/views/EnvironmentView.vue`
+**目标：** 实现混合式需求输入 — 自然语言对话 → AI 澄清 → 需求确认卡片 → SSE 流式输出。
 
-- [ ] **Step 1: 创建 api/pipeline.ts**
+### 6.1 RequirementChatView 布局
 
-```typescript
-import { get, post, del } from './request'
-import type { PipelineExecutionVO, EnvironmentVO } from './types'
+- [ ] 左侧：历史需求列表面板（可折叠）
+  - 每条记录：需求摘要 + 时间 + 状态标签
+  - 点击加载历史对话
+- [ ] 右侧：对话区域
+  - 聊天消息列表（用户消息 + AI 回复交替）
+  - 底部输入区域（多行文本框 + 发送按钮）
 
-export function triggerPipeline(tenantId: number, repoId: string, branch: string): Promise<void> {
-  return post<void>('/api/pipelines/trigger', { tenantId, repoId, branch })
-}
+### 6.2 消息组件
 
-export function getPipelineExecution(id: number): Promise<PipelineExecutionVO> {
-  return get<PipelineExecutionVO>(`/api/pipelines/${id}`)
-}
+- [ ] 用户消息气泡：右侧对齐，Surface-2 背景
+- [ ] AI 消息气泡：左侧对齐，AiBadge 标记，左侧紫色渐变线
+- [ ] AI 流式输出：字符逐个出现 + 闪烁光标（紫色）
+- [ ] AI 思考状态：三个紫色呼吸圆点 + "AI 正在分析..."
 
-export function listEnvironments(tenantId: number): Promise<EnvironmentVO[]> {
-  return get<EnvironmentVO[]>('/api/environments', { tenantId })
-}
+### 6.3 需求确认卡片组件
 
-export function createTemporaryEnvironment(tenantId: number, repoId: string, branch: string, taskId?: number): Promise<EnvironmentVO> {
-  return post<EnvironmentVO>('/api/environments/temporary', { tenantId, repoId, branch, taskId })
-}
+- [ ] 当 AI 生成完整需求理解后，渲染确认卡片：
+  - 需求摘要（自然语言一段话）
+  - 技术任务分解（编号列表）
+  - 预估面板：影响文件数 ~N、Token 预估 ~NK、预计时间 ~Nmin、风险等级
+  - 操作按钮：[确认执行] [修改需求] [取消]
+- [ ] 确认执行 → 调用创建任务 API → 自动跳转任务看板
+- [ ] 修改需求 → 卡片折叠 → AI 继续对话
+- [ ] 取消 → 二次确认弹窗
 
-export function destroyEnvironment(id: number): Promise<void> {
-  return del<void>(`/api/environments/${id}`)
-}
-```
+### 6.4 SSE 客户端封装 (`api/sse.ts`)
 
-- [ ] **Step 2: 实现 EnvironmentView.vue**
+- [ ] `createSseConnection(url): EventSource` — 创建 SSE 连接
+- [ ] 自动重连（最多 3 次）
+- [ ] 心跳检测
+- [ ] 连接状态管理
 
-```vue
-<script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { message, Modal } from 'ant-design-vue'
-import { listEnvironments, destroyEnvironment } from '@/api/pipeline'
-import type { EnvironmentVO } from '@/api/types'
+### 6.5 useSse composable (`composables/useSse.ts`)
 
-const environments = ref<EnvironmentVO[]>([])
-const loading = ref(true)
+- [ ] `useSse(taskId)` — 建立 SSE 连接并返回响应式事件流
+- [ ] `events: Ref<SseEvent[]>` — 事件列表
+- [ ] `isConnected: Ref<boolean>` — 连接状态
+- [ ] `disconnect()` — 断开连接
+- [ ] 组件卸载自动断开
 
-async function fetchEnvironments() {
-  loading.value = true
-  try {
-    environments.value = await listEnvironments(1)
-  } finally {
-    loading.value = false
-  }
-}
+### 6.6 对话 API 对接
 
-function handleDestroy(env: EnvironmentVO) {
-  Modal.confirm({
-    title: `确认销毁环境 "${env.name}"？`,
-    content: `Namespace: ${env.namespace}`,
-    okText: '确认销毁',
-    okType: 'danger',
-    async onOk() {
-      try {
-        await destroyEnvironment(env.id)
-        message.success('环境已销毁')
-        await fetchEnvironments()
-      } catch {
-        message.error('销毁失败')
-      }
-    }
-  })
-}
+- [ ] 需求对话可能需要新的后端端点：
+  - `POST /api/tasks/analyze` — 发送需求文本，返回 AI 分析（或通过 SSE 流式返回）
+  - 或复用 `POST /api/tasks` 创建任务后监听 SSE
+- [ ] **Phase 1 简化：** 对话可以是单轮 → 创建任务 → AI 分析步骤输出作为"AI 回复"
 
-function envTypeTag(type: string) {
-  return type === 'FIXED' ? 'blue' : 'orange'
-}
-
-function statusTag(status: string) {
-  const map: Record<string, string> = { ACTIVE: 'green', DESTROYING: 'orange', DESTROYED: 'default' }
-  return map[status] || 'default'
-}
-
-const columns = [
-  { title: '名称', dataIndex: 'name', key: 'name' },
-  { title: '类型', dataIndex: 'envType', key: 'envType' },
-  { title: 'Namespace', dataIndex: 'namespace', key: 'namespace' },
-  { title: '绑定分支', dataIndex: 'boundBranch', key: 'boundBranch' },
-  { title: '状态', dataIndex: 'status', key: 'status' },
-  { title: '自动销毁时间', dataIndex: 'autoDestroyAt', key: 'autoDestroyAt' },
-  { title: '操作', key: 'action' }
-]
-
-onMounted(fetchEnvironments)
-</script>
-
-<template>
-  <div>
-    <h2>环境管理</h2>
-    <a-table
-      :columns="columns"
-      :data-source="environments"
-      :loading="loading"
-      row-key="id"
-      :pagination="false"
-      style="margin-top: 16px;"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'envType'">
-          <a-tag :color="envTypeTag(record.envType)">{{ record.envType }}</a-tag>
-        </template>
-        <template v-else-if="column.key === 'status'">
-          <a-tag :color="statusTag(record.status)">{{ record.status }}</a-tag>
-        </template>
-        <template v-else-if="column.key === 'boundBranch'">
-          {{ record.boundBranch || '-' }}
-        </template>
-        <template v-else-if="column.key === 'autoDestroyAt'">
-          {{ record.autoDestroyAt || '-' }}
-        </template>
-        <template v-else-if="column.key === 'action'">
-          <a-button
-            v-if="record.status === 'ACTIVE'"
-            type="link"
-            danger
-            @click="handleDestroy(record)"
-          >
-            销毁
-          </a-button>
-        </template>
-      </template>
-    </a-table>
-  </div>
-</template>
-```
-
-- [ ] **Step 3: 编译验证**
-
-Run: `cd forge-portal && npm run build 2>&1 | tail -10`
-Expected: 编译通过
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add forge-portal/src/
-git commit -m "feat(m6): add environment management page and pipeline API"
-```
+**完成标准：** 用户输入需求 → AI 流式回复 → 生成确认卡片 → 确认后创建任务并跳转看板。
 
 ---
 
-### Task 7: 代码浏览器 + Diff 查看器组件
+## Task 7 — 任务看板 + 三级进度视图
 
-**Files:**
-- Create: `forge-portal/src/components/CodeBrowser.vue`
-- Create: `forge-portal/src/components/DiffViewer.vue`
-- Modify: `forge-portal/src/views/TaskDetailView.vue`（添加代码浏览 Tab）
+**目标：** 实现三级可切换的任务进度视图（概览看板 / 详情 / 实时）。
 
-- [ ] **Step 1: 创建 CodeBrowser.vue — 文件列表 + 内容显示**
+### 7.1 TaskDashboardView
 
-```vue
-<script setup lang="ts">
-import { ref } from 'vue'
-import type { TaskStepVO } from '@/api/types'
+- [ ] 顶部：标题 + 视图切换按钮组（概览 | 详情 | 实时）
+- [ ] 根据 `ui.progressViewMode` 渲染不同视图
 
-const props = defineProps<{ steps: TaskStepVO[] }>()
+### 7.2 概览视图（默认）— TaskKanban
 
-interface FileEntry {
-  path: string
-  content: string
-  action: string
-}
+- [ ] `components/task/TaskKanban.vue`
+- [ ] 6 列看板：解析中 → 生成中 → 审查中 → 测试中 → 部署中 → 已完成
+- [ ] 每列标题 + 任务计数
+- [ ] TaskCard 组件：
+  - 需求摘要（截断 2 行）
+  - 风险标签（低/中/高，语义色）
+  - 已用时间
+  - 点击跳转 TaskDetailView
 
-const selectedFile = ref<FileEntry | null>(null)
+### 7.3 详情视图
 
-function extractFiles(): FileEntry[] {
-  const files: FileEntry[] = []
-  for (const step of props.steps) {
-    if (step.outputSnapshot && step.stepType === 'CODE_GENERATE') {
-      try {
-        const parsed = JSON.parse(step.outputSnapshot)
-        if (Array.isArray(parsed)) {
-          for (const f of parsed) {
-            files.push({ path: f.filePath, content: f.content, action: f.action || 'CREATE' })
-          }
-        }
-      } catch {
-        // not JSON, skip
-      }
-    }
-  }
-  return files
-}
-</script>
+- [ ] 任务列表（表格形式），每行展开显示：
+  - 各阶段关键产出（子任务数、变更文件数、Review 分数、测试状态）
+  - 进度条（分段式，每段 = 1 个步骤）
 
-<template>
-  <div style="display: flex; gap: 16px;">
-    <div style="width: 300px; border-right: 1px solid #f0f0f0; padding-right: 16px;">
-      <h4>文件列表</h4>
-      <a-list size="small" :data-source="extractFiles()">
-        <template #renderItem="{ item }">
-          <a-list-item
-            style="cursor: pointer; padding: 4px 8px;"
-            :style="{ background: selectedFile?.path === item.path ? '#e6f7ff' : 'transparent' }"
-            @click="selectedFile = item"
-          >
-            <a-tag :color="item.action === 'CREATE' ? 'green' : 'blue'" size="small">
-              {{ item.action }}
-            </a-tag>
-            <span style="font-size: 13px; margin-left: 4px;">{{ item.path }}</span>
-          </a-list-item>
-        </template>
-      </a-list>
-      <a-empty v-if="extractFiles().length === 0" description="暂无生成文件" />
-    </div>
-    <div style="flex: 1; overflow: auto;">
-      <template v-if="selectedFile">
-        <h4>{{ selectedFile.path }}</h4>
-        <pre style="background: #fafafa; padding: 16px; border-radius: 4px; font-size: 13px; line-height: 1.6; overflow: auto; max-height: 600px;">{{ selectedFile.content }}</pre>
-      </template>
-      <a-empty v-else description="请选择文件查看" />
-    </div>
-  </div>
-</template>
-```
+### 7.4 实时视图
 
-- [ ] **Step 2: 创建 DiffViewer.vue — 简单 Diff 展示**
+- [ ] 显示当前正在执行的任务
+- [ ] SSE 连接，实时显示 AI 正在做什么（哪个文件在分析、哪段代码在生成）
+- [ ] 实时日志流
 
-```vue
-<script setup lang="ts">
-import type { TaskStepVO } from '@/api/types'
+### 7.5 任务筛选
 
-const props = defineProps<{ steps: TaskStepVO[] }>()
+- [ ] 按状态筛选
+- [ ] 按风险等级筛选
+- [ ] 按时间排序
 
-interface DiffEntry {
-  filePath: string
-  original: string
-  modified: string
-}
-
-function extractDiffs(): DiffEntry[] {
-  const diffs: DiffEntry[] = []
-  for (const step of props.steps) {
-    if (step.outputSnapshot && (step.stepType === 'CODE_FIX' || step.stepType === 'CODE_REVIEW')) {
-      try {
-        const parsed = JSON.parse(step.outputSnapshot)
-        if (Array.isArray(parsed)) {
-          for (const f of parsed) {
-            diffs.push({
-              filePath: f.filePath,
-              original: f.originalContent || '(new file)',
-              modified: f.content || ''
-            })
-          }
-        }
-      } catch {
-        // not JSON
-      }
-    }
-  }
-  return diffs
-}
-</script>
-
-<template>
-  <div>
-    <div v-for="diff in extractDiffs()" :key="diff.filePath" style="margin-bottom: 24px;">
-      <h4>{{ diff.filePath }}</h4>
-      <div style="display: flex; gap: 8px;">
-        <div style="flex: 1;">
-          <div style="background: #fff1f0; padding: 4px 8px; font-size: 12px; font-weight: bold;">原始</div>
-          <pre style="background: #fff1f0; padding: 12px; font-size: 12px; line-height: 1.6; overflow: auto; max-height: 400px;">{{ diff.original }}</pre>
-        </div>
-        <div style="flex: 1;">
-          <div style="background: #f6ffed; padding: 4px 8px; font-size: 12px; font-weight: bold;">修改后</div>
-          <pre style="background: #f6ffed; padding: 12px; font-size: 12px; line-height: 1.6; overflow: auto; max-height: 400px;">{{ diff.modified }}</pre>
-        </div>
-      </div>
-    </div>
-    <a-empty v-if="extractDiffs().length === 0" description="暂无 Diff 数据" />
-  </div>
-</template>
-```
-
-- [ ] **Step 3: 修改 TaskDetailView.vue — 添加代码浏览和 Diff Tab**
-
-在 TaskDetailView.vue 的"执行步骤" card 下方添加 Tabs：
-
-在 `</a-card>` (执行步骤) 后面添加：
-
-```vue
-      <a-card style="margin-top: 16px;">
-        <a-tabs>
-          <a-tab-pane key="code" tab="生成代码">
-            <CodeBrowser :steps="steps" />
-          </a-tab-pane>
-          <a-tab-pane key="diff" tab="AI Diff">
-            <DiffViewer :steps="steps" />
-          </a-tab-pane>
-        </a-tabs>
-      </a-card>
-```
-
-并在 `<script setup>` 的 import 中添加：
-
-```typescript
-import CodeBrowser from '@/components/CodeBrowser.vue'
-import DiffViewer from '@/components/DiffViewer.vue'
-```
-
-- [ ] **Step 4: 编译验证**
-
-Run: `cd forge-portal && npm run build 2>&1 | tail -10`
-Expected: 编译通过
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add forge-portal/src/
-git commit -m "feat(m6): add code browser and diff viewer components"
-```
+**完成标准：** 三种视图可切换，概览看板任务卡片正确分列，点击卡片进入详情。
 
 ---
 
-### Task 8: 最终验证 + 构建 + 清理
+## Task 8 — AI 工作过程可视化（任务详情页）
 
-**Files:**
-- 无新文件
+**目标：** 实现左右分栏的 AI 工作过程可视化 — 左侧任务时间线 + 右侧实时工作区。
 
-- [ ] **Step 1: 完整构建验证**
+### 8.1 TaskDetailView 重写
 
-Run: `cd forge-portal && npm run build 2>&1`
-Expected: 无错误，`dist/` 目录生成
+- [ ] 左右分栏布局（左 360px / 右 flex）
+- [ ] 面包屑：任务看板 > 任务 #{id}
 
-- [ ] **Step 2: 检查 dist 输出**
+### 8.2 左侧 — TaskTimeline 组件
 
-Run: `ls forge-portal/dist/`
-Expected: `index.html`, `assets/` 目录存在
+- [ ] `components/task/TaskTimeline.vue`
+- [ ] 垂直时间线，每步显示：
+  - 状态图标（✅ 完成 / 🔄 进行中 / ⬚ 待执行 / ⚠️ 需介入 / ❌ 失败）
+  - 步骤名称 + 已用时间
+  - 一句话摘要（AI 自动生成人话）
+  - 关键指标（如 "3/5 文件生成"、"92 分"）
+- [ ] 左侧 1px 连接线（Border 色）
+- [ ] 活跃步骤：脉冲光晕效果
+- [ ] 点击步骤 → 右侧显示该步骤详情
 
-- [ ] **Step 3: Commit（如有遗留修改）**
+### 8.3 右侧 — TaskRealtimeView 组件
 
-```bash
-git add forge-portal/
-git commit -m "feat(m6): finalize web console build"
-```
+- [ ] `components/task/TaskRealtimeView.vue`
+- [ ] 根据当前活跃步骤动态显示不同内容：
+  - 需求理解：AI 理解摘要 + 任务拆分卡片
+  - 方案规划：方案文档（影响模块、接口变更、数据库变更）
+  - 代码生成：流式代码输出（类似 Claude）+ 文件树显示进度
+  - AI 审查：审查发现流式输出 + 实时分数变化
+  - 测试执行：四层测试进度条 + 实时结果
+  - 流水线构建：构建日志流
+  - 部署：部署进度 + 环境状态变化
+
+### 8.4 DecisionCard 组件
+
+- [ ] `components/task/DecisionCard.vue`
+  - 紫色渐变顶部边框（2px）
+  - AI 头像/图标
+  - 决策内容 + 理由说明
+  - 底部操作按钮（同意 / 替代方案）
+  - 低风险自动通过标记
+  - 高风险阻断等待用户确认
+
+### 8.5 SSE 集成
+
+- [ ] 进入任务详情页时建立 SSE 连接 `GET /api/tasks/{taskId}/stream`
+- [ ] 监听事件：
+  - `step-start` → 更新时间线步骤状态为"进行中"
+  - `step-update` → 更新步骤产出和指标
+  - `task-status` → 更新整体任务状态
+  - `file-generated` → 在代码生成视图中追加文件
+- [ ] 离开页面自动断开 SSE
+
+### 8.6 历史回看
+
+- [ ] 已完成任务的时间线完整保留
+- [ ] 点击任意步骤可查看当时的完整输出
+
+**完成标准：** 进入任务详情 → 左侧时间线实时更新步骤状态 → 右侧显示当前步骤的工作内容 → SSE 实时推送生效。
 
 ---
 
-## M6 完成标准
+## Task 9 — 变更结果页 + 测试报告页
 
-- [ ] forge-portal 构建通过，`dist/` 正常产出
-- [ ] 登录页：用户名 + 密码表单 → 调用 forge-identity 登录 API → 存储 JWT
-- [ ] 路由守卫：未登录自动跳转 /login
-- [ ] 任务看板：分"进行中"和"已完成"两列展示，5s 自动轮询刷新
-- [ ] 创建任务：需求描述文本框 + 任务类型 + 仓库 ID → 调用 forge-engine 创建任务
-- [ ] 任务详情：状态、风险等级、步骤时间线、Token 消耗统计
-- [ ] 代码浏览器：从步骤 outputSnapshot 提取文件列表，点击查看内容
-- [ ] AI Diff 预览：side-by-side 原始 vs 修改后对比
-- [ ] 环境管理：列表展示、销毁操作
-- [ ] 紧急停止按钮：确认弹窗 → 激活/解除 kill switch
-- [ ] 侧边栏导航：看板 / 创建任务 / 环境管理 + 登出
+**目标：** 实现三层变更结果展示和四层测试报告展示。
+
+### 9.1 ChangeResultView — 三层展示
+
+- [ ] **Layer 1（默认展开）— AI 总结：**
+  - 自然语言变更描述
+  - 信任指标面板：
+    - AI Review 分数：N/100
+    - 安全扫描：通过/未通过
+    - 单测覆盖率：N%
+    - 接口测试：全部通过
+    - 风险等级：低/中/高
+  - 每个指标用语义色圆点标注
+
+- [ ] **Layer 2（点击展开）— 变更摘要：**
+  - 结构化变更列表：
+    - 新增 API 列表
+    - 修改 API 列表
+    - 数据库变更
+    - 影响模块
+  - 不是代码 Diff，是人类可读的变更概要
+
+- [ ] **Layer 3（钻取）— 代码详情：**
+  - 左侧文件树 + 右侧代码查看器
+  - AI Diff 视图：逐行变更 + AI 解释注释
+  - 风险标注：高亮问题代码
+
+### 9.2 AiDiffAnnotation 组件
+
+- [ ] `components/code/AiDiffAnnotation.vue`
+  - Diff 行旁边的 AI 注释气泡
+  - 紫色连接线指向代码行
+  - 注释内容：为什么改、有什么风险
+
+### 9.3 TestReportView — 四层测试报告
+
+- [ ] `views/project/TestReportView.vue`
+- [ ] 四个测试层级卡片纵向排列：
+
+  | 层级 | 内容 | 展示 |
+  |------|------|------|
+  | 单元测试 | AI 生成的对应单测 | 通过/失败计数、覆盖率 % |
+  | 接口测试 | AI 从接口定义生成的 API 测试 | API 列表 + 场景（正常/异常/边界）结果 |
+  | 集成测试 | 跨服务业务流程测试 | 流程图形式，每个节点标注通过/失败 |
+  | 回归测试 | 完整运行已有测试 | 通过率趋势、失败用例列表 |
+
+### 9.4 TestLayerCard 组件
+
+- [ ] `components/test/TestLayerCard.vue`
+  - 层级名 + 工具名（如 "单元测试 · JUnit 5"）
+  - 通过/失败/跳过 计数
+  - 折叠/展开详细结果
+  - 语义色状态：全通过=绿，有失败=红，执行中=蓝
+
+**完成标准：** 变更结果页三层展示逻辑正确，测试报告页四层卡片展示正确。
+
+---
+
+## Task 10 — 部署环境页
+
+**目标：** 实现环境状态卡片 + 发布记录时间线 + 临时环境管理。
+
+### 10.1 DeploymentView 重写
+
+- [ ] 环境卡片区域：
+  - dev / staging / prod 三个环境卡片
+  - 每个卡片：当前版本、部署时间、健康状态（StatusDot）、最近部署者
+  - 点击卡片展开详情
+
+- [ ] 发布记录时间线：
+  - 版本号、触发方式（自动/手动）、状态（成功/失败/回滚）
+  - 每条记录可展开查看日志
+
+- [ ] 临时环境列表：
+  - AI 分支预览环境
+  - 自动销毁倒计时
+  - 手动销毁按钮
+
+**完成标准：** 环境状态卡片正确显示，发布记录可查看。
+
+---
+
+## Task 11 — 分支管理 + MR 审批（技术管理者页面）
+
+**目标：** 实现分支管理和 MR 审批页面，仅技术管理者及管理员可见。
+
+### 11.1 BranchManageView
+
+- [ ] 活跃分支列表（表格）：
+  - 分支名、关联需求、创建时间、最新提交、状态
+  - 操作：查看详情、手动合并触发
+- [ ] 冲突检测面板：
+  - 哪些分支存在冲突、冲突文件列表
+  - 操作：AI 尝试解决、手动处理
+- [ ] 合并历史：
+  - 已合并分支、审批人、合并时间
+
+### 11.2 MrReviewView
+
+- [ ] 待审批 MR 列表（按风险等级排序）：
+  - MR 标题、关联需求、风险等级标签、提交时间
+- [ ] MR 详情面板（点击展开或侧边弹出）：
+  - 完整 AI Review 报告（分数 + 问题列表 + 修复建议）
+  - 风险评估详情（为什么判定为高风险）
+  - Code Diff 查看器（复用 DiffViewer + AiDiffAnnotation）
+  - 四层测试结果摘要
+- [ ] 操作按钮：
+  - [批准合并] — 确认弹窗后执行
+  - [驳回] — 输入驳回理由
+  - [请求 AI 修订] — 触发 AI 重新修复
+  - [添加评论]
+
+**完成标准：** 技术管理者可查看分支状态、审批或驳回 MR。
+
+---
+
+## Task 12 — 简化版系统设置（管理员页面）
+
+**目标：** 实现 Phase 1 的最简系统设置。
+
+### 12.1 SystemSettingsView
+
+- [ ] Tab 页切换：紧急停止 | AI 模型配置 | 用户管理
+
+- [ ] **紧急停止 Tab：**
+  - L1 紧急停止开关（当前状态 + 切换按钮 + 操作日志）
+  - 二次确认弹窗
+
+- [ ] **AI 模型配置 Tab：**
+  - 当前模型名称、API Key（脱敏显示）
+  - Token 预算设置
+  - 模型调用统计（总调用次数、总 Token 消耗）
+
+- [ ] **用户管理 Tab：**
+  - 用户列表（表格）：用户名、角色、创建时间、状态
+  - 操作：修改角色、启用/禁用
+  - 新增用户按钮
+
+**完成标准：** 管理员可管理紧急停止、查看 AI 配置、管理用户。
+
+---
+
+## Task 13 — 后端 API 补充
+
+**目标：** 补充前端页面所需但后端尚未提供的 API。
+
+### 13.1 项目管理 API（forge-engine 或 forge-pipeline）
+
+- [ ] 评估项目数据应该放在哪个服务中（建议 forge-engine，作为任务的上层概念）
+- [ ] 数据库：`engine_project` 表（id, tenant_id, name, description, repo_url, platform_type, tech_stack, status, starred, org_group, gmt_create, gmt_modified）
+- [ ] Flyway 迁移脚本
+- [ ] API 端点：
+  - `GET /api/projects` — 项目列表（支持搜索、筛选、排序）
+  - `POST /api/projects` — 创建项目
+  - `GET /api/projects/{id}` — 项目详情
+  - `PUT /api/projects/{id}/star` — 星标切换
+  - `POST /api/projects/import` — 批量导入
+  - `GET /api/projects/{id}/profile` — 项目画像
+
+### 13.2 需求对话 API（forge-engine）
+
+- [ ] 评估需求对话是否需要独立存储（建议先复用 task + step 模型，对话作为 ANALYZE 步骤的输入/输出）
+- [ ] 如果需要多轮对话，需新增 `engine_conversation` 表
+- [ ] API：
+  - `POST /api/projects/{projectId}/requirements/chat` — 发送需求消息（返回 SSE 流）
+  - `GET /api/projects/{projectId}/requirements/history` — 历史需求列表
+
+### 13.3 分支 & MR API（forge-pipeline 适配器透传）
+
+- [ ] `GET /api/projects/{projectId}/branches` — 分支列表
+- [ ] `GET /api/projects/{projectId}/merge-requests` — MR 列表
+- [ ] `POST /api/merge-requests/{mrId}/approve` — 批准 MR
+- [ ] `POST /api/merge-requests/{mrId}/reject` — 驳回 MR
+
+### 13.4 测试报告 API
+
+- [ ] `GET /api/tasks/{taskId}/test-report` — 四层测试结果聚合
+- [ ] 可能需要从 MeterSphere API 拉取数据（Phase 1 可先 mock）
+
+**完成标准：** 所有前端页面所需的 API 端点都已实现，接口文档与前端类型定义一致。
+
+---
+
+## Task 14 — 集成联调 + 端到端测试
+
+**目标：** 全流程联调，验证 Phase 1 验收标准。
+
+### 14.1 端到端流程验证
+
+- [ ] 用户登录 → 进入项目大厅
+- [ ] 创建新项目（或接入已有项目）
+- [ ] 进入需求对话页 → 输入"创建一个用户管理服务"
+- [ ] AI 流式回复 → 生成需求确认卡片
+- [ ] 确认执行 → 跳转任务看板 → 看到任务卡片在"解析中"列
+- [ ] 进入任务详情 → 左侧时间线实时更新 → 右侧显示代码生成过程
+- [ ] 任务完成 → 查看变更结果（三层）
+- [ ] 查看测试报告（四层）
+- [ ] 查看部署环境页 → dev 环境显示已部署
+
+### 14.2 角色测试
+
+- [ ] 普通用户：看不到分支管理和 MR 审批
+- [ ] 技术管理者：可以看到所有页面 + 审批 MR
+- [ ] 管理员：可以访问系统设置
+
+### 14.3 视觉走查
+
+- [ ] 所有页面暗色主题一致
+- [ ] Aurora 背景只在登录页
+- [ ] Forge Purple (#8B5CF6) 品牌色统一
+- [ ] 骨架屏加载（无 spinner）
+- [ ] AI 生成内容有紫色渐变左边线标记
+- [ ] 空状态页面有引导文案和操作按钮
+
+### 14.4 SSE 连接测试
+
+- [ ] 任务详情页 SSE 连接正常
+- [ ] 连接断开自动重连
+- [ ] 离开页面自动断开
+- [ ] 多个页面同时连接不冲突
+
+### 14.5 构建验证
+
+- [ ] `npm run build` 无报错
+- [ ] 构建产物可正常通过 nginx 或 Vite preview 访问
+- [ ] 所有页面路由可直接访问（history mode 配置正确）
+
+**完成标准：** Phase 1 完整验收标准通过 — 从需求输入到代码部署的完整流程在浏览器中可完成。
+
+---
+
+## 任务依赖关系
+
+```
+Task 0 (SSE 后端) ──────────────────────────────────┐
+                                                      │
+Task 1 (设计系统) ──→ Task 2 (通用组件) ──→ Task 3 (路由布局)
+                                               │
+                                    ┌──────────┼──────────┬──────────┐
+                                    ▼          ▼          ▼          ▼
+                              Task 4       Task 5     Task 12    Task 13
+                              (登录)       (项目大厅)  (系统设置)  (后端 API)
+                                    │          │                     │
+                                    ▼          ▼                     │
+                              Task 6 (需求对话) ←────────────────────┤
+                                    │                                │
+                                    ▼                                │
+                              Task 7 (任务看板) ←────────────────────┤
+                                    │                                │
+                              ┌─────┼─────┐                         │
+                              ▼           ▼                         │
+                        Task 8        Task 9 ←──────────────────────┤
+                        (AI 可视化)    (变更+测试)                    │
+                              │           │                         │
+                              ▼           ▼                         │
+                        Task 10      Task 11 ←──────────────────────┘
+                        (部署环境)    (分支+MR)
+                              │           │
+                              └─────┬─────┘
+                                    ▼
+                              Task 14 (集成联调)
+```
+
+**可并行路径：**
+- Task 0 (SSE 后端) 和 Task 1~3 (前端基础) 可同时启动
+- Task 4/5/12/13 可并行
+- Task 8/9/10/11 可并行
+
+---
+
+## Phase 1 简化说明
+
+以下功能在 Phase 1 中做简化处理：
+
+| 功能 | Phase 1 实现 | 完整版（Phase 2+） |
+|------|-------------|-------------------|
+| OAuth 授权 | 手动输入 Token/仓库地址 | 完整 OAuth 流程 |
+| 实时推送 | SSE 单向推送 | WebSocket 双向通信 |
+| 需求对话 | 单轮 → 确认卡片 | 多轮对话 + 模板引导 |
+| 项目画像 | 基础信息展示 | AI 深度分析 |
+| 质量仪表盘 | 不实现 | 完整趋势图表 |
+| 规范配置 | 不实现 | 继承链 + 可配置 |
+| 测试报告数据 | Mock 数据 | MeterSphere 真实数据 |
+| 代码浏览器 | 简单文本查看 | Monaco Editor |
+
+---
+
+## 完成标准汇总
+
+1. ✅ 登录页：Aurora 背景 + 毛玻璃卡片 + 发光按钮
+2. ✅ 项目大厅：项目列表 + 搜索 + 星标 + 创建/导入
+3. ✅ 需求对话：自然语言输入 → AI 回复（SSE） → 确认卡片 → 创建任务
+4. ✅ 任务看板：三级视图可切换（概览看板 / 详情 / 实时）
+5. ✅ AI 工作可视化：左右分栏，时间线 + 实时工作区 + 决策卡片
+6. ✅ 变更结果：三层展示（AI 总结 → 变更摘要 → 代码 Diff）
+7. ✅ 测试报告：四层测试卡片（单测/接口/集成/回归）
+8. ✅ 部署环境：环境卡片 + 发布时间线 + 临时环境
+9. ✅ 分支管理：活跃分支 + 冲突检测 + 合并历史（技术管理者）
+10. ✅ MR 审批：待审批列表 + Review 报告 + 批准/驳回（技术管理者）
+11. ✅ 系统设置：紧急停止 + AI 配置 + 用户管理（管理员）
+12. ✅ 视觉风格："深空指挥中心"暗色主题，Forge Purple 品牌色统一
+13. ✅ 角色路由：不同角色看到不同菜单，路由守卫生效
+14. ✅ SSE 实时推送：任务详情页实时接收步骤更新
