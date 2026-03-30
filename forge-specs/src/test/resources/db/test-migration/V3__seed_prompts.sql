@@ -1,0 +1,1 @@
+-- V3: Seed prompt templates (skipped in test environment to keep tables empty for unit tests)
