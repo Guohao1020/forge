@@ -4,3 +4,26 @@ server:
 spring:
   application:
     name: forge-identity
+  datasource:
+    url: jdbc:mysql://localhost:3306/forge_identity?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: root
+    password: forge_root_2026
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+forge:
+  jwt:
+    secret: ${JWT_SECRET:forge-platform-jwt-secret-key-2026-must-be-at-least-256-bits}
+    access-token-expire-minutes: 30
+    refresh-token-expire-minutes: 10080
+
+mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true

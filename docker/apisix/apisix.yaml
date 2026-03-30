@@ -26,6 +26,10 @@ routes:
     plugins:
       proxy-rewrite:
         regex_uri: ["^/api/pipeline/(.*)", "/$1"]
+      forward-auth:
+        uri: "http://forge-identity:8082/api/auth/verify"
+        request_headers: ["Authorization"]
+        upstream_headers: ["X-User-Id", "X-Tenant-Id", "X-Username"]
 
   - uri: /api/specs/*
     upstream:
