@@ -1,0 +1,1 @@
+We need some kind of order history thing. Users should be able to see orders. Make it work and add pagination maybe. It should be fast and look good. Handle errors. Ask the frontend team what they need.
