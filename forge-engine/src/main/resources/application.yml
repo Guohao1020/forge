@@ -4,3 +4,14 @@ server:
 spring:
   application:
     name: forge-engine
+
+forge:
+  claude:
+    api-key: ${CLAUDE_API_KEY:}
+    model: claude-sonnet-4-20250514
+    base-url: https://api.anthropic.com
+    max-tokens: 4096
+  specs:
+    base-url: http://localhost:8084
+  pipeline:
+    base-url: http://localhost:8083
