@@ -1,0 +1,71 @@
+-- 任务主表
+CREATE TABLE engine_task (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '任务ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '租户ID',
+    user_id BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
+    requirement TEXT NOT NULL COMMENT '需求描述',
+    task_type VARCHAR(32) NOT NULL DEFAULT 'GENERATE' COMMENT '任务类型: GENERATE/ITERATE',
+    status VARCHAR(32) NOT NULL DEFAULT 'SUBMITTED' COMMENT '状态',
+    risk_level VARCHAR(16) DEFAULT NULL COMMENT '风险等级: LOW/MEDIUM/HIGH',
+    repo_id VARCHAR(128) DEFAULT NULL COMMENT '仓库ID',
+    branch_name VARCHAR(128) DEFAULT NULL COMMENT '工作分支',
+    mr_id BIGINT DEFAULT NULL COMMENT 'MR ID',
+    review_score INT DEFAULT NULL COMMENT 'Review 评分 0-100',
+    total_input_tokens BIGINT NOT NULL DEFAULT 0 COMMENT '累计输入 Token',
+    total_output_tokens BIGINT NOT NULL DEFAULT 0 COMMENT '累计输出 Token',
+    error_message TEXT DEFAULT NULL COMMENT '错误信息',
+    gmt_create DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    INDEX idx_tenant_user (tenant_id, user_id),
+    INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='任务主表';
+
+-- 任务步骤表
+CREATE TABLE engine_task_step (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '步骤ID',
+    task_id BIGINT UNSIGNED NOT NULL COMMENT '任务ID',
+    step_type VARCHAR(32) NOT NULL COMMENT '步骤类型',
+    step_order INT NOT NULL COMMENT '步骤序号',
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING' COMMENT '状态',
+    input_snapshot TEXT DEFAULT NULL COMMENT '输入快照(JSON)',
+    output_snapshot TEXT DEFAULT NULL COMMENT '输出快照(JSON)',
+    input_tokens BIGINT NOT NULL DEFAULT 0 COMMENT '输入 Token',
+    output_tokens BIGINT NOT NULL DEFAULT 0 COMMENT '输出 Token',
+    retry_count INT NOT NULL DEFAULT 0 COMMENT '重试次数',
+    error_message TEXT DEFAULT NULL COMMENT '错误信息',
+    gmt_create DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    INDEX idx_task_id (task_id),
+    INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='任务步骤表';
+
+-- 模型调用日志（append-only）
+CREATE TABLE engine_model_call_log (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT 'ID',
+    task_id BIGINT UNSIGNED NOT NULL COMMENT '任务ID',
+    step_id BIGINT UNSIGNED DEFAULT NULL COMMENT '步骤ID',
+    model_id VARCHAR(64) NOT NULL COMMENT '模型ID',
+    purpose VARCHAR(32) NOT NULL COMMENT '用途: ANALYZE/GENERATE/REVIEW/FIX',
+    input_tokens BIGINT NOT NULL DEFAULT 0 COMMENT '输入 Token',
+    output_tokens BIGINT NOT NULL DEFAULT 0 COMMENT '输出 Token',
+    latency_ms BIGINT NOT NULL DEFAULT 0 COMMENT '延迟(ms)',
+    is_fallback TINYINT NOT NULL DEFAULT 0 COMMENT '是否降级',
+    gmt_create DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    INDEX idx_task_id (task_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='模型调用日志';
+
+-- 代码变更记录
+CREATE TABLE engine_code_change (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT 'ID',
+    task_id BIGINT UNSIGNED NOT NULL COMMENT '任务ID',
+    repo_id VARCHAR(128) NOT NULL COMMENT '仓库ID',
+    branch_name VARCHAR(128) NOT NULL COMMENT '分支名',
+    commit_hash VARCHAR(64) DEFAULT NULL COMMENT 'commit hash',
+    file_count INT NOT NULL DEFAULT 0 COMMENT '变更文件数',
+    review_score INT DEFAULT NULL COMMENT 'Review 评分',
+    mr_id BIGINT DEFAULT NULL COMMENT 'MR ID',
+    mr_status VARCHAR(32) DEFAULT NULL COMMENT 'MR 状态',
+    gmt_create DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    INDEX idx_task_id (task_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='代码变更记录';
