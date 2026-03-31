@@ -14,6 +14,9 @@ type Config struct {
 	GitHubClientID     string
 	GitHubClientSecret string
 	GitHubRedirectURI  string
+
+	// Temporal
+	TemporalAddress string
 }
 
 func Load() *Config {
@@ -28,6 +31,8 @@ func Load() *Config {
 		GitHubClientID:     getEnv("GITHUB_CLIENT_ID", ""),
 		GitHubClientSecret: getEnv("GITHUB_CLIENT_SECRET", ""),
 		GitHubRedirectURI:  getEnv("GITHUB_REDIRECT_URI", "http://localhost:3000/auth/github/callback"),
+
+		TemporalAddress: getEnv("TEMPORAL_ADDRESS", "localhost:7233"),
 	}
 }
 

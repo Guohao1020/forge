@@ -5,12 +5,15 @@ import (
 	"github.com/shulex/forge/forge-core/internal/middleware"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/project"
+	"github.com/shulex/forge/forge-core/internal/module/task"
 )
 
 type Deps struct {
 	AuthHandler    *auth.Handler
 	AuthService    *auth.Service
 	ProjectHandler *project.Handler
+	TaskHandler    *task.Handler
+	TaskSSE        *task.SSEHandler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -53,6 +56,18 @@ func Setup(deps *Deps) *gin.Engine {
 			protected.DELETE("/projects/:id", deps.ProjectHandler.Archive)
 			protected.POST("/projects/:id/star", deps.ProjectHandler.Star)
 			protected.DELETE("/projects/:id/star", deps.ProjectHandler.Unstar)
+
+			// Tasks
+			if deps.TaskHandler != nil {
+				protected.POST("/projects/:id/tasks", deps.TaskHandler.CreateTask)
+				protected.GET("/projects/:id/tasks", deps.TaskHandler.ListTasks)
+				protected.GET("/projects/:id/tasks/:taskId", deps.TaskHandler.GetTask)
+			}
+
+			// SSE
+			if deps.TaskSSE != nil {
+				protected.GET("/stream/tasks/:taskId", deps.TaskSSE.Stream)
+			}
 		}
 	}
 
