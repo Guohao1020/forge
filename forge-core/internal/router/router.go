@@ -4,11 +4,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/shulex/forge/forge-core/internal/middleware"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
+	"github.com/shulex/forge/forge-core/internal/module/project"
 )
 
 type Deps struct {
-	AuthHandler *auth.Handler
-	AuthService *auth.Service
+	AuthHandler    *auth.Handler
+	AuthService    *auth.Service
+	ProjectHandler *project.Handler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -32,6 +34,15 @@ func Setup(deps *Deps) *gin.Engine {
 		{
 			protected.POST("/auth/logout", deps.AuthHandler.Logout)
 			protected.GET("/auth/me", deps.AuthHandler.Me)
+
+			// Projects
+			protected.POST("/projects", deps.ProjectHandler.Create)
+			protected.GET("/projects", deps.ProjectHandler.List)
+			protected.GET("/projects/:id", deps.ProjectHandler.GetByID)
+			protected.PUT("/projects/:id", deps.ProjectHandler.Update)
+			protected.DELETE("/projects/:id", deps.ProjectHandler.Archive)
+			protected.POST("/projects/:id/star", deps.ProjectHandler.Star)
+			protected.DELETE("/projects/:id/star", deps.ProjectHandler.Unstar)
 		}
 	}
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/shulex/forge/forge-core/internal/config"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
+	"github.com/shulex/forge/forge-core/internal/module/project"
 	"github.com/shulex/forge/forge-core/internal/pkg/database"
 	forgeRedis "github.com/shulex/forge/forge-core/internal/pkg/redis"
 	"github.com/shulex/forge/forge-core/internal/router"
@@ -42,9 +43,15 @@ func main() {
 	authService := auth.NewService(authRepo, cfg.JWTSecret, cfg.JWTExpireHours)
 	authHandler := auth.NewHandler(authService)
 
+	// Project module
+	projectRepo := project.NewRepository(db)
+	projectService := project.NewService(projectRepo)
+	projectHandler := project.NewHandler(projectService)
+
 	r := router.Setup(&router.Deps{
-		AuthHandler: authHandler,
-		AuthService: authService,
+		AuthHandler:    authHandler,
+		AuthService:    authService,
+		ProjectHandler: projectHandler,
 	})
 
 	slog.Info("forge-core starting", "port", cfg.ServerPort)

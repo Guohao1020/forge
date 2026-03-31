@@ -1,0 +1,163 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Separator } from "@/components/ui/separator";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { api } from "@/lib/api";
+
+interface Project {
+  id: number;
+  name: string;
+  description: string;
+  defaultBranch: string;
+}
+
+export default function ProjectSettingsPage() {
+  const params = useParams();
+  const router = useRouter();
+  const projectId = params.id as string;
+
+  const [project, setProject] = useState<Project | null>(null);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [defaultBranch, setDefaultBranch] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+  const [archiving, setArchiving] = useState(false);
+
+  useEffect(() => {
+    api.get<Project>(`/projects/${projectId}`).then((p) => {
+      setProject(p);
+      setName(p.name);
+      setDescription(p.description);
+      setDefaultBranch(p.defaultBranch);
+    });
+  }, [projectId]);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setSaveMsg("");
+    try {
+      await api.put(`/projects/${projectId}`, { name, description, defaultBranch });
+      setSaveMsg("保存成功");
+      setTimeout(() => setSaveMsg(""), 3000);
+    } catch (err: unknown) {
+      setSaveMsg(err instanceof Error ? err.message : "保存失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleArchive() {
+    setArchiving(true);
+    try {
+      await api.delete(`/projects/${projectId}`);
+      router.push("/projects");
+    } catch {
+      setArchiving(false);
+    }
+  }
+
+  if (!project) {
+    return <div className="h-48 rounded-xl bg-card animate-pulse" />;
+  }
+
+  return (
+    <div className="max-w-xl">
+      <h1 className="text-2xl font-semibold tracking-tight mb-6">项目设置</h1>
+
+      <form onSubmit={handleSave} className="space-y-5">
+        <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+          <h2 className="text-sm font-medium">基本信息</h2>
+          <div className="space-y-2">
+            <Label htmlFor="s-name">项目名称</Label>
+            <Input
+              id="s-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="bg-input border-border"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="s-desc">描述</Label>
+            <Textarea
+              id="s-desc"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="bg-input border-border resize-none"
+              rows={3}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="s-branch">默认分支</Label>
+            <Input
+              id="s-branch"
+              value={defaultBranch}
+              onChange={(e) => setDefaultBranch(e.target.value)}
+              className="bg-input border-border font-mono text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Button type="submit" disabled={saving}>
+            {saving ? "保存中..." : "保存更改"}
+          </Button>
+          {saveMsg && (
+            <span className={`text-sm ${saveMsg === "保存成功" ? "text-green-500" : "text-destructive"}`}>
+              {saveMsg}
+            </span>
+          )}
+        </div>
+      </form>
+
+      <Separator className="my-8" />
+
+      {/* Danger zone */}
+      <div className="rounded-xl border border-destructive/30 bg-card p-5">
+        <h2 className="text-sm font-medium text-destructive mb-1">危险区域</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          归档后项目将不再显示在项目大厅，但数据不会删除。
+        </p>
+        <AlertDialog>
+          <AlertDialogTrigger
+            disabled={archiving}
+            className="inline-flex items-center justify-center rounded-md bg-destructive px-4 py-2 text-sm font-medium text-white hover:bg-destructive/90 transition-colors disabled:opacity-50"
+          >
+            {archiving ? "归档中..." : "归档项目"}
+          </AlertDialogTrigger>
+          <AlertDialogContent className="bg-card border-border">
+            <AlertDialogHeader>
+              <AlertDialogTitle>确认归档项目？</AlertDialogTitle>
+              <AlertDialogDescription>
+                项目 <strong>{project.name}</strong> 将被归档，从项目大厅移除。此操作可以通过数据库恢复。
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogAction onClick={handleArchive} className="bg-destructive hover:bg-destructive/90">
+                确认归档
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </div>
+  );
+}

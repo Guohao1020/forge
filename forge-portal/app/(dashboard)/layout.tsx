@@ -1,14 +1,18 @@
 "use client";
 
 import { useAuth } from "@/lib/auth";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { Sidebar } from "@/components/sidebar";
 import { Topbar } from "@/components/topbar";
 
+// Project detail pages manage their own layout (ProjectSidebar + no Topbar)
+const PROJECT_DETAIL_PATTERN = /^\/projects\/\d+/;
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -18,16 +22,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[var(--background)]">
-        <div className="text-sm text-[var(--muted-foreground)]">加载中...</div>
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-sm text-muted-foreground">加载中...</div>
       </div>
     );
   }
 
   if (!user) return null;
 
+  // Project detail pages render their own full layout
+  if (PROJECT_DETAIL_PATTERN.test(pathname)) {
+    return <>{children}</>;
+  }
+
   return (
-    <div className="flex h-screen bg-[var(--background)]">
+    <div className="flex h-screen bg-background">
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
         <Topbar />
