@@ -88,8 +88,8 @@ type TaskStep struct {
 }
 
 type CreateTaskRequest struct {
-	Title       string `json:"title"`
-	Requirement string `json:"requirement" binding:"required"`
+	Title       string `json:"title" binding:"max=200"`
+	Requirement string `json:"requirement" binding:"required,min=1,max=10000"`
 }
 
 type TaskResponse struct {

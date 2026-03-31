@@ -24,8 +24,8 @@ type Role struct {
 
 // Request DTOs
 type LoginRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Username string `json:"username" binding:"required,min=2,max=50"`
+	Password string `json:"password" binding:"required,min=6,max=128"`
 }
 
 // Response DTOs
