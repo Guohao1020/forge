@@ -107,6 +107,10 @@ func (s *Service) Login(ctx context.Context, req *LoginRequest, ipAddr string) (
 
 func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(t *jwt.Token) (interface{}, error) {
+		// Reject algorithm confusion attacks
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
 		return s.jwtSecret, nil
 	})
 	if err != nil {

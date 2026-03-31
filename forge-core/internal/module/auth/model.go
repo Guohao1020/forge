@@ -65,7 +65,7 @@ type GitHubAuthorizeResponse struct {
 // GitHubCallbackRequest is the query parameters from GitHub OAuth callback.
 type GitHubCallbackRequest struct {
 	Code  string `form:"code" binding:"required"`
-	State string `form:"state"`
+	State string `form:"state" binding:"required"`
 }
 
 // GitHubCallbackResponse is returned after successful OAuth callback.

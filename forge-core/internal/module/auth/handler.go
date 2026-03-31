@@ -1,9 +1,9 @@
 package auth
 
 import (
-	"fmt"
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shulex/forge/forge-core/internal/pkg/response"
@@ -69,7 +69,12 @@ func (h *Handler) Me(c *gin.Context) {
 
 // GET /api/auth/github/authorize
 func (h *Handler) GitHubAuthorize(c *gin.Context) {
-	state := fmt.Sprintf("%d", time.Now().UnixNano())
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		response.Fail(c, http.StatusInternalServerError, "生成安全令牌失败")
+		return
+	}
+	state := hex.EncodeToString(b)
 	authorizeURL := h.service.GetGitHubAuthorizeURL(state)
 	response.OK(c, GitHubAuthorizeResponse{AuthorizeURL: authorizeURL})
 }
