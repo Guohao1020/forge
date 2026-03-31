@@ -17,6 +17,9 @@ type Config struct {
 
 	// Temporal
 	TemporalAddress string
+
+	// Encryption
+	EncryptionKey string
 }
 
 func Load() *Config {
@@ -33,6 +36,8 @@ func Load() *Config {
 		GitHubRedirectURI:  getEnv("GITHUB_REDIRECT_URI", "http://localhost:3000/auth/github/callback"),
 
 		TemporalAddress: getEnv("TEMPORAL_ADDRESS", "localhost:7233"),
+
+		EncryptionKey: getEnv("ENCRYPTION_KEY", ""),
 	}
 }
 

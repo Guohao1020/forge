@@ -43,7 +43,7 @@ func main() {
 	// Auth module
 	authRepo := auth.NewRepository(db)
 	authService := auth.NewService(authRepo, cfg.JWTSecret, cfg.JWTExpireHours,
-		cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.GitHubRedirectURI)
+		cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.GitHubRedirectURI, cfg.EncryptionKey)
 	authHandler := auth.NewHandler(authService)
 
 	// Project module

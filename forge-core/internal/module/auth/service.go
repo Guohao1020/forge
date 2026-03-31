@@ -12,6 +12,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	ghAdapter "github.com/shulex/forge/forge-core/internal/adapter/github"
+	"github.com/shulex/forge/forge-core/internal/pkg/crypto"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -22,9 +23,10 @@ type Service struct {
 	githubClientID    string
 	githubSecret      string
 	githubRedirectURI string
+	encryptionKey     string
 }
 
-func NewService(repo *Repository, jwtSecret string, jwtExpireHours int, githubClientID, githubSecret, githubRedirectURI string) *Service {
+func NewService(repo *Repository, jwtSecret string, jwtExpireHours int, githubClientID, githubSecret, githubRedirectURI, encryptionKey string) *Service {
 	return &Service{
 		repo:              repo,
 		jwtSecret:         []byte(jwtSecret),
@@ -32,6 +34,7 @@ func NewService(repo *Repository, jwtSecret string, jwtExpireHours int, githubCl
 		githubClientID:    githubClientID,
 		githubSecret:      githubSecret,
 		githubRedirectURI: githubRedirectURI,
+		encryptionKey:     encryptionKey,
 	}
 }
 
@@ -185,11 +188,20 @@ func (s *Service) HandleGitHubCallback(ctx context.Context, userID int64, code s
 	}
 
 	profileJSON, _ := json.Marshal(ghUser)
+	accessToken := tokenResp.AccessToken
+	if s.encryptionKey != "" {
+		encrypted, err := crypto.Encrypt(s.encryptionKey, tokenResp.AccessToken)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt token: %w", err)
+		}
+		accessToken = encrypted
+	}
+
 	identity := &UserIdentity{
 		UserID:      userID,
 		Provider:    "github",
 		ProviderUID: strconv.FormatInt(ghUser.ID, 10),
-		AccessToken: tokenResp.AccessToken,
+		AccessToken: accessToken,
 		Profile:     string(profileJSON),
 	}
 
@@ -221,7 +233,15 @@ func (s *Service) GetGitHubToken(ctx context.Context, userID int64) (string, err
 	if err != nil {
 		return "", fmt.Errorf("github not connected: %w", err)
 	}
-	return identity.AccessToken, nil
+	token := identity.AccessToken
+	if s.encryptionKey != "" {
+		decrypted, err := crypto.Decrypt(s.encryptionKey, token)
+		if err != nil {
+			return "", fmt.Errorf("decrypt token: %w", err)
+		}
+		token = decrypted
+	}
+	return token, nil
 }
 
 // HasGitHubConnection checks if a user has a GitHub identity binding.
