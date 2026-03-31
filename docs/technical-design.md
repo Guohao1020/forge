@@ -18,10 +18,11 @@
 - [7. 外部平台适配器技术设计](#7-外部平台适配器技术设计)
 - [8. 自动化测试平台技术设计](#8-自动化测试平台技术设计)
 - [9. 产品加速库技术设计](#9-产品加速库技术设计)
-- [10. 数据架构](#10-数据架构)
-- [11. 高可用设计](#11-高可用设计)
-- [12. 部署架构](#12-部署架构)
-- [13. 技术选型总览](#13-技术选型总览)
+- [10. Harness Engineering 技术设计](#10-harness-engineering-技术设计)
+- [11. 数据架构](#11-数据架构)
+- [12. 高可用设计](#12-高可用设计)
+- [13. 部署架构](#13-部署架构)
+- [14. 技术选型总览](#14-技术选型总览)
 - [附录：引用资料索引](#附录引用资料索引)
 
 ---
@@ -504,7 +505,162 @@ Forge AI 生成代码
 
 ---
 
-## 10. 数据架构
+## 10. Harness Engineering 技术设计
+
+> 参考调研：[references/harness-engineering-research.md](../references/harness-engineering-research.md)
+
+### 10.1 整体架构
+
+Forge 作为 Harness Engineering 平台，在 AI 引擎周围构建三层 Harness 能力：
+
+```
+                    ┌─────────────────────────┐
+                    │      AI 引擎（Agent）     │
+                    │   需求解析 → 代码生成      │
+                    └────────┬────────────────┘
+                             │
+         ┌───────────────────┼───────────────────┐
+         ▼                   ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│ Context Layer    │ │ Constraint Layer │ │ Entropy Layer   │
+│                 │ │                 │ │                 │
+│ 规范中心         │ │ 约束引擎         │ │ 熵管理后台       │
+│ · 编码规范       │ │ · Linter 管理    │ │ · 定期扫描       │
+│ · Prompt 模板    │ │ · 结构测试       │ │ · 自动修复 PR    │
+│ · Review 规则    │ │ · Agent 错误消息  │ │ · 质量趋势       │
+│ · 项目画像       │ │ · Pre-commit     │ │ · 文档同步检查    │
+│                 │ │                 │ │                 │
+│ 可观测性数据      │ │ 质量门禁         │ │ 熵指标告警       │
+│ · DeepFlow 指标  │ │ · CI 流水线      │ │                 │
+│ · 运行时反馈     │ │ · 四层测试       │ │                 │
+└─────────────────┘ └─────────────────┘ └─────────────────┘
+```
+
+### 10.2 可观测性集成（DeepFlow）
+
+#### 技术选型
+
+| 维度 | DeepFlow |
+|------|----------|
+| 采集方式 | eBPF（Linux 内核级），零代码侵入 |
+| 部署方式 | Agent 以 DaemonSet 部署在每个 K8s 节点，Server 独立部署 |
+| 存储后端 | ClickHouse（内置 SmartEncoding 10x 压缩） |
+| API 兼容 | SQL、PromQL、OTLP — 可作为 Prometheus/Grafana 数据源 |
+| 协议解析 | HTTP/gRPC/MySQL/Redis/Kafka 等自动识别，Wasm 插件扩展私有协议 |
+| 性能剖析 | OnCPU/OffCPU/GPU/Memory 火焰图，<1% 开销 |
+| License | Apache 2.0 |
+
+#### 集成架构
+
+```
+K8s 集群（AI 孵化产品部署环境）
+┌─────────────────────────────────────────┐
+│  Node 1              Node 2             │
+│  ┌────────────┐     ┌────────────┐      │
+│  │ App Pods   │     │ App Pods   │      │  ← AI 生成的业务服务
+│  │ (AI 生成)   │     │ (AI 生成)   │      │
+│  └─────┬──────┘     └─────┬──────┘      │
+│        │ eBPF              │ eBPF        │
+│  ┌─────▼──────┐     ┌─────▼──────┐      │
+│  │ DeepFlow   │     │ DeepFlow   │      │  ← DaemonSet, 自动采集
+│  │ Agent      │     │ Agent      │      │
+│  └─────┬──────┘     └─────┬──────┘      │
+│        └───────┬──────────┘              │
+│                ▼                         │
+│  ┌──────────────────────┐               │
+│  │   DeepFlow Server    │               │  ← 集中存储 + 查询
+│  │   (ClickHouse)       │               │
+│  └──────────┬───────────┘               │
+└─────────────┼───────────────────────────┘
+              │ PromQL / SQL API
+              ▼
+┌──────────────────────────┐
+│  Forge Platform          │
+│  ├── forge-engine        │  ← 拉取运行时指标作为迭代上下文
+│  ├── forge-portal        │  ← 展示可观测性仪表盘
+│  └── forge-pipeline      │  ← 部署后健康检查
+└──────────────────────────┘
+```
+
+#### 数据流
+
+1. **部署后自动监控**：AI 生成的代码部署到 K8s → DeepFlow Agent 自动通过 eBPF 采集网络流量和系统调用 → 无需任何代码改动
+2. **指标查询**：forge-portal 通过 DeepFlow PromQL API 查询延迟、吞吐、错误率 → 展示在 Web 工作台
+3. **反馈闭环**：forge-engine 在处理迭代任务时，通过 DeepFlow SQL API 查询上次部署后的运行时数据 → 注入 AI 上下文（如"该服务 P99 延迟 120ms，错误率 0.3%"）
+4. **异常告警**：forge-pipeline 部署后定期检查 DeepFlow 指标 → 延迟/错误率超阈值 → 触发告警或自动回滚
+
+#### Phase 规划
+
+| Phase | 内容 |
+|-------|------|
+| Phase 1 | docker-compose 加入 DeepFlow Server，Web 工作台预留可观测性入口 |
+| Phase 2 | 完整集成 — 运行时指标展示 + 反馈闭环 + 部署后验证 |
+| Phase 3 | AI 自主优化 — 根据可观测性数据主动发起性能优化任务 |
+
+### 10.3 机械化约束引擎（Phase 2）
+
+#### 架构设计
+
+```
+AI 生成代码
+      │
+      ▼
+┌─────────────────────────┐
+│   Constraint Engine      │
+│                         │
+│  ① Linter 执行           │  ← 秒级反馈
+│     · Checkstyle (Java)  │
+│     · ESLint (TS/Vue)    │
+│     · 自定义规则          │
+│                         │
+│  ② 结构测试               │  ← 验证分层架构
+│     · 依赖方向检查         │
+│     · Provider 接口合规    │
+│     · 禁止横切关注点直接引用 │
+│                         │
+│  ③ Agent 错误消息格式化    │  ← 失败时生成 Agent 可消费的修复指令
+│     · 违规位置             │
+│     · 修复建议             │
+│     · 参考规范链接          │
+└──────────┬──────────────┘
+           │
+    全部通过 │ 有违规
+           │ ▼
+           │ AI 自动修复（基于格式化错误消息）
+           │ 最多 3 轮
+           ▼
+    进入 AI Review
+```
+
+#### 约束规则管理
+
+- 规则存储在 forge-specs 规范中心，与编码规范同层管理
+- 支持公司级 → 团队级 → 项目级继承覆盖
+- 技术管理者可在 Web 工作台配置项目的约束规则
+
+### 10.4 熵管理系统（Phase 2）
+
+#### 定时扫描任务
+
+| 扫描项 | 频率 | 检测内容 | 修复方式 |
+|--------|------|---------|---------|
+| 命名一致性 | 每日 | 变量/类/方法命名是否符合规范基线 | 自动修复 PR |
+| 文档同步 | 每次 MR 合并后 | API 变更是否同步更新了文档 | 告警 + 自动补充 |
+| 死代码检测 | 每周 | 未被引用的类/方法/导入 | 自动清理 PR |
+| 测试覆盖率 | 每日 | 覆盖率是否低于阈值或持续下降 | 告警 |
+| 依赖漏洞 | 每日 | 第三方依赖是否有已知漏洞 | 告警 + 自动升级 PR |
+
+#### 技术实现
+
+- 使用 XXL-Job 调度定时扫描任务
+- 扫描结果存储在 forge-engine 数据库
+- 低风险修复自动生成 PR 并合并
+- 高风险修复生成 PR 等待技术管理者审批
+- Web 工作台质量仪表盘展示趋势
+
+---
+
+## 11. 数据架构
 
 ### 10.1 AI 引擎数据
 
@@ -545,7 +701,7 @@ Forge AI 生成代码
 
 ---
 
-## 11. 高可用设计
+## 12. 高可用设计
 
 | 风险点 | 解决方案 |
 |--------|---------|
@@ -563,7 +719,7 @@ Forge AI 生成代码
 
 ---
 
-## 12. 部署架构
+## 13. 部署架构
 
 Forge 平台通过容器编排适配器部署，所有服务容器化运行。首期使用阿里云 ACK，后续可切换为原生 K8s 或其他厂商托管集群。
 
@@ -587,7 +743,7 @@ APISIX 作为 Ingress Controller 部署在 K8s 集群上，同时处理水平流
 
 ---
 
-## 13. 技术选型总览
+## 14. 技术选型总览
 
 | 维度 | 选型 |
 |------|------|
@@ -611,9 +767,10 @@ APISIX 作为 Ingress Controller 部署在 K8s 集群上，同时处理水平流
 | 分布式调度 | XXL-Job |
 | 服务发现 + 配置中心 | Nacos |
 | 向量检索 | Elasticsearch 8.x kNN |
-| 监控 | Prometheus + Grafana + Micrometer |
+| **可观测性（AI 孵化产品）** | **DeepFlow（eBPF 零代码全栈监控，Apache 2.0）** |
+| 监控（Forge 平台自身） | Prometheus + Grafana + Micrometer |
 | 日志 | ELK (Elasticsearch + Logstash + Kibana) |
-| 链路追踪 | SkyWalking / Jaeger |
+| 链路追踪 | DeepFlow（首选）/ SkyWalking / Jaeger |
 
 ---
 
@@ -629,6 +786,7 @@ APISIX 作为 Ingress Controller 部署在 K8s 集群上，同时处理水平流
 
 | 文件 | 内容 | 来源 |
 |------|------|------|
+| [references/harness-engineering-research.md](references/harness-engineering-research.md) | Harness Engineering + DeepFlow 调研报告 | OpenAI 博客 + 开源社区 |
 | [references/coding-standards.md](references/coding-standards.md) | 编码规范基线 | aegis 工程实践 |
 | [references/scaffold-patterns.md](references/scaffold-patterns.md) | 脚手架设计范式 | solar-foundation 架构模式 |
 | [references/gray-release-methodology.md](references/gray-release-methodology.md) | 灰度发布方法论 | kohinur 灰度发布理念 |

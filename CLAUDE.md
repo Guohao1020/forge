@@ -2,9 +2,14 @@
 
 ## What Is Forge
 
-Forge 是一个 AI 驱动的产品孵化平台。让不懂代码的产品经理/运营通过自然语言描述需求，AI 基于企业级规范生成生产级代码，经自动化审查和四层测试后部署上线。
+Forge 是一个 **AI 驱动的 Harness Engineering 平台**。让不懂代码的产品经理/运营通过自然语言描述需求，AI 在 Harness 环境（规范约束 + 机械化验证 + 可观测性反馈）中生成生产级代码，经四层测试后部署上线。
 
 **核心理念：规范即灵魂。** AI 只是执行者，沉淀多年的工程规范才是代码质量的根本保障。
+
+**Harness Engineering 三大支柱**：
+- **Context Engineering** — 规范中心 + 项目画像 + Prompt 模板 + 可观测性数据
+- **Architectural Constraints** — Linter 引擎 + 结构测试 + AI Review + 质量门禁
+- **Entropy Management** — 定期代码质量扫描 + 自动修复 + 趋势追踪
 
 ## Project Structure
 
@@ -149,6 +154,7 @@ When updating any feature:
 
 | Reference | Content |
 |-----------|---------|
+| [Harness Engineering Research](docs/references/harness-engineering-research.md) | Harness Engineering + DeepFlow 调研报告 |
 | [Coding Standards](docs/references/coding-standards.md) | 编码规范基线 |
 | [Scaffold Patterns](docs/references/scaffold-patterns.md) | 脚手架设计范式 |
 | [Gray Release Methodology](docs/references/gray-release-methodology.md) | 灰度发布方法论 |
@@ -172,10 +178,17 @@ When updating any feature:
    ┌──────┼──────────┐         │
    ▼      ▼          ▼         │
 规范中心  DevOps    适配器层     │
-                   ├ 代码托管    │
-                   ├ 容器编排    │
-                   ├ CI/CD      │
-                   └ 测试平台    │
+(Context) (约束+门禁) ├ 代码托管  │
+   │              ├ 容器编排    │
+   │              ├ CI/CD      │
+   │              ├ 测试平台    │
+   │              └ 可观测性    │
+   │                (DeepFlow) │
+   │                    │      │
+   └── Harness 三大支柱 ─┘      │
+       · Context Engineering    │
+       · Architectural Constraints
+       · Entropy Management     │
 ```
 
 ## Current Status
@@ -186,6 +199,7 @@ When updating any feature:
 > 用户在 Web 界面输入"创建一个用户管理服务" → AI 生成完整项目 → 代码推送到 Codeup → 流水线自动构建 → 四层测试通过 → 成功部署到 dev 环境
 
 **Key Design Decisions**:
+- **Harness Engineering 平台** — 不仅是代码生成，而是规范约束 + 机械化验证 + 可观测性闭环的完整 Harness
 - 项目优先导航 — 先选项目再看子页面
 - 一键接入 — OAuth 授权后同步全部仓库
 - 混合式需求输入 — 自然语言 → AI 澄清 → 确认卡片
@@ -193,5 +207,6 @@ When updating any feature:
 - 四层自动化测试 — 单测/接口/集成/回归，AI 选择工具
 - 分支全自动 — 低风险自动合并，高风险等审批
 - MeterSphere — 开源测试平台（API 测试 + 测试管理）
+- DeepFlow — eBPF 零代码全栈可观测性（Phase 2 完整集成）
 - SSE（Phase 1） — 实时推送，Phase 2 升级 WebSocket
 - "深空指挥中心" — 暗色主题 + Forge 紫 #8B5CF6 + Aurora 背景
