@@ -28,12 +28,12 @@ services:
     image: temporalio/auto-setup:1.24
     container_name: forge-temporal
     environment:
-      - DB=postgresql
+      - DB=postgres12
       - DB_PORT=5432
       - POSTGRES_USER=forge
       - POSTGRES_PWD=forge_dev_2026
       - POSTGRES_SEEDS=postgres
-      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+      - SKIP_SCHEMA_SETUP=false
     ports:
       - "7233:7233"
     depends_on:
