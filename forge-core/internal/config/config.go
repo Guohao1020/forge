@@ -1,6 +1,9 @@
 package config
 
-import "os"
+import (
+	"log/slog"
+	"os"
+)
 
 type Config struct {
 	ServerPort     string
@@ -38,6 +41,19 @@ func Load() *Config {
 		TemporalAddress: getEnv("TEMPORAL_ADDRESS", "localhost:7233"),
 
 		EncryptionKey: getEnv("ENCRYPTION_KEY", ""),
+	}
+}
+
+// Validate logs warnings for insecure defaults.
+func (c *Config) Validate() {
+	if c.JWTSecret == "forge-dev-secret-key-change-in-production" {
+		slog.Warn("JWT_SECRET is using insecure default — set JWT_SECRET env var in production")
+	}
+	if c.EncryptionKey == "" {
+		slog.Warn("ENCRYPTION_KEY not set — GitHub tokens will be stored unencrypted")
+	}
+	if c.GitHubClientID == "" {
+		slog.Warn("GITHUB_CLIENT_ID not set — GitHub OAuth will not work")
 	}
 }
 
