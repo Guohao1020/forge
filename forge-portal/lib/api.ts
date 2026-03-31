@@ -7,8 +7,24 @@ interface ApiResult<T> {
 }
 
 class ApiError extends Error {
-  constructor(public code: number, message: string) {
+  constructor(
+    public code: number,
+    message: string,
+    public httpStatus?: number
+  ) {
     super(message);
+  }
+
+  get isAuth() {
+    return this.code >= 2000 && this.code < 3000;
+  }
+
+  get isValidation() {
+    return this.code >= 1000 && this.code < 2000;
+  }
+
+  get isNotFound() {
+    return this.code >= 4000 && this.code < 5000;
   }
 }
 
@@ -49,11 +65,11 @@ async function request<T>(
       localStorage.removeItem("forge_user");
       window.location.href = "/login";
     }
-    throw new ApiError(json.code, json.message || "登录已过期，请重新登录");
+    throw new ApiError(json.code, json.message || "登录已过期，请重新登录", res.status);
   }
 
   if (json.code !== 0) {
-    throw new ApiError(json.code, json.message);
+    throw new ApiError(json.code, json.message, res.status);
   }
 
   return json.data;
