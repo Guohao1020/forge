@@ -3,16 +3,23 @@
 .vscode/
 *.iml
 
-# Java
+# Java (legacy)
 target/
 *.class
 *.jar
 *.war
 
-# Node
+# Go
+forge-core/forge-core
+forge-core/forge-core.exe
+forge-core/cmd/genhash/genhash
+forge-core/cmd/genhash/genhash.exe
+
+# Node / Next.js
 node_modules/
 dist/
-.env.local
+.next/
+out/
 
 # OS
 .DS_Store
@@ -25,15 +32,15 @@ Thumbs.db
 docker/mysql/data/
 docker/es/data/
 
-# Maven
+# Maven (legacy)
 .mvn/
 mvnw
 mvnw.cmd
 
 # Build
 build/
-out/
 
 # Env
 .env
+.env.local
 *.env.local
