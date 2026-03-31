@@ -34,7 +34,13 @@ async function request<T>(
     headers,
   });
 
-  const json: ApiResult<T> = await res.json();
+  const text = await res.text();
+  let json: ApiResult<T>;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new ApiError(-1, "服务器无响应，请确认后端已启动");
+  }
 
   if (res.status === 401) {
     // For non-login 401s, redirect to login page
