@@ -20,6 +20,7 @@ func Setup(deps *Deps) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(middleware.RequestID())
 	r.Use(middleware.CORS())
 
 	r.GET("/health", func(c *gin.Context) {
