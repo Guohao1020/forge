@@ -50,3 +50,35 @@ type ListProjectsResponse struct {
 	Page     int        `json:"page"`
 	Size     int        `json:"size"`
 }
+
+// ImportRepoItem represents a single GitHub repo to import.
+type ImportRepoItem struct {
+	FullName      string `json:"full_name" binding:"required"`
+	Name          string `json:"name" binding:"required"`
+	Description   string `json:"description"`
+	HTMLURL       string `json:"html_url" binding:"required"`
+	CloneURL      string `json:"clone_url"`
+	DefaultBranch string `json:"default_branch"`
+	Language      string `json:"language"`
+}
+
+// ImportRequest is the request body for POST /api/projects/import.
+type ImportRequest struct {
+	Repos []ImportRepoItem `json:"repos" binding:"required,min=1"`
+}
+
+// ImportResponse contains the result of a batch import.
+type ImportResponse struct {
+	Imported int            `json:"imported"`
+	Skipped  int            `json:"skipped"`
+	Projects []ProjectBrief `json:"projects"`
+	Errors   []string       `json:"errors,omitempty"`
+}
+
+// ProjectBrief is a minimal project representation for import response.
+type ProjectBrief struct {
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	CodeRepoURL   string `json:"code_repo_url"`
+	DefaultBranch string `json:"default_branch"`
+}

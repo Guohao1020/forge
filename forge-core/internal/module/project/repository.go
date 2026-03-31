@@ -185,3 +185,33 @@ func (r *Repository) Unstar(ctx context.Context, projectID, userID int64) error 
 	)
 	return err
 }
+
+// CreateFromImport creates a project from an imported GitHub repo.
+// Returns nil if a project with the same name already exists in the tenant (skip).
+func (r *Repository) CreateFromImport(ctx context.Context, tenantID, userID int64, item *ImportRepoItem) (*ProjectBrief, error) {
+	branch := item.DefaultBranch
+	if branch == "" {
+		branch = "main"
+	}
+	var id int64
+	err := r.db.QueryRow(ctx,
+		`INSERT INTO engine.projects (tenant_id, name, description, status, code_platform, code_repo_url, default_branch, created_by)
+		 VALUES ($1, $2, $3, 'ACTIVE', 'github', $4, $5, $6)
+		 ON CONFLICT (tenant_id, name) DO NOTHING
+		 RETURNING id`,
+		tenantID, item.Name, item.Description, item.HTMLURL, branch, userID,
+	).Scan(&id)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("create project from import: %w", err)
+	}
+
+	return &ProjectBrief{
+		ID:            id,
+		Name:          item.Name,
+		CodeRepoURL:   item.HTMLURL,
+		DefaultBranch: branch,
+	}, nil
+}

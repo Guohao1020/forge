@@ -9,6 +9,11 @@ type Config struct {
 	RedisPassword  string
 	JWTSecret      string
 	JWTExpireHours int
+
+	// GitHub OAuth
+	GitHubClientID     string
+	GitHubClientSecret string
+	GitHubRedirectURI  string
 }
 
 func Load() *Config {
@@ -19,6 +24,10 @@ func Load() *Config {
 		RedisPassword:  getEnv("REDIS_PASSWORD", "forge_redis_2026"),
 		JWTSecret:      getEnv("JWT_SECRET", "forge-dev-secret-key-change-in-production"),
 		JWTExpireHours: 8,
+
+		GitHubClientID:     getEnv("GITHUB_CLIENT_ID", ""),
+		GitHubClientSecret: getEnv("GITHUB_CLIENT_SECRET", ""),
+		GitHubRedirectURI:  getEnv("GITHUB_REDIRECT_URI", "http://localhost:3000/auth/github/callback"),
 	}
 }
 

@@ -94,3 +94,48 @@ func (r *Repository) IsTokenActive(ctx context.Context, jti string) (bool, error
 	).Scan(&exists)
 	return exists, err
 }
+
+// UpsertUserIdentity creates or updates an external identity binding.
+func (r *Repository) UpsertUserIdentity(ctx context.Context, identity *UserIdentity) (*UserIdentity, error) {
+	err := r.db.QueryRow(ctx,
+		`INSERT INTO auth.user_identities (user_id, provider, provider_uid, access_token, refresh_token, token_expires, profile)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 ON CONFLICT (provider, provider_uid)
+		 DO UPDATE SET access_token = EXCLUDED.access_token,
+		               refresh_token = EXCLUDED.refresh_token,
+		               token_expires = EXCLUDED.token_expires,
+		               profile = EXCLUDED.profile
+		 RETURNING id, created_at`,
+		identity.UserID, identity.Provider, identity.ProviderUID,
+		identity.AccessToken, identity.RefreshToken, identity.TokenExpires, identity.Profile,
+	).Scan(&identity.ID, &identity.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("upsert user identity: %w", err)
+	}
+	return identity, nil
+}
+
+// FindUserIdentity finds an identity by user ID and provider.
+func (r *Repository) FindUserIdentity(ctx context.Context, userID int64, provider string) (*UserIdentity, error) {
+	identity := &UserIdentity{}
+	err := r.db.QueryRow(ctx,
+		`SELECT id, user_id, provider, provider_uid, access_token, refresh_token, token_expires, profile, created_at
+		 FROM auth.user_identities
+		 WHERE user_id = $1 AND provider = $2`,
+		userID, provider,
+	).Scan(&identity.ID, &identity.UserID, &identity.Provider, &identity.ProviderUID,
+		&identity.AccessToken, &identity.RefreshToken, &identity.TokenExpires, &identity.Profile, &identity.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("find user identity: %w", err)
+	}
+	return identity, nil
+}
+
+// DeleteUserIdentity removes an identity binding.
+func (r *Repository) DeleteUserIdentity(ctx context.Context, userID int64, provider string) error {
+	_, err := r.db.Exec(ctx,
+		"DELETE FROM auth.user_identities WHERE user_id = $1 AND provider = $2",
+		userID, provider,
+	)
+	return err
+}

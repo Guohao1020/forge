@@ -2,26 +2,36 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	ghAdapter "github.com/shulex/forge/forge-core/internal/adapter/github"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type Service struct {
-	repo      *Repository
-	jwtSecret []byte
-	jwtExpire time.Duration
+	repo              *Repository
+	jwtSecret         []byte
+	jwtExpire         time.Duration
+	githubClientID    string
+	githubSecret      string
+	githubRedirectURI string
 }
 
-func NewService(repo *Repository, jwtSecret string, jwtExpireHours int) *Service {
+func NewService(repo *Repository, jwtSecret string, jwtExpireHours int, githubClientID, githubSecret, githubRedirectURI string) *Service {
 	return &Service{
-		repo:      repo,
-		jwtSecret: []byte(jwtSecret),
-		jwtExpire: time.Duration(jwtExpireHours) * time.Hour,
+		repo:              repo,
+		jwtSecret:         []byte(jwtSecret),
+		jwtExpire:         time.Duration(jwtExpireHours) * time.Hour,
+		githubClientID:    githubClientID,
+		githubSecret:      githubSecret,
+		githubRedirectURI: githubRedirectURI,
 	}
 }
 
@@ -143,4 +153,90 @@ func (s *Service) GetCurrentUser(ctx context.Context, userID int64) (*UserInfo, 
 		AvatarURL:   avatarURL,
 		Roles:       roles,
 	}, nil
+}
+
+// GetGitHubAuthorizeURL generates the GitHub OAuth authorization URL.
+func (s *Service) GetGitHubAuthorizeURL(state string) string {
+	params := url.Values{
+		"client_id":    {s.githubClientID},
+		"redirect_uri": {s.githubRedirectURI},
+		"scope":        {"repo,read:org,read:user,user:email"},
+		"state":        {state},
+	}
+	return "https://github.com/login/oauth/authorize?" + params.Encode()
+}
+
+// HandleGitHubCallback exchanges the OAuth code for a token, fetches the GitHub user,
+// and saves/updates the identity binding for the current Forge user.
+func (s *Service) HandleGitHubCallback(ctx context.Context, userID int64, code string) (*GitHubCallbackResponse, error) {
+	tokenResp, err := ghAdapter.ExchangeCode(ctx, s.githubClientID, s.githubSecret, code)
+	if err != nil {
+		return nil, fmt.Errorf("exchange code: %w", err)
+	}
+
+	ghClient := ghAdapter.NewClient(tokenResp.AccessToken)
+	ghUser, err := ghClient.GetAuthenticatedUser(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get github user: %w", err)
+	}
+
+	profileJSON, _ := json.Marshal(ghUser)
+	identity := &UserIdentity{
+		UserID:      userID,
+		Provider:    "github",
+		ProviderUID: strconv.FormatInt(ghUser.ID, 10),
+		AccessToken: tokenResp.AccessToken,
+		Profile:     string(profileJSON),
+	}
+
+	if _, err := s.repo.UpsertUserIdentity(ctx, identity); err != nil {
+		return nil, fmt.Errorf("save identity: %w", err)
+	}
+
+	user, err := s.GetCurrentUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get current user: %w", err)
+	}
+
+	return &GitHubCallbackResponse{
+		User:     *user,
+		Provider: "github",
+		GitHubUser: struct {
+			Login     string `json:"login"`
+			AvatarURL string `json:"avatar_url"`
+		}{
+			Login:     ghUser.Login,
+			AvatarURL: ghUser.AvatarURL,
+		},
+	}, nil
+}
+
+// GetGitHubToken retrieves the stored GitHub access token for a user.
+func (s *Service) GetGitHubToken(ctx context.Context, userID int64) (string, error) {
+	identity, err := s.repo.FindUserIdentity(ctx, userID, "github")
+	if err != nil {
+		return "", fmt.Errorf("github not connected: %w", err)
+	}
+	return identity.AccessToken, nil
+}
+
+// HasGitHubConnection checks if a user has a GitHub identity binding.
+func (s *Service) HasGitHubConnection(ctx context.Context, userID int64) bool {
+	_, err := s.repo.FindUserIdentity(ctx, userID, "github")
+	return err == nil
+}
+
+// DisconnectGitHub removes the GitHub identity binding for a user.
+func (s *Service) DisconnectGitHub(ctx context.Context, userID int64) error {
+	return s.repo.DeleteUserIdentity(ctx, userID, "github")
+}
+
+// ListGitHubRepos lists all GitHub repositories for the authenticated user.
+func (s *Service) ListGitHubRepos(ctx context.Context, userID int64) ([]ghAdapter.Repository, error) {
+	token, err := s.GetGitHubToken(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	client := ghAdapter.NewClient(token)
+	return client.ListRepos(ctx)
 }

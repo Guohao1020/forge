@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -70,4 +71,29 @@ func (s *Service) Star(ctx context.Context, projectID, tenantID, userID int64) e
 
 func (s *Service) Unstar(ctx context.Context, projectID, tenantID, userID int64) error {
 	return s.repo.Unstar(ctx, projectID, userID)
+}
+
+// ImportFromGitHub imports selected GitHub repos as Forge projects.
+func (s *Service) ImportFromGitHub(ctx context.Context, tenantID, userID int64, req *ImportRequest) (*ImportResponse, error) {
+	resp := &ImportResponse{}
+
+	for _, item := range req.Repos {
+		brief, err := s.repo.CreateFromImport(ctx, tenantID, userID, &item)
+		if err != nil {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: %s", item.FullName, err.Error()))
+			continue
+		}
+		if brief == nil {
+			resp.Skipped++
+			continue
+		}
+		resp.Imported++
+		resp.Projects = append(resp.Projects, *brief)
+	}
+
+	if resp.Projects == nil {
+		resp.Projects = []ProjectBrief{}
+	}
+
+	return resp, nil
 }

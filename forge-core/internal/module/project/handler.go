@@ -117,6 +117,22 @@ func (h *Handler) Star(c *gin.Context) {
 	response.OK(c, nil)
 }
 
+func (h *Handler) Import(c *gin.Context) {
+	var req ImportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "请选择至少一个仓库导入")
+		return
+	}
+
+	userID, tenantID := userCtx(c)
+	result, err := h.svc.ImportFromGitHub(c.Request.Context(), tenantID, userID, &req)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, "导入失败: "+err.Error())
+		return
+	}
+	response.OK(c, result)
+}
+
 func (h *Handler) Unstar(c *gin.Context) {
 	userID, tenantID := userCtx(c)
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)

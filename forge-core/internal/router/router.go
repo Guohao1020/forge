@@ -35,7 +35,17 @@ func Setup(deps *Deps) *gin.Engine {
 			protected.POST("/auth/logout", deps.AuthHandler.Logout)
 			protected.GET("/auth/me", deps.AuthHandler.Me)
 
+			// GitHub OAuth
+			protected.GET("/auth/github/authorize", deps.AuthHandler.GitHubAuthorize)
+			protected.GET("/auth/github/callback", deps.AuthHandler.GitHubCallback)
+			protected.GET("/auth/github/status", deps.AuthHandler.GitHubStatus)
+			protected.DELETE("/auth/github/disconnect", deps.AuthHandler.GitHubDisconnect)
+
+			// GitHub repos
+			protected.GET("/github/repos", deps.AuthHandler.ListGitHubRepos)
+
 			// Projects
+			protected.POST("/projects/import", deps.ProjectHandler.Import)
 			protected.POST("/projects", deps.ProjectHandler.Create)
 			protected.GET("/projects", deps.ProjectHandler.List)
 			protected.GET("/projects/:id", deps.ProjectHandler.GetByID)

@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { FolderOpen, Plus, GitBranch, Search, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProjectCard } from "@/components/project-card";
 import { CreateProjectDialog } from "@/components/create-project-dialog";
+import { ConnectPlatformDialog } from "@/components/connect-platform-dialog";
+import { ImportReposDialog } from "@/components/import-repos-dialog";
 import { api } from "@/lib/api";
 
 interface Project {
@@ -15,6 +18,7 @@ interface Project {
   status: string;
   defaultBranch: string;
   codePlatform: string;
+  codeRepoUrl: string;
   starred: boolean;
   updatedAt: string;
 }
@@ -33,6 +37,18 @@ export default function ProjectsPage() {
   const [search, setSearch] = useState("");
   const [starredOnly, setStarredOnly] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const searchParams = useSearchParams();
+
+  // Auto-open import dialog after GitHub OAuth callback
+  useEffect(() => {
+    if (searchParams.get("github_connected") === "true") {
+      setImportOpen(true);
+      // Clean up URL param
+      window.history.replaceState({}, "", "/projects");
+    }
+  }, [searchParams]);
 
   const fetchProjects = useCallback(async () => {
     setLoading(true);
@@ -68,7 +84,7 @@ export default function ProjectsPage() {
           )}
         </div>
         <div className="flex gap-3">
-          <Button variant="outline" className="gap-2">
+          <Button variant="outline" className="gap-2" onClick={() => setConnectOpen(true)}>
             <GitBranch size={16} />
             接入代码平台
           </Button>
@@ -157,6 +173,15 @@ export default function ProjectsPage() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         onCreated={fetchProjects}
+      />
+      <ConnectPlatformDialog
+        open={connectOpen}
+        onOpenChange={setConnectOpen}
+      />
+      <ImportReposDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={fetchProjects}
       />
     </div>
   );
