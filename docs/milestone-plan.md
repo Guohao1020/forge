@@ -1,386 +1,178 @@
 # Forge Platform — 里程碑计划
 
-> **版本**: 2.0
+> **版本**: 3.1
 > **日期**: 2026-03-31
 > **前置文档**: [PRD.md](PRD.md) | [technical-design.md](technical-design.md)
+> **架构变更**: v3.0 采用垂直切片(Slice)替代水平分层(Milestone)，每个切片前后端一起交付
 
 ---
 
-## 全局视图
+## 实施策略
+
+### 团队结构
+
+- **开发**: Claude Code Opus 4.6（AI 编写所有代码）
+- **测试与决策**: Harvey（人工测试 + 产品决策）
+- **节奏**: 计划确认 → 逐步执行 → 人工测试 → 下一步
+
+### 垂直切片 vs 水平分层
+
+旧计划（v2.0）按技术层划分里程碑（M0 骨架 → M1 规范 → ... → M6 前端），导致长时间无法在浏览器中调试。
+
+新计划按**垂直功能切片**划分，每个切片交付完整的前后端功能：
 
 ```
-Phase 1（最小闭环）                    Phase 2（Harness 完整版）       Phase 3（扩展性）         Phase 4（成熟化）
-──────────────────────────────────    ─────────────────────────    ─────────────────────    ──────────────────
-M0 → M1 → M2 → M3 → M4 → M5 → M6    M7 → M8 → M9 → M9.5         M10 → M11 → M12          M13 → M14 → M15
-骨架  规范  适配  鉴权  引擎  管线  工作台  鉴权完  工作台完  实时升  Harness    IM  多模型  加速库基      成熟化
-                  轻量              轻量    整版    整版     级WS   约束+熵+   机器人 +灰度  础层
-                                                                 可观测
-```
-
----
-
-## Phase 1 — 最小闭环
-
-**目标**：Web 界面输入需求 → AI 在 Harness 环境中生成代码 → 机械化约束检查 + AI 审查 → 四层测试 → 部署到 dev 环境
-
-**验收标准**：
-- 用户在 Web 界面输入"创建一个用户管理服务"
-- AI 生成完整项目（模块结构 + 数据库 + 接口 + 基础前端）
-- 代码通过适配器推送到 Codeup，流水线自动构建
-- 成功部署到 dev 环境
-- Token 消耗有记录可查
-
----
-
-### M0 — 项目骨架 + 基础设施
-
-**交付物**：
-- 所有子项目的 Maven / npm 脚手架初始化（统一 parent pom、依赖版本管理）
-- Docker Compose 本地开发环境（MySQL、Redis、Kafka、Nacos、APISIX、Elasticsearch、**MeterSphere**、**DeepFlow Server**）
-- APISIX 基础路由配置
-- Nacos 命名空间和分组规划
-- CI 基础流水线（编译 + 单测）
-- README 和 CLAUDE.md 更新
-
-**涉及子项目**：全部
-
-**依赖**：无
-
-**验收**：`docker compose up` 启动全部基础设施（含 MeterSphere、DeepFlow），各子项目可编译通过
-
----
-
-### M1 — 规范中心
-
-**交付物**：
-- 编码规范基线文档（Java / SQL / API 设计 / 安全编码）
-- 1 套 Java 微服务脚手架模板
-- 6 个核心 Prompt 模板（requirement-analysis / code-generation / code-review / test-generation / fix-generation / doc-generation）
-- 每个 Prompt 配套 eval 测试（bad-code-samples + good-code-samples + 评估脚本）
-- AI Review 规则库（编码规约 + 安全 + 性能检查点）
-- 规范服务 API（规范查询 + 模板查询）
-
-**涉及子项目**：forge-specs
-
-**依赖**：M0
-
-**验收**：Prompt eval 测试全部通过；规范服务 API 可通过 APISIX 访问
-
----
-
-### M2 — 外部平台适配器
-
-**交付物**：
-- 代码托管适配器接口定义 + Codeup 实现（仓库读取、原子提交、分支管理、MR、Webhook）
-- **代码托管平台 OAuth 授权流程**（GitHub/Codeup 用户级授权，用于一键接入项目）
-- 容器编排适配器接口定义 + ACK 实现（Namespace、Deployment、Service、Pod、ConfigMap）
-- CI/CD 适配器接口定义 + 云效 Flow 实现（流水线创建/触发/查询/日志）
-- **测试平台适配器接口定义 + MeterSphere 实现**（测试用例创建/触发/结果查询）
-- 适配器 SPI 注册机制
-- 凭证管理模块（Nacos 加密配置读取）
-- 适配器内置限流 + 重试 + 缓存
-
-**涉及子项目**：forge-pipeline（适配器模块）
-
-**依赖**：M0
-
-**验收**：集成测试通过 — 能通过适配器读写 Codeup 仓库、创建 ACK Namespace、触发云效流水线、通过 MeterSphere API 创建并执行测试用例
-
----
-
-### M3 — 鉴权中心（轻量版）
-
-**交付物**：
-- 用户认证（账号密码登录）
-- API Token 管理（服务间认证）
-- 基础 RBAC（管理员 / 普通用户）
-- JWT 签发 / 刷新 / 吊销
-- APISIX 鉴权插件对接
-- 多租户 tenant_id 基础隔离
-
-**涉及子项目**：forge-identity
-
-**依赖**：M0
-
-**验收**：登录获取 Token → 带 Token 调用受保护 API → 无 Token 被拒绝
-
----
-
-### M4 — AI 引擎
-
-**交付物**：
-- 编排服务（状态机驱动、任务调度、风险评估、对外 API）
-- 执行服务（上下文构建、代码生成、AI Review、测试生成、修复）
-- **项目画像分析**（导入已有项目时 AI 自动扫描：技术栈、架构、数据库 Schema）
-- **SSE 流式输出**（AI 工作过程实时推送：代码生成流、步骤状态变更）
-- Kafka 任务通道（编排 ↔ 执行）
-- 单模型接入（Claude）
-- 两阶段风险评估（初评 + 终评）
-- 代码生成分阶段（契约先行 → 并行实现 → 集成验证）
-- **四层测试自动生成**（单测 + 接口测试 + 集成测试 + 回归测试触发）
-- 并发冲突处理（独立分支 + 冲突检测）
-- DB 迁移安全（UP+DOWN + 临时环境验证）
-- Token 用量追踪
-- 三级紧急停止开关（L1/L2/L3）
-
-**涉及子项目**：forge-engine
-
-**依赖**：M1（规范 + Prompt）、M2（代码托管适配器 + 测试平台适配器）、M3（鉴权）
-
-**验收**：通过 API 提交需求"创建一个用户管理服务" → AI 完成代码生成 → Review 通过 → 代码提交到 Codeup 分支
-
----
-
-### M5 — DevOps 自动化
-
-**交付物**：
-- Java 微服务流水线模板引擎
-- 质量门禁（编译 + 单测覆盖率 + AI Review + 安全扫描）
-- 部署编排（Helm Chart 渲染 + 通过容器编排适配器部署）
-- 临时环境管理（创建 / 销毁 / 清理守护）
-- 固定环境管理（dev / staging / prod 分支绑定）
-- 配置自动发布到 Nacos
-- 失败处理（AI 分析日志 + 自动修复 + 3 轮上限）
-
-**涉及子项目**：forge-pipeline
-
-**依赖**：M2（CI/CD + 容器编排适配器）、M3（鉴权）、M4（AI 引擎触发）
-
-**验收**：AI 引擎生成的代码推送后 → 流水线自动触发 → 编译测试通过 → 部署到 dev 环境
-
----
-
-### M6 — Web 工作台（轻量版）
-
-**交付物**：
-- 登录页（账号密码，Aurora 极光背景，毛玻璃卡片）
-- 项目大厅（一键接入 GitHub/Codeup + 创建新项目 + 项目列表 + 星标/分组/搜索）
-- 需求对话页（混合式交互：自然语言 → AI 澄清 → 需求确认卡片 → SSE 流式输出）
-- 任务看板（三级进度视图可切换：概览 Kanban / 详情 / 实时流）
-- AI 工作过程可视化（任务时间线 + 实时工作区 + 决策卡片 + 介入点）
-- 变更结果页（三层展示：AI 总结 + 信任指标 → 变更摘要 → 代码 Diff + AI 注释）
-- 测试报告页（四层测试结果展示：单测 / 接口 / 集成 / 回归）
-- 部署环境页（环境状态卡片 + 发布记录时间线 + 临时环境）
-- 分支管理页（技术管理者：活跃分支 / 冲突检测 / 合并记录）
-- MR 审批页（简化版：待审批列表 + Review 报告 + 批准/驳回）
-- 简化版系统设置（紧急停止 L1 + AI 模型配置 + 用户管理）
-- "深空指挥中心"视觉风格（暗色主题 + Forge 紫 + 发光组件 + 骨架屏加载）
-
-**涉及子项目**：forge-portal
-
-**依赖**：M2（OAuth 授权）、M3（鉴权）、M4（AI 引擎 API）、M5（DevOps 状态查询）
-
-**验收**：非技术用户在浏览器中完成从需求输入到代码部署的完整流程
-
-**详细页面设计**：参见 [product-design.md](product-design.md)
-
----
-
-### Phase 1 里程碑依赖关系
-
-```
-M0（骨架）
- ├──→ M1（规范中心）──→ M4（AI 引擎）──→ M6（Web 工作台）
- ├──→ M2（适配器）──┬→ M4（AI 引擎）
- │                  └→ M5（DevOps）──→ M6（Web 工作台）
- └──→ M3（鉴权）──┬→ M4（AI 引擎）
-                   ├→ M5（DevOps）
-                   └→ M6（Web 工作台）
-```
-
-**可并行路径**：M0 完成后，M1 / M2 / M3 可同时启动。
-
----
-
-## Phase 2 — 可用性
-
-**目标**：非技术用户在 Web 上提需求 → 实时看到 AI 工作进度 → 审批发布
-
----
-
-### M7 — 鉴权中心（完整版）
-
-**交付物**：
-- 钉钉扫码登录 + OAuth2 OIDC
-- 完整 RBAC 权限模型（平台级 / 项目级 / 操作级）
-- 动态鉴权链配置（DB 存储 + 热更新）
-- 租户级覆盖配置
-
-**依赖**：M3
-
----
-
-### M8 — Web 工作台（完整版）
-
-**交付物**：
-- 完整需求工作台（多轮对话 + 需求模板引导）
-- 任务看板（筛选 / 搜索 / 批量操作）
-- MR 审批页（AI Review 报告 + 风险评分 + 审批按钮 + 评论批注）
-- 代码浏览器（完整版 + AI Diff 智能注释 + 风险标注）
-- 部署看板（环境总览 + 流水线进度 + 一键回滚）
-- 项目管理（创建项目 + 选脚手架 + 选平台组合 + 成员管理）
-- 系统设置（鉴权配置 + AI 模型配置 + 风险规则 + 通知 + 紧急停止）
-
-**依赖**：M6, M7
-
----
-
-### M9 — 实时推送升级
-
-**交付物**：
-- 从 SSE 升级为 WebSocket（Socket.IO）
-- 仍内嵌 AI 引擎，不独立部署实时网关
-- AI 流式输出 + 任务进度 + 审批通知实时推送
-
-**依赖**：M8
-
----
-
-### M9.5 — Harness Engineering 完整版
-
-> 参考调研：[references/harness-engineering-research.md](references/harness-engineering-research.md)
-
-**交付物**：
-- 机械化约束引擎
-  - Linter 规则管理（Checkstyle/ESLint + 自定义规则，继承公司级→项目级）
-  - 结构测试框架（依赖方向、Provider 合规）
-  - Agent 可消费错误消息格式（违规位置 + 修复建议 + 规范链接）
-  - 代码生成后秒级 linter 执行 + 自修复
-- 熵管理系统
-  - 定期扫描任务（命名一致性、文档同步、死代码、测试覆盖率趋势）
-  - 自动修复 PR 生成（低风险自动合并，高风险等审批）
-  - 质量趋势仪表盘
-  - 熵指标告警
-- 可观测性集成（DeepFlow）
-  - DeepFlow Agent 部署到 K8s 集群（DaemonSet）
-  - AI 生成代码部署后自动获得全栈监控（零代码）
-  - Web 工作台可观测性仪表盘（延迟、吞吐、错误率、服务拓扑）
-  - 运行时反馈闭环 — 可观测性数据回传 AI 引擎作为迭代上下文
-  - 部署后自动健康检查 + 异常告警/自动回滚
-
-**涉及子项目**：forge-specs（约束规则）、forge-engine（熵扫描 + 反馈闭环）、forge-pipeline（DeepFlow 集成 + 可观测性适配器）、forge-portal（仪表盘）
-
-**依赖**：M8（Web 工作台完整版）、M5（DevOps）
-
-**验收**：
-- AI 生成代码 → linter 秒级通过/失败 + 自修复 → 进入 AI Review
-- 部署到 K8s → DeepFlow 自动采集指标 → Web 工作台展示运行时数据
-- AI 做迭代任务时上下文包含上次部署的可观测性摘要
-- 定时熵扫描检测到命名偏移 → 自动生成修复 PR
-
----
-
-## Phase 3 — 扩展性
-
-**目标**：多入口 + 多模型 + 灰度部署 + 产品加速库基础层
-
----
-
-### M10 — IM 机器人
-
-**交付物**：
-- 钉钉企业内部机器人接入
-- @forge 对话式需求提交
-- 进度卡片推送 + 结果通知
-- L1 紧急停止触发
-
-**涉及子项目**：forge-bot
-
-**依赖**：M4（AI 引擎 API）
-
----
-
-### M11 — 多模型路由 + 灰度部署 + 实时网关独立
-
-**交付物**：
-- 多模型路由（Claude / GPT / 通义灵码按任务类型分配）
-- 模型熔断 + Fallback 链
-- APISIX 灰度部署（三层决策模型 + 金丝雀 + 蓝绿 + 自动回滚）
-- 灰度管理 UI
-- 实时网关独立部署（forge-beacon）
-- 前端项目流水线模板
-- 临时环境管理
-
-**依赖**：M4, M5, M9
-
----
-
-### M12 — 外部平台适配器扩展 + 产品加速库基础层
-
-**交付物**：
-- 第二套适配器实现（如 GitHub + 原生 K8s + GitHub Actions），验证抽象可扩展性
-- 产品加速库技术基础设施层（forge-foundation）
-  - 统一响应 + 异常 + 工具类
-  - 数据库集成 + 缓存集成 + 消息队列抽象
-  - 对象存储 + 日志 + 指标采集
-
-**涉及子项目**：forge-pipeline（适配器扩展）、forge-foundation
-
-**依赖**：M2, M0
-
----
-
-## Phase 4 — 成熟化
-
-**目标**：企业级生产完善
-
----
-
-### M13 — 鉴权深化 + 产品加速库业务层
-
-**交付物**：
-- 完整动态鉴权链 + MFA + 全部鉴权插件（LDAP / SSO SAML / SSH Key 等）
-- 产品加速库业务能力层（登录认证 / 会员体系 / 支付集成 / 订单引擎 / 通知中心）
-
-**依赖**：M7, M12
-
----
-
-### M14 — DevOps 深化 + AI 自主优化
-
-**交付物**：
-- 灰度深化（按租户/地域分流 + 自动放量策略）
-- 自动回滚规则引擎
-- AI 自主优化 — 根据 DeepFlow 可观测性数据主动发起性能优化任务
-- Forge 平台自身全链路可观测（Prometheus + Grafana + DeepFlow 全量接入）
-- 监控大盘 UI
-
-**依赖**：M11, M9.5
-
----
-
-### M15 — 多平台适配器补齐 + 适配器管理 UI
-
-**交付物**：
-- 补齐 Gitee / GitLab / TKE / CCE / Jenkins 等适配器
-- Web 工作台适配器管理界面（平台配置 / 凭证管理 / 健康状态）
-- 实时网关 Java SDK + Node.js SDK（供孵化产品集成）
-
-**依赖**：M12, M8
-
----
-
-## 里程碑全局依赖图
-
-```
-Phase 1                          Phase 2                          Phase 3                   Phase 4
-────────────────────────────    ────────────────────────────    ────────────────────────   ──────────────────
-
-M0 ──┬── M1 ──────┐
-     │             ▼
-     ├── M2 ──┬── M4 ──┬── M6 ──── M8 ──── M9 ──── M9.5      M10（IM 机器人）
-     │        │        │                    │      (Harness)    │
-     │        └── M5 ──┘                    └── M11 ──────────┤── M14（AI 自主优化）
-     │                                                         │
-     └── M3 ──┬── M4                M7 ──── M8                M12 ──┬── M13（鉴权+加速库）
-              ├── M5                                                └── M15（适配器补齐）
-              └── M6
+旧（水平分层）：后端全部做完 ─────────────────→ 前端全部做完
+新（垂直切片）：S1 登录 → S2 项目 → S3 GitHub → S4 任务 → S5 规范 → S6 AI → S7 部署
+               每步都有前端页面，可以在浏览器中操作和调试
 ```
 
 ---
 
-## 估算说明
+## Phase 1 — 最小闭环（7 个切片）
 
-本计划不包含工时估算。每个里程碑的详细实施计划（含任务拆分和步骤）在启动前单独制定。
+**目标**: Web 界面输入需求 → AI 生成代码 → 推送到 GitHub → 变更可见 → 质量信息展示
 
-**建议的第一步**：制定 M0（项目骨架 + 基础设施）的详细实施计划，这是所有后续工作的前提。
+### 全局视图
+
+```
+S1 → S2 → S3 → S4 → S5 → S6 → S7
+登录  项目  GitHub  任务   规范   AI    DevOps
+骨架  管理  接入    看板   中心   引擎  闭环
+```
+
+### 切片详情
+
+| 切片 | 标题 | 交付后可做什么 | Tasks | 迁移 |
+|------|------|---------------|-------|------|
+| [S1](plans/S1-skeleton-and-login.md) | 骨架 + 登录闭环 | 浏览器登录，看到空项目大厅 | 9 | 001 |
+| [S2](plans/S2-project-management.md) | 项目管理 + 页面 | 创建/编辑/删除/收藏项目 | 9 | 002 |
+| [S3](plans/S3-github-integration.md) | GitHub 接入 | OAuth 授权，同步仓库，导入项目 | 9 | 003 |
+| [S4](plans/S4-temporal-and-tasks.md) | Temporal + 任务 | 创建任务，Kanban 看板，SSE 实时更新 | 8 | 004 |
+| [S5](plans/S5-specs-center.md) | 规范中心 | CRUD 编码规范/Prompt/Review 规则 | 6 | 005 |
+| [S6](plans/S6-ai-worker.md) | AI Worker | 需求对话 → AI 分析/规划/生成/Review | 8 | 006 |
+| [S7](plans/S7-devops-and-deployment.md) | DevOps 闭环 | 代码推送 GitHub → PR → Diff（Monaco + code-server IDE）→ 质量信息 | 8 | 007 |
+
+**总计**: 57 个 Task，7 个数据库迁移
+
+### 切片依赖关系
+
+```
+S1（骨架 + 登录）
+ └→ S2（项目管理）
+     └→ S3（GitHub 接入）
+         └→ S4（Temporal + 任务）
+             ├→ S5（规范中心）
+             └→ S6（AI Worker）← 依赖 S5 的规范数据
+                 └→ S7（DevOps 闭环）← 依赖 S6 的代码生成 + S3 的 GitHub 适配器
+```
+
+### 每个切片的技术栈递增
+
+| 切片 | 新增技术组件 |
+|------|-------------|
+| S1 | Go/Gin, PostgreSQL, Redis, Next.js 15, shadcn/ui, Tailwind CSS 4 |
+| S2 | — (在 S1 基础上扩展) |
+| S3 | GitHub OAuth, go-github 库 |
+| S4 | Temporal Server, Temporal Go SDK, SSE |
+| S5 | Redis 缓存（规范继承解析） |
+| S6 | Python 3.12, LangGraph, Anthropic SDK, OpenAI SDK, Temporal Python SDK |
+| S7 | Monaco Editor（内联 Diff）, code-server（Web IDE 完整代码浏览） |
+
+### Phase 1 验收标准
+
+Phase 1 全部完成后，用户可以在浏览器中完成以下完整流程：
+
+1. 登录 Forge
+2. OAuth 接入 GitHub，导入项目
+3. 进入项目，输入自然语言需求
+4. AI 多轮对话澄清 → 生成确认卡片 → 确认执行
+5. 实时看到 AI 分析、规划、生成代码的过程
+6. AI 生成代码推送到 GitHub 分支，创建 PR
+7. 查看代码 Diff（Monaco Editor 内联 + "在 IDE 中打开" code-server 完整浏览）
+8. 查看 AI Review 评分 + 质量信息
+9. 查看测试报告（基础版：AI 生成的单测通过/失败，其他层级 "Coming soon"）
+10. 查看部署环境状态（信息展示，无实际 K8s 部署）
+
+### Phase 1 明确不包含（延后到 Phase 2+）
+
+以下功能在 PRD 中有定义，但 Phase 1 有意延后，避免范围膨胀：
+
+| 功能 | PRD 来源 | 延后原因 | 计划阶段 |
+|------|---------|---------|---------|
+| 两阶段风险评估（规划后初评 + Review 后终评） | 2.1.5 | Phase 1 用简化的单次风险打标 | Phase 2 |
+| 并发冲突处理（rebase + 自动解决） | 2.1.6 | Phase 1 每任务独立分支，暂不处理冲突 | Phase 2 |
+| DB 迁移安全（UP+DOWN + 破坏性拦截） | 2.1.7 | Phase 1 AI 不生成 DB migration | Phase 2 |
+| 四层自动化测试执行（MeterSphere 对接） | 2.3.2 | Phase 1 仅展示 AI 生成的单测结果 | Phase 2 |
+| 质量门禁（Lint/安全扫描/覆盖率） | 2.3.3 | Phase 1 仅 AI Review 评分 | Phase 2 |
+| Token 预算控制（任务级硬限 + 租户月预算） | 4.4 | Phase 1 不限制 Token 用量 | Phase 2 |
+| 紧急停止开关（KillSwitch L1/L2/L3） | 4.2 | Phase 1 可手动取消任务 | Phase 2 |
+| IM 机器人（钉钉/飞书） | 2.5 | Phase 1 仅 Web 入口 | Phase 2 |
+| 完整 RBAC + ABAC（权限定义/策略） | 2.2.2 | Phase 1 仅角色区分，无细粒度权限 | Phase 2 |
+| 审计日志 | 技术设计 10.2 | Phase 1 无审计表 | Phase 2 |
+| billing schema（Token 用量/成本报表） | 技术设计 10.1 | Phase 1 不追踪成本 | Phase 2 |
+
+### Phase 1 数据表延后说明
+
+技术设计 10.2 中定义但 Phase 1 不创建的表：
+
+| 表 | 说明 |
+|----|------|
+| `auth.organizations` | Phase 1 无组织层级 |
+| `auth.permissions` / `auth.role_permissions` | Phase 1 无细粒度权限 |
+| `auth.policies` | Phase 1 无 ABAC |
+| `auth.audit_logs` | Phase 1 无审计 |
+| `engine.task_checkpoints` | Phase 1 依赖 Temporal 原生 checkpoint，不做业务层 checkpoint |
+| `engine.model_calls` | Phase 1 不追踪 AI 调用成本（S6 可选补充） |
+| `billing.*` | Phase 1 无计费 |
+
+---
+
+## Phase 2 — Harness 完整版（未拆分为切片）
+
+> Phase 2 计划在 Phase 1 完成并验证后再详细拆分。以下为高层概述。
+
+**目标**: Harness 三大支柱完整落地 + 企业级鉴权 + IM 入口
+
+| 模块 | 交付内容 |
+|------|---------|
+| 约束引擎 | SonarQube, 架构约束测试, 自定义规则管理 |
+| 熵管理 | EntropyWorkflow, 命名/文档/死代码扫描, 自动修复 PR |
+| 完整鉴权 | OAuth2/OIDC, 钉钉/飞书扫码, MFA, 完整 RBAC |
+| 成本控制 | 任务预估+硬限, 租户月预算, 成本报表 |
+| IM 机器人 | 钉钉/飞书 Bot |
+| 前端完善 | 分支管理, MR 审批, 规范配置 UI, 权限管理 |
+
+---
+
+## Phase 3 — 可观测闭环与运营成熟（未拆分）
+
+**目标**: 运行时反馈闭环 + 灰度发布 + 完整运营视图
+
+| 模块 | 交付内容 |
+|------|---------|
+| DeepFlow | eBPF 零代码全栈监控 |
+| 反馈闭环 | DeepFlow → Temporal → AI 上下文 |
+| 灰度发布 | Argo Rollouts Canary, 蓝绿 |
+| 质量 Dashboard | 合规率/覆盖率/复杂度趋势 |
+| 高级适配器 | K8s 多集群, Jenkins/GitLab 适配器 |
+
+---
+
+## 旧里程碑计划（已废弃）
+
+> 以下旧计划仅作为需求参考。新架构的实施按上方垂直切片执行。
+
+| 旧计划 | 状态 | 对应新切片 |
+|--------|------|-----------|
+| M0 项目骨架 | ⚠️ Superseded | S1 |
+| M1 规范中心 | ⚠️ Superseded | S5 |
+| M2 外部适配器 | ⚠️ Superseded | S3 + S7 |
+| M3 鉴权中心 | ⚠️ Superseded | S1 (轻量) |
+| M4 AI 引擎 | ⚠️ Superseded | S6 |
+| M5 DevOps 自动化 | ⚠️ Superseded | S7 |
+| M6 Web 工作台 | ⚠️ Superseded | S1~S7 (前端穿插) |
+
+---
+
+*文档版本: 3.1 | 最后更新: 2026-03-31 | 架构: Go + Python + Temporal + Next.js + code-server*

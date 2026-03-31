@@ -15,14 +15,13 @@ Forge 是一个 **AI 驱动的 Harness Engineering 平台**。让不懂代码的
 
 ```
 forge/
-├── forge-engine/       # AI 引擎 — 需求解析、任务编排、代码生成、审查（Java, port 8081）
-├── forge-identity/     # 鉴权中心 — 认证、授权、JWT、多租户（Java, port 8082）
-├── forge-pipeline/     # DevOps 自动化 — 流水线、质量门禁、部署、适配器（Java, port 8083）
-├── forge-specs/        # 规范中心 — 编码规范、Prompt 模板、Review 规则（Java, port 8084）
-├── forge-bot/          # IM 机器人 — 钉钉/飞书入口（Java, port 8085）
-├── forge-portal/       # Web 工作台 — Vue 3 前端（npm, port 5173）
-├── forge-beacon/       # 实时网关 — WebSocket 推送（Node.js, port 3001）
-├── forge-foundation/   # 产品加速库 — AI 孵化产品的可选组件库（Java multi-module）
+├── forge-core/         # 统一 API Server — 鉴权、项目管理、任务管理、规范、配置（Go, port 8080）
+├── ai-worker/          # AI Worker — LangGraph 编排、多模型路由、代码生成/Review/修复（Python）
+├── devops-worker/      # DevOps Worker — Git 操作、CI/CD 触发、部署、测试（Go）
+├── constraint-worker/  # Constraint Worker — Lint 执行、安全扫描、架构约束验证（Go）
+├── forge-bot/          # IM 机器人 — 钉钉/飞书入口（Go, port 8085）
+├── forge-portal/       # Web 工作台 — Next.js React 前端（npm, port 3000）
+├── forge-foundation/   # 产品加速库 — AI 孵化产品的可选组件库（Go multi-module）
 ├── docker-compose.yml  # 本地基础设施
 └── docs/               # 项目文档（见下方）
 ```
@@ -30,55 +29,55 @@ forge/
 ## Build Commands
 
 ```bash
-# All Java modules
-mvn clean compile
+# Go API Server
+cd forge-core && go build ./cmd/forge-core
 
-# Single module
-cd forge-engine && mvn clean compile
+# AI Worker
+cd ai-worker && pip install -r requirements.txt
+
+# DevOps Worker
+cd devops-worker && go build ./cmd/devops-worker
+
+# Constraint Worker
+cd constraint-worker && go build ./cmd/constraint-worker
 
 # Frontend
 cd forge-portal && npm run build
 
-# Real-time gateway
-cd forge-beacon && npm run build
-
 # Run tests
-cd forge-engine && mvn test
+cd forge-core && go test ./...
+cd ai-worker && pytest
 ```
 
 ## Local Dev Environment
 
 ```bash
-docker compose up -d    # Start MySQL, Redis, Kafka, Nacos, ES, APISIX, etcd
-docker compose down     # Stop all
+docker compose -f docker-compose.dev.yml up -d    # Start PostgreSQL, Redis, Temporal, ES, MinIO
+docker compose -f docker-compose.dev.yml down      # Stop all
 ```
 
 ### Service Ports
 
 | Service | Port | Description |
 |---------|------|-------------|
-| forge-engine | 8081 | AI 引擎 |
-| forge-identity | 8082 | 鉴权中心 |
-| forge-pipeline | 8083 | DevOps 自动化 |
-| forge-specs | 8084 | 规范中心 |
-| forge-bot | 8085 | IM 机器人 |
-| forge-beacon | 3001 | 实时网关 |
-| forge-portal (dev) | 5173 | 前端开发服务器 |
-| MySQL | 3306 | 数据库 |
+| forge-core | 8080 | 统一 API Server (Go) |
+| forge-bot | 8085 | IM 机器人 (Go) |
+| forge-portal (dev) | 3000 | 前端开发服务器 (Next.js) |
+| PostgreSQL | 5432 | 数据库 |
 | Redis | 6379 | 缓存（密码：forge_redis_2026）|
-| Kafka (external) | 9094 | 消息队列 |
-| Nacos | 8848 | 配置中心 |
+| Temporal | 7233 | 工作流引擎 |
+| Temporal Web UI | 8233 | 工作流可视化 |
 | Elasticsearch | 9200 | 搜索引擎 |
-| APISIX (gateway) | 9080 | API 网关 |
-| APISIX (admin) | 9180 | 网关管理 |
+| MinIO | 9000 | 对象存储 |
+| MinIO Console | 9001 | 对象存储管理 |
+| code-server | 8443 | Web IDE (VS Code Web) |
+| APISIX (gateway) | 9080 | API 网关（生产环境） |
+| APISIX (admin) | 9180 | 网关管理（生产环境） |
 
 ### Frontend Dev
 
-前端开发时 Vite 按路径前缀代理到各后端服务端口（不依赖 APISIX）：
-- `/api/auth`, `/api/users`, `/api/roles` → localhost:8082 (forge-identity)
-- `/api/tasks`, `/api/killswitch`, `/api/token-usage` → localhost:8081 (forge-engine)
-- `/api/standards`, `/api/prompts`, `/api/review-rules` → localhost:8084 (forge-specs)
-- `/api/pipelines`, `/api/deployments`, `/api/environments`, `/api/webhooks` → localhost:8083 (forge-pipeline)
+前端开发时 Next.js 按路径前缀代理到 forge-core（不依赖 APISIX）：
+- `/api/*` → localhost:8080 (forge-core，统一 API 入口)
 
 ### Default Credentials
 
@@ -88,24 +87,35 @@ docker compose down     # Stop all
 
 See `docs/references/coding-standards.md` for full conventions. Key rules:
 
-### Backend (Java)
-- Java 17 + Spring Boot 3.2
-- DO/DTO/VO/BO naming convention
-- `Result<T>` for all API responses
-- Constructor injection only (no `@Autowired` on fields)
-- SLF4J with placeholders `log.info("msg: {}", val)`, no string concat
-- MyBatis Plus 3.5.5 with MetaObjectHandler for auto-fill timestamps
-- Flyway for database migrations (separate MySQL and H2 scripts)
+### Backend (Go)
+- Go 1.22+ with Gin framework
+- Modular monolith: forge-core 内按 Module 划分（auth/project/task/specs/adapter/billing/settings）
+- `Result[T]` generic wrapper for all API responses
+- Constructor injection via dependency struct
+- Structured logging with `slog` (JSON format)
+- PostgreSQL with multi-schema isolation (auth/engine/specs/pipeline/billing)
 - All business tables must have `tenant_id` for multi-tenant isolation
 
-### Frontend (Vue 3)
-- Vue 3.5 + TypeScript + Vite
-- Ant Design Vue 4.x (UI library)
-- Pinia 3.x (state management)
+### AI Worker (Python)
+- Python 3.12+ with LangGraph
+- Temporal Worker SDK for activity execution
+- Multi-model routing: Claude → GPT → 通义 (fallback chain)
+- Context optimization with token budget management
+
+### Frontend (React)
+- Next.js 15 (App Router) + TypeScript
+- shadcn/ui + Radix UI (component library)
+- Zustand (client state) + TanStack Query (server state)
+- Tailwind CSS 4 (styling)
 - Geist Sans + Geist Mono (fonts)
 - Lucide Icons (icon library)
 - Dark mode only, "深空指挥中心" visual style
 - Brand color: Forge Purple #8B5CF6
+
+### AI 生成代码的编码规范（规范中心管理）
+- AI 为目标项目生成的代码遵循规范中心的编码规范（如 Java/SQL/Redis 等）
+- 这些规范通过 Prompt 模板注入 AI 上下文，不是 Forge 平台本身的编码规范
+- 详见 `docs/references/coding-standards.md`
 
 ## Documents
 
@@ -138,17 +148,19 @@ When updating any feature:
 | [Technical Design](docs/technical-design.md) | 技术设计文档 — 架构、数据模型、高可用、技术选型 |
 | [Milestone Plan](docs/milestone-plan.md) | 里程碑计划 — Phase 1~4 分阶段交付路线图 |
 
-### Milestone Execution Plans
+### Milestone Execution Plans (旧 Java 架构, 已废弃)
 
 | Plan | Status | Description |
 |------|--------|-------------|
-| [M0 — Project Scaffold](docs/plans/M0-project-scaffold.md) | ✅ Done | 项目骨架 + 基础设施 |
-| [M1 — Specs Center](docs/plans/M1-specs-center.md) | ✅ Done | 规范中心 |
-| [M2 — External Adapters](docs/plans/M2-external-adapters.md) | ✅ Done | 外部平台适配器 |
-| [M3 — Auth Center](docs/plans/M3-auth-center.md) | ✅ Done | 鉴权中心 |
-| [M4 — AI Engine](docs/plans/M4-ai-engine.md) | ✅ Done | AI 引擎 |
-| [M5 — DevOps Automation](docs/plans/M5-devops-automation.md) | ✅ Done | DevOps 自动化 |
-| [M6 — Web Console](docs/plans/M6-web-console.md) | 🔄 Needs Rework | Web 工作台（需按新产品设计重做）|
+| [M0 — Project Scaffold](docs/plans/M0-project-scaffold.md) | ⚠️ Superseded | 旧 Java 项目骨架 |
+| [M1 — Specs Center](docs/plans/M1-specs-center.md) | ⚠️ Superseded | 旧 Java 规范中心 |
+| [M2 — External Adapters](docs/plans/M2-external-adapters.md) | ⚠️ Superseded | 旧 Java 适配器 |
+| [M3 — Auth Center](docs/plans/M3-auth-center.md) | ⚠️ Superseded | 旧 Java 鉴权中心 |
+| [M4 — AI Engine](docs/plans/M4-ai-engine.md) | ⚠️ Superseded | 旧 Java AI 引擎 |
+| [M5 — DevOps Automation](docs/plans/M5-devops-automation.md) | ⚠️ Superseded | 旧 Java DevOps |
+| [M6 — Web Console](docs/plans/M6-web-console.md) | ⚠️ Superseded | 旧 Vue 3 Web 工作台 |
+
+> **注意**: 以上旧里程碑计划仅作为需求参考。新架构 (Go + Python + Temporal) 的实施计划见 [技术设计文档](docs/technical-design.md) 第 14 节三期工程实施计划。
 
 ### References
 
@@ -166,47 +178,44 @@ When updating any feature:
 ```
 用户（Web / IM / CLI）
         │
-        ▼
-    APISIX 网关（路由 / 鉴权 / 限流 / 灰度）
+   Traefik + APISIX（路由 / 鉴权 / 限流 / 灰度）
         │
-   ┌────┼────────────────────┐
-   ▼    ▼                    ▼
-鉴权中心  AI 引擎（中央大脑）    实时网关
-          │ 编排 + 调度          │
-          │ Worker Pool         │
-          ▼                     │
-   ┌──────┼──────────┐         │
-   ▼      ▼          ▼         │
-规范中心  DevOps    适配器层     │
-(Context) (约束+门禁) ├ 代码托管  │
-   │              ├ 容器编排    │
-   │              ├ CI/CD      │
-   │              ├ 测试平台    │
-   │              └ 可观测性    │
-   │                (DeepFlow) │
-   │                    │      │
-   └── Harness 三大支柱 ─┘      │
-       · Context Engineering    │
-       · Architectural Constraints
-       · Entropy Management     │
+   forge-core（Go 模块化单体）
+   ├── Auth / Project / Task / Specs / Adapter / Billing / Settings
+        │
+   Temporal Server（状态脊梁）
+        │
+   ┌────┼──────────────┬──────────────┐
+   ▼    ▼              ▼              ▼
+AI Worker  DevOps Worker  Constraint Worker
+(Python    (Go)            (Go)
+LangGraph) Argo CD         MegaLinter
+Claude/GPT Argo Workflows  Semgrep
+           MeterSphere     SonarQube
+           GitHub/Codeup
+
+   ──── 可观测性层 ────
+   DeepFlow (eBPF) + Grafana + Loki + Prometheus
 ```
 
 ## Current Status
 
-**Phase 1 — 最小闭环**: M0~M5 骨架代码已完成，M6 需按新产品设计重做。
+**架构重构中**: 从 Java 微服务架构全面重构为 Go + Python + Temporal 架构。旧的 M0~M5 Java 骨架代码将被替换。
 
-**Phase 1 验收标准**:
-> 用户在 Web 界面输入"创建一个用户管理服务" → AI 生成完整项目 → 代码推送到 Codeup → 流水线自动构建 → 四层测试通过 → 成功部署到 dev 环境
+**三期工程实施**（不是 MVP，是生产级企业版的工程依赖顺序）:
+- **一期 — 基座与核心引擎**: 基础设施 + Harness 六大组件 + AI 引擎完整版 + 适配器
+- **二期 — 约束闭环与企业能力**: 约束引擎 + 熵管理 + 完整鉴权 + 成本控制 + IM 机器人
+- **三期 — 可观测闭环与运营成熟**: DeepFlow 集成 + 运行时反馈 + 灰度发布 + 质量 Dashboard
 
 **Key Design Decisions**:
-- **Harness Engineering 平台** — 不仅是代码生成，而是规范约束 + 机械化验证 + 可观测性闭环的完整 Harness
+- **Temporal 驱动** — 所有 AI 任务都是有状态、可恢复、可观测的 Workflow
+- **Go 模块化单体** — 替代 6 个 Java 微服务，一个二进制部署
+- **LangGraph (Python)** — AI 编排，多模型路由 + 降级链
+- **Harness Engineering 平台** — 规范约束 + 机械化验证 + 可观测性闭环
 - 项目优先导航 — 先选项目再看子页面
 - 一键接入 — OAuth 授权后同步全部仓库
 - 混合式需求输入 — 自然语言 → AI 澄清 → 确认卡片
-- 三级进度视图 — 概览/详情/实时可切换
 - 四层自动化测试 — 单测/接口/集成/回归，AI 选择工具
 - 分支全自动 — 低风险自动合并，高风险等审批
-- MeterSphere — 开源测试平台（API 测试 + 测试管理）
-- DeepFlow — eBPF 零代码全栈可观测性（Phase 2 完整集成）
-- SSE（Phase 1） — 实时推送，Phase 2 升级 WebSocket
+- DeepFlow — eBPF 零代码全栈可观测性
 - "深空指挥中心" — 暗色主题 + Forge 紫 #8B5CF6 + Aurora 背景

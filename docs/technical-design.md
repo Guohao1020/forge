@@ -1,794 +1,2034 @@
-# Forge Platform — 技术设计文档
+# Forge Platform — 技术设计文档 v2.0
 
-> **版本**: 1.0
-> **日期**: 2026-03-29
+> **版本**: 2.0
+> **日期**: 2026-03-31
 > **作者**: Harvey + Claude
-> **前置文档**: [PRD.md](PRD.md)
+> **前置文档**: [PRD.md](PRD.md) | [Product Design](product-design.md) | [Milestone Plan](milestone-plan.md)
+> **架构变更**: 从 Java 微服务架构全面重构为 Go + Python + Temporal 架构
 
 ---
 
 ## 目录
 
 - [1. 架构总览](#1-架构总览)
-- [2. AI 引擎技术设计](#2-ai-引擎技术设计)
-- [3. 鉴权中心技术设计](#3-鉴权中心技术设计)
-- [4. DevOps 自动化技术设计](#4-devops-自动化技术设计)
-- [5. Web 工作台技术设计](#5-web-工作台技术设计)
-- [6. 实时网关技术设计](#6-实时网关技术设计)
-- [7. 外部平台适配器技术设计](#7-外部平台适配器技术设计)
-- [8. 自动化测试平台技术设计](#8-自动化测试平台技术设计)
-- [9. 产品加速库技术设计](#9-产品加速库技术设计)
-- [10. Harness Engineering 技术设计](#10-harness-engineering-技术设计)
-- [11. 数据架构](#11-数据架构)
+- [2. Harness 六大组件设计](#2-harness-六大组件设计)
+- [3. AI 引擎技术设计](#3-ai-引擎技术设计)
+- [4. 鉴权中心技术设计](#4-鉴权中心技术设计)
+- [5. 规范中心技术设计](#5-规范中心技术设计)
+- [6. DevOps 自动化技术设计](#6-devops-自动化技术设计)
+- [7. Web 工作台技术设计](#7-web-工作台技术设计)
+- [8. IM 机器人技术设计](#8-im-机器人技术设计)
+- [9. 外部平台适配器技术设计](#9-外部平台适配器技术设计)
+  - [9.5 CLI 入口设计](#95-cli-入口设计)
+  - [9.6 产品加速库 (forge-foundation)](#96-产品加速库-forge-foundation)
+  - [9.7 配置自动发布](#97-配置自动发布)
+- [10. 数据架构](#10-数据架构)
+- [11. 部署架构](#11-部署架构)
 - [12. 高可用设计](#12-高可用设计)
-- [13. 部署架构](#13-部署架构)
-- [14. 技术选型总览](#14-技术选型总览)
-- [附录：引用资料索引](#附录引用资料索引)
+- [13. 技术选型总览](#13-技术选型总览)
+- [14. 三期工程实施计划](#14-三期工程实施计划)
 
 ---
 
 ## 1. 架构总览
 
-### 1.1 架构选型
+### 1.1 架构理念
 
-中心化 Agent 架构 — 一个中央大脑（Engine）接收需求、编排任务、调度 Worker、控制风险。
+**Harness Engineering 平台** — 不仅是代码生成，而是规范约束 + 机械化验证 + 可观测性闭环的完整 Harness 环境。
+
+核心理念源自 Harness Engineering 三大支柱：
+- **Context Engineering** — 规范中心 + 项目画像 + Prompt 模板 + 可观测性数据
+- **Architectural Constraints** — Linter 引擎 + 结构测试 + AI Review + 质量门禁
+- **Entropy Management** — 定期代码质量扫描 + 自动修复 + 趋势追踪
+
+关键洞察：**Harness 不是给模型加更多工具，而是给模型补上运行边界、恢复机制和验证秩序。**
+
+### 1.2 架构选型
+
+**Temporal 驱动的工作流架构** — 以 Temporal 作为"状态脊梁"，所有 AI 任务都是有状态、可恢复、可观测的 Workflow。
 
 选型理由：
-1. 最快落地
-2. 风险分级天然支持 — 中央大脑决定自动还是人工
-3. 后续可演进为混合架构
+1. Temporal 一个组件解决状态管理、Checkpoint、恢复、超时、重试、可观测性 — 直接覆盖 Harness 六大组件中"状态与 Checkpoint" + "编排协调"
+2. 省掉 Kafka、Nacos、自建状态机 — 架构大幅简化
+3. Go + Python 混合：Go 做高性能 API 和 DevOps Worker，Python 做 AI 编排（LangGraph 生态最好）
+4. 每个 Temporal Activity 天然可观测，自带 retry/timeout/heartbeat
 
-### 1.2 系统全景
+与旧 Java 微服务架构的对比：
 
-```
-┌─────────────────── 接入层 ───────────────────┐
-│  Web 工作台    IM 机器人(钉钉/飞书)    CLI    │
-└──────────────┬───────────────────┬────────────┘
-               │ HTTP / WebSocket  │
-┌──────────────▼───────────────────▼────────────┐
-│          APISIX（统一 API 网关）                │
-│   路由 / 鉴权 / 限流 / 灰度 / 负载均衡         │
-└──────────────┬────────────────────────────────┘
-               │
-       ┌───────┼───────────────────────┐
-       ▼       ▼                       ▼
-┌──────────┐ ┌──────────┐      ┌──────────────┐
-│ 鉴权中心  │ │ 实时网关  │      │  AI 引擎     │
-│          │ │(长连接)   │      │ (中央大脑)    │
-└──────────┘ └──────────┘      │              │
-                               │ 编排 + 调度   │
-                               │      │       │
-                               │  Worker Pool │
-                               │ (弹性伸缩)   │
-                               └──────┬───────┘
-                                      │
-                  ┌───────────────┬────┴────────────┐
-                  ▼               ▼                  ▼
-           ┌──────────┐   ┌──────────┐       ┌───────────────────┐
-           │ 规范中心  │   │ DevOps   │       │  外部平台适配器层   │
-           │          │   │ 自动化   │       │                   │
-           │          │   │          │       │ ┌───────────────┐ │
-           └──────────┘   └──────────┘       │ │ 代码托管适配器  │ │
-                                             │ │ (Codeup/...)  │ │
-                                             │ ├───────────────┤ │
-                                             │ │ 容器编排适配器  │ │
-                                             │ │ (ACK/...)     │ │
-                                             │ ├───────────────┤ │
-                                             │ │ CI/CD适配器   │ │
-                                             │ │ (云效/...)     │ │
-                                             │ └───────────────┘ │
-                                             └───────────────────┘
-```
+| 维度 | 旧架构 (Java) | 新架构 (Go + Python) |
+|------|-------------|---------------------|
+| 应用服务数 | 6 Java + 1 Node.js = 7 | 1 Go API + 1 Python Worker + 1 Go Bot = 3 |
+| 数据库 | 4 MySQL 实例 | 1 PostgreSQL (多 Schema) |
+| 消息队列 | Kafka + ZooKeeper | 无 (Temporal 替代) |
+| 配置中心 | Nacos | K8s ConfigMap + Vault |
+| API 网关 | APISIX + etcd | APISIX + etcd (保留) |
+| 状态管理 | 自建状态机 | Temporal (生产级) |
+| AI 编排 | 自建 Worker Pool | LangGraph (开源成熟) |
+| 可观测性 | 基础 Metrics | DeepFlow (eBPF 零代码) + Grafana |
 
-### 1.3 子系统清单
-
-| # | 子系统 | 定位 | 技术栈 |
-|---|--------|------|--------|
-| 1 | **鉴权中心** | 统一身份认证 + 动态鉴权链 + 权限管理 | Java 17, Spring Boot 3.x |
-| 2 | **AI 引擎** | 中央大脑：需求解析 → 任务编排 → 代码生成 → 审查 | Java 17, Spring Boot 3.x |
-| 3 | **DevOps 自动化** | 流水线模板 + 质量门禁 + 部署编排 + 配置发布 | Java 17 + YAML 模板 |
-| 4 | **Web 工作台** | 需求输入 + 任务看板 + 代码预览 + 审批 + 灰度管理 | Vue 3 + TypeScript |
-| 5 | **IM 机器人** | 钉钉/飞书入口，对话式需求提交和进度跟踪 | Java 17 |
-| 6 | **实时网关** | WebSocket 长连接，AI 流式输出 + 进度推送 | Node.js, Socket.IO |
-| 7 | **规范中心** | 编码规范 + 脚手架模板 + Prompt 模板 + Review 规则 | Markdown + JSON + Java 服务 |
-| 8 | **产品加速库** | AI 孵化产品的可选组件库 | Java 17, Spring Boot 3.x |
-
-### 1.4 子系统依赖关系
+### 1.3 系统全景
 
 ```
-AI 引擎（核心）
-    │
-    ├── 鉴权中心（被所有需要认证的子系统依赖）
-    ├── 规范中心（被 AI 引擎消费：编码规范 + Prompt + Review 规则）
-    ├── DevOps 自动化（被 AI 引擎调用：触发流水线 + 查询状态 + 配置发布）
-    │       └── 依赖外部平台适配器层（CI/CD 适配器 + 容器编排适配器）
-    ├── AI 引擎自身也依赖外部平台适配器层（代码托管适配器）
-    ├── Web 工作台（前端，调用 AI 引擎 + 鉴权中心 API）
-    ├── IM 机器人（调用 AI 引擎 API）
-    └── 实时网关（对接鉴权中心做连接鉴权，被 AI 引擎用于推送进度）
+用户入口
+├── Web 工作台 (Next.js React)
+├── Web IDE (code-server, 完整代码浏览)
+├── IM 机器人 (Go 轻量服务)
+└── CLI
 
-外部平台适配器层（横切层，被 AI 引擎和 DevOps 自动化共同依赖）
-产品加速库（独立，仅被 AI 孵化出的业务系统引用）
+        │
+   Traefik (TLS 终止 + 负载均衡)
+        │
+   APISIX (API 网关 + JWT 验证 + 限流 + 灰度路由)
+        │
+┌───────┴──────────────────────────────────────────┐
+│            Go API Server (模块化单体)              │
+│  ┌────────────────────────────────────────────┐   │
+│  │ Middleware: JWT → tenant_id → RBAC → 限流   │   │
+│  ├────────────────────────────────────────────┤   │
+│  │ Auth Module     │ 登录/注册/Token/OAuth     │   │
+│  │ Project Module  │ 项目管理/适配器绑定        │   │
+│  │ Task Module     │ 任务CRUD/SSE推送          │   │
+│  │ Specs Module    │ 规范/Prompt/Rule/脚手架    │   │
+│  │ Settings Module │ 系统配置/紧急停止          │   │
+│  │ Adapter Module  │ GitHub/Codeup/K8s 适配器  │   │
+│  │ Billing Module  │ Token追踪/成本预算         │   │
+│  └────────────────────────────────────────────┘   │
+│  KillSwitch: Redis 分布式标志 (L1/L2/L3)          │
+│  SSE/WebSocket: /stream/tasks/{id}                │
+└───────┬──────────────────────────────────────────┘
+        │
+   Temporal Server (状态脊梁)
+   ├── TaskWorkflow (主编排: 需求→生成→验证→部署)
+   ├── ConstraintWorkflow (Lint→Analysis→Review)
+   ├── DeployWorkflow (Argo CD + 健康检查)
+   ├── EntropyWorkflow (定期扫描)
+   │
+   ├── Interceptors:
+   │   ├── KillSwitchInterceptor (检查紧急停止标志)
+   │   ├── BudgetInterceptor (检查 Token 预算)
+   │   └── AuditInterceptor (记录所有 Activity)
+   │
+   Workers:
+   ├── AI Worker (Python + LangGraph)
+   │   ├── Planner Agent (需求分析/任务分解)
+   │   ├── Coder Agent (代码生成, 多模型路由)
+   │   ├── Reviewer Agent (AI Review + Judge 评分)
+   │   ├── Fixer Agent (自动修复, ≤3 轮)
+   │   └── Constraint Formatter (Lint结果→标准JSON)
+   │
+   ├── DevOps Worker (Go)
+   │   ├── GitActivity (commit/branch/MR via 适配器)
+   │   ├── PipelineActivity (Argo Workflows 触发)
+   │   ├── DeployActivity (Argo CD + Rollouts)
+   │   ├── TestActivity (MeterSphere API)
+   │   └── HealthCheckActivity (DeepFlow 指标查询)
+   │
+   └── Constraint Worker (Go)
+       ├── LintActivity (MegaLinter 执行)
+       ├── ScanActivity (Semgrep + SonarQube)
+       └── StructuralTestActivity (架构约束验证)
+
+数据层:
+├── PostgreSQL (单实例 HA, 多 Schema)
+│   ├── auth schema (users, roles, permissions, tokens)
+│   ├── engine schema (tasks, steps, checkpoints, model_calls)
+│   ├── specs schema (standards, prompts, rules, scaffolds)
+│   ├── pipeline schema (environments, deployments, pipelines)
+│   └── billing schema (token_usage, budgets)
+├── Redis Sentinel (会话/Token黑名单/限流/KillSwitch标志)
+├── Elasticsearch (项目画像/代码搜索/日志/Temporal Visibility)
+└── MinIO (代码产物/测试报告/中间文件/备份)
+
+可观测性:
+├── DeepFlow (AI 生成产品: eBPF 零代码全栈监控)
+├── Grafana (统一 Dashboard)
+├── Loki (日志聚合)
+├── Prometheus + Alertmanager (指标 + 告警)
+└── Temporal Web UI (工作流可视化)
 ```
 
-**关键原则：各子系统是独立的 Spring Boot 服务，互不强耦合。产品加速库与平台无依赖关系。**
+### 1.4 模块职责与通信
 
-### 1.5 统一网关
+| 模块 | 语言 | 通信方式 | 职责 |
+|------|------|---------|------|
+| forge-core | Go | HTTP/SSE/WebSocket | 统一 API 入口，鉴权，项目管理，任务管理，规范管理，系统配置 |
+| ai-worker | Python | Temporal Worker | AI 编排 (LangGraph)，多模型路由，代码生成/Review/修复 |
+| devops-worker | Go | Temporal Worker | Git 操作，CI/CD 触发，部署，测试执行，健康检查 |
+| constraint-worker | Go | Temporal Worker | Lint 执行，安全扫描，架构约束验证 |
+| forge-bot | Go | HTTP (Webhook) | 钉钉/飞书消息接收，任务触发，进度推送 |
+| forge-portal | Next.js | HTTP → forge-core | Web 工作台 UI |
 
-APISIX 作为全平台唯一的 API 网关，同时处理：
-- **水平流量**（外部）：Web 工作台、IM 机器人、CLI 等客户端请求
-- **垂直流量**（内部）：各微服务之间的调用
-
-所有子系统均注册在 APISIX 后方，统一享受鉴权、限流、灰度、可观测等网关层能力。
+通信原则：
+- **同步请求**: 前端 → APISIX → forge-core (HTTP REST)
+- **异步编排**: forge-core → Temporal → Workers (Temporal Protocol)
+- **实时推送**: forge-core → 前端 (SSE/WebSocket)
+- **IM 交互**: 钉钉/飞书 → forge-bot → Temporal (Webhook → Temporal Signal)
 
 ---
 
-## 2. AI 引擎技术设计
+## 2. Harness 六大组件设计
 
-### 2.1 模块拆分
+Harness 可以视为 Agent 的操作系统，目标是把模型外面的执行环境补完整，让运行过程具备边界、状态和秩序。
 
-AI 引擎拆分为两个独立部署的服务：
+### 2.1 工具接入层 (Tool Access)
 
-| 模块 | 职责 | 部署特性 |
-|------|------|---------|
-| **编排服务** | 接收需求、状态机驱动、风险评估、任务调度、对外 API | 有状态（Leader 选举），少量实例 |
-| **执行服务** | 从任务队列拉取步骤、调用 AI 模型、上下文构建、代码生成/审查/测试生成 | 无状态，可水平扩缩 |
+**职责：** 统一 API、权限控制和沙箱执行，保证工具使用可控。
 
-执行服务是单一服务，按任务类型路由到不同处理逻辑（代码生成/审查/测试/修复），不拆分为独立部署的多个服务。
+```go
+// Tool Registry — 每个工具声明元数据
+type ToolDefinition struct {
+    Name        string            `json:"name"`
+    Description string            `json:"description"`
+    InputSchema json.RawMessage   `json:"input_schema"`
+    OutputSchema json.RawMessage  `json:"output_schema"`
+    RiskLevel   RiskLevel         `json:"risk_level"`    // LOW/MEDIUM/HIGH/CRITICAL
+    Timeout     time.Duration     `json:"timeout"`
+    RequiredPermissions []string  `json:"required_permissions"`
+}
 
-### 2.2 通信方式
+type RiskLevel int
+const (
+    RiskLow      RiskLevel = iota  // 读取操作
+    RiskMedium                     // 写入非生产环境
+    RiskHigh                       // 写入生产环境
+    RiskCritical                   // 不可逆操作 (DB migration, 删除)
+)
+```
 
-| 链路 | 通道 | 理由 |
+每个工具封装为 Temporal Activity：
+
+| Activity | 风险等级 | 超时 | 重试 |
+|----------|---------|------|------|
+| CodeHostingRead | LOW | 30s | 3次 |
+| CodeHostingWrite | MEDIUM | 60s | 2次 |
+| LinterExec | LOW | 5min | 2次 |
+| SecurityScan | LOW | 10min | 1次 |
+| AIChatCall | MEDIUM | 5min | 2次 |
+| DeployDev | MEDIUM | 10min | 1次 |
+| DeployProd | CRITICAL | 15min | 0次 (失败即人工) |
+| DBMigration | CRITICAL | 5min | 0次 |
+
+**沙箱执行**: HIGH/CRITICAL 风险工具在隔离容器中运行，限制网络/文件系统访问。
+
+### 2.2 状态与 Checkpoint
+
+**职责：** 持久化中间文件、进度和结果，支持跨会话恢复。
+
+Temporal Workflow 天然提供：
+- **Activity 级 Checkpoint**: 每个 Activity 完成后自动持久化，崩溃后从最近 Checkpoint 恢复
+- **Heartbeat**: 长时间 Activity（代码生成）定期上报心跳，超时自动重新分配
+- **Signal**: 外部事件（人工审批、测试结果）注入运行中的工作流
+
+业务层补充：
+
+```
+PostgreSQL (engine.task_checkpoints):
+├── REQUIREMENT_CONFIRMED  — 需求确认快照
+├── CODE_GENERATED         — 生成代码 + Diff
+├── REVIEW_PASSED          — Review 结果 + 评分
+├── TEST_PASSED            — 四层测试报告
+└── DEPLOYED               — 部署版本 + 健康指标
+
+MinIO (产物存储):
+├── /tasks/{task_id}/code/      — 生成的代码文件
+├── /tasks/{task_id}/diffs/     — Diff 文件
+├── /tasks/{task_id}/reports/   — 测试报告
+└── /tasks/{task_id}/logs/      — 构建/部署日志
+```
+
+**跨会话恢复**: 用户关闭浏览器后重新打开，通过 `task.workflow_id` 查询 Temporal Workflow 状态，前端从最近 Checkpoint 恢复 UI。
+
+### 2.3 规划与分解
+
+**职责：** 把大任务拆成 DAG，再把节点交给子 Agent 或工具执行。
+
+```python
+# LangGraph (Python Worker) — Planner Agent
+class TaskGraph:
+    steps: list[TaskStep]       # DAG 节点列表
+    dependencies: dict[str, list[str]]  # 依赖关系
+
+class TaskStep:
+    id: str
+    name: str
+    step_type: StepType         # GENERATE/LINT/TEST/DEPLOY
+    input: dict
+    risk_level: RiskLevel
+    estimated_tokens: int
+
+# Planner 输出 TaskGraph → Temporal Orchestrator 创建 Child Workflows
+# 独立步骤并行执行 (Temporal 原生支持)
+# 有依赖的步骤按 DAG 顺序串行
+# 每个 Child Workflow = 一个可独立恢复的执行单元
+```
+
+项目画像自动分析（Context Engineering 核心）：
+
+```python
+# 首次接入项目时自动分析
+class ProjectProfile:
+    tech_stack: list[str]       # ["Java 17", "Spring Boot 3.2", "MyBatis Plus"]
+    architecture: str           # "layered-monolith" / "microservice" / "hexagonal"
+    db_schema: dict             # 表结构摘要
+    dependencies: list[str]     # 关键依赖
+    code_style: dict            # 命名规范、缩进风格
+    test_framework: str         # "JUnit5" / "Jest" / "Pytest"
+    entry_points: list[str]     # API 入口文件列表
+```
+
+### 2.4 验证与反馈
+
+**职责：** 用测试、自一致性、评审和 Judge 形成闭环，失败时触发重试或升级。
+
+```
+验证管道 (Temporal Workflow 中的 Activity 序列):
+
+Step 1: Lint Check (MegaLinter)
+   ├── 通过 → 继续
+   └── 失败 → 返回 AI Agent 修复 (最多 3 轮)
+
+Step 2: Static Analysis (Semgrep + SonarQube)
+   ├── 安全规则: SQL injection, XSS, hardcoded secrets
+   └── 质量规则: 复杂度, 重复度, 覆盖率
+
+Step 3: AI Self-Review
+   ├── 用不同模型 (或不同 prompt) Review 生成的代码
+   └── Judge 评分: 0-100, 低于阈值打回重做
+
+Step 4: 四层自动化测试 (MeterSphere)
+   ├── Unit Test → API Test → Integration Test → Regression Test
+   └── 失败 → 返回 AI Agent 修复 (最多 3 轮)
+
+Step 5: Human Review (仅高风险任务)
+   ├── 低风险 (score ≥ 90, ≤5 files, 非核心逻辑): 自动合并
+   └── 高风险: 推送审批卡片到 Web / IM
+
+反馈闭环:
+├── 每次失败的详细信息 (lint 错误, 测试 stacktrace) 结构化传回 AI
+├── AI 修复后重新进入验证管道
+└── 超过重试上限 → 升级为人工处理 + 通知
+```
+
+约束错误标准化格式（Agent 可消费）：
+
+```json
+{
+  "violations": [
+    {
+      "type": "LINT",
+      "rule": "java/naming/method-name",
+      "severity": "ERROR",
+      "file": "src/main/java/com/example/UserService.java",
+      "line": 42,
+      "column": 5,
+      "message": "Method name 'GetUser' should be in camelCase",
+      "suggestion": "Rename to 'getUser'",
+      "doc_link": "https://forge.internal/specs/java-naming#method"
+    }
+  ]
+}
+```
+
+### 2.5 编排协调
+
+**职责：** 规划器、执行器、评审器和优化器各自负责不同阶段，通过工作流连起来。
+
+```
+主编排 Workflow (Temporal):
+
+SUBMITTED
+  → RequirementAnalysis (Planner Agent)
+    → 输出: TaskGraph + RiskAssessment
+  → [Signal] 用户确认需求理解
+PLANNING_CONFIRMED
+  → CodeGeneration (Coder Agent, 可并行多文件)
+    → 每个文件 = 1 Child Workflow
+GENERATED
+  → ValidationPipeline (Lint → Analysis → Review → Test)
+    → 失败 → FixLoop (最多 3 轮)
+VALIDATED
+  → [低风险] AutoMerge → Deploy
+  → [高风险] [Signal] 等待人工审批
+APPROVED
+  → Deployment (Argo CD)
+    → 健康检查
+DEPLOYED
+  → RuntimeValidation (DeepFlow 指标检查)
+    → 异常 → 自动回滚
+COMPLETED
+
+每个阶段转换记录到 task_checkpoints, 任何节点可恢复。
+```
+
+设计原则（对齐 Harness Engineering 核心理念）：
+- **约束不是限制能力，而是稳定性的来源** — 所有 AI 输出必须通过验证管道
+- **Checkpoint 应该优先于一次性跑完整个任务** — 每个阶段持久化，崩溃可恢复
+- **Human in the Loop 只出现在高风险和不可逆节点** — 低风险全自动
+- **小模型负责执行，大模型负责规划或评审** — 成本分层控制
+
+### 2.6 观测与 Guardrails
+
+**职责：** 日志、指标、Tracing 和安全策略共同构成运行护栏。
+
+```
+平台自身观测 (Grafana Stack):
+├── Temporal Metrics → Grafana Dashboard
+│   └── Workflow 延迟/成功率/队列深度/Activity 分布
+├── Go API Metrics → Prometheus
+│   └── QPS/P99/错误率/活跃连接数
+├── Application Logs → Loki
+│   └── 结构化日志 (JSON)
+└── AI 调用追踪 → 自建
+    └── 模型/token 用量/延迟/成本/成功率
+
+AI 生成产品观测 (DeepFlow):
+├── eBPF 自动采集 (无需在生成代码中注入监控)
+├── Universal Service Map (自动拓扑 + 黄金指标)
+├── Distributed Tracing (网关→服务→DB→队列全覆盖)
+└── Continuous Profiling (OnCPU/OffCPU/Memory)
+
+Guardrails:
+├── Token 预算控制
+│   ├── 每任务: Token 预估预执行 + 硬限 (默认 1M tokens)
+│   ├── 每租户: 月预算 80% 软警告 + 100% 硬限
+│   └── 全局: 并发 AI 任务限制 + 队列
+│   └── 实现: Temporal BudgetInterceptor
+├── 三级紧急停止 (KillSwitch)
+│   ├── L1 暂停提交: 阻止新任务, 在途任务继续
+│   ├── L2 冻结引擎: 暂停任务, 阻止代码提交和部署
+│   ├── L3 全面停机: 切断所有入口, 停止所有工作负载
+│   ├── 自动触发: 3 次连续部署失败 + 错误率 >5% → L1; 1h 内 >3 次回滚 → L2
+│   └── 实现: Redis 分布式标志 + Temporal KillSwitchInterceptor
+├── 敏感操作审批
+│   └── DB migration / 生产部署 / 权限变更 → 强制人工确认
+└── 输入/输出过滤
+    ├── Prompt injection 检测
+    └── PII 脱敏
+```
+
+---
+
+## 3. AI 引擎技术设计
+
+### 3.1 架构
+
+AI 引擎分为两层：
+- **编排层 (Go API Server)**: 任务管理、状态机、风险评估、Temporal Workflow 触发
+- **执行层 (Python Worker)**: LangGraph Agent 编排、LLM 调用、上下文构建
+
+```
+forge-core (Go)                    ai-worker (Python)
+┌─────────────┐                    ┌─────────────────────┐
+│ Task Module │                    │ LangGraph Workflow  │
+│ ├── CRUD    │    Temporal        │ ├── Planner Agent   │
+│ ├── 状态机   │ ──────────────►   │ ├── Coder Agent     │
+│ └── 风险评估 │    Activity       │ ├── Reviewer Agent  │
+└─────────────┘                    │ ├── Fixer Agent     │
+                                   │ └── Context Builder │
+                                   └─────────┬───────────┘
+                                             │
+                                   ┌─────────▼───────────┐
+                                   │ Model Router        │
+                                   │ ├── Claude (Opus/   │
+                                   │ │   Sonnet/Haiku)   │
+                                   │ ├── GPT-4o          │
+                                   │ └── 通义千问 Max      │
+                                   └─────────────────────┘
+```
+
+### 3.2 多模型路由与降级
+
+```python
+class ModelRouter:
+    """任务感知的模型选择 + 降级链"""
+
+    routing_rules = {
+        # 任务类型 → 首选模型 + 降级链
+        "ANALYZE":  ["claude-opus-4", "gpt-4o", "qwen-max"],
+        "GENERATE": ["claude-sonnet-4", "gpt-4o", "qwen-max"],
+        "REVIEW":   ["claude-opus-4", "gpt-4o"],
+        "FIX":      ["claude-sonnet-4", "gpt-4o", "qwen-max"],
+        "TEST_GEN": ["claude-haiku-4", "gpt-4o-mini", "qwen-plus"],
+    }
+
+    # 每个模型有独立熔断器
+    # 错误率 > 50% (30s 窗口) → 熔断 → 降级到下一个模型
+    # 熔断后 60s 半开状态 → 尝试恢复
+```
+
+### 3.3 代码生成流程
+
+三阶段合约优先模式：
+
+```
+Phase A: 合约生成 (Contract-First)
+├── 输入: 需求分析结果 + 项目画像 + 编码规范
+├── 输出: DTO/VO 定义 + API 签名 + DB Schema (Flyway migration)
+└── 验证: 合约完整性检查
+
+Phase B: 并行实现 (Parallel Implementation)
+├── 基于合约, 并行生成各层代码
+├── 每个文件 = 1 Temporal Child Workflow
+│   ├── Controller
+│   ├── Service
+│   ├── Repository/Mapper
+│   ├── 配置文件
+│   └── 单元测试
+└── 并行度: 受 Token 预算和模型并发限制
+
+Phase C: 集成验证 (Integration Verification)
+├── 合并所有文件
+├── 编译检查
+├── 合约一致性验证 (DTO 使用是否和签名匹配)
+└── 通过 → 进入验证管道
+```
+
+### 3.4 上下文工程 (Context Engineering)
+
+```python
+class ContextBuilder:
+    """为 AI 调用构建最优上下文"""
+
+    def build_context(self, task, project, purpose):
+        context = []
+
+        # 1. 静态上下文 (规范中心)
+        context += self.load_coding_standards(project)
+        context += self.load_prompt_template(purpose)
+        context += self.load_review_rules(project)
+
+        # 2. 动态上下文 (适配器获取)
+        context += self.load_project_profile(project)
+        context += self.load_relevant_code(project, task)
+        context += self.load_db_schema(project)
+        context += self.load_api_contracts(project)
+
+        # 3. 运行时上下文 (可观测性数据, Phase 3)
+        context += self.load_runtime_metrics(project)
+
+        # 4. Token 预算优化
+        context = self.optimize_context(context, token_budget)
+
+        return context
+
+    def optimize_context(self, context, budget):
+        """Token 预算内最大化上下文价值"""
+        # 优先级: 编码规范 > 相关代码 > DB Schema > API 合约 > 运行时指标
+        # 大项目: RAG 检索相关代码片段, 而非全量加载
+        # 长任务: 历史对话结构化摘要, 避免 context window 爆炸
+```
+
+### 3.5 并发冲突处理
+
+```
+原则:
+├── AI 永远不强制覆盖人工代码
+├── 冲突时优先保留人工变更
+└── 自动解决失败 → 标记 CONFLICT → 通知人工
+
+流程:
+1. AI 工作在独立分支 (ai/{task_id})
+2. 生成完成后尝试 rebase 到目标分支
+3. 无冲突 → 创建 MR
+4. 有冲突 → 尝试自动解决 (最多 1 次)
+5. 自动解决失败 → 标记冲突 → 通知技术负责人
+```
+
+### 3.6 数据库迁移安全
+
+```
+原则:
+├── 所有 migration 必须可逆 (UP + DOWN)
+├── 不允许直接删表/删列 (标记弃用 → 下个版本清理)
+└── 先在临时环境验证, 再合入主分支
+
+AI 生成 migration 的约束:
+├── 检测现有 Flyway 版本号, 生成下一个序号
+├── 拦截危险操作: DROP TABLE/DROP COLUMN/TRUNCATE
+├── 生成 DOWN 脚本 (回滚用)
+└── 临时环境执行验证 → 成功后才允许合入
+```
+
+---
+
+## 4. 鉴权中心技术设计
+
+### 4.1 认证体系
+
+支持多种认证方式, 动态鉴权链：
+
+| 认证方式 | 实现期 | 场景 |
+|---------|--------|------|
+| 账号密码 + JWT | 一期 | Web 登录 |
+| OAuth2/OIDC (GitHub/Codeup) | 一期 | 一键接入 + 项目授权 |
+| 钉钉扫码 | 二期 | 企业用户快捷登录 |
+| 飞书扫码 | 二期 | 企业用户快捷登录 |
+| LDAP | 二期 | 企业目录服务对接 |
+| SSO SAML | 二期 | 企业 SSO 集成 |
+| API Token | 一期 | CLI / API 调用 |
+| MFA (TOTP + SMS) | 二期 | 敏感操作二次验证 |
+
+动态鉴权链：
+
+```go
+// 运行时可配置, 从 DB 热加载
+type AuthChain struct {
+    Authenticators []Authenticator  // 按顺序尝试
+    MFATriggers    []MFATrigger     // 触发 MFA 的条件
+}
+
+type Authenticator interface {
+    Type() string
+    Authenticate(ctx context.Context, credentials interface{}) (*AuthResult, error)
+}
+```
+
+### 4.2 授权模型
+
+三层授权：RBAC + ABAC + PBAC
+
+```
+RBAC (角色):
+├── PLATFORM_ADMIN  — 平台管理员
+├── ORG_ADMIN       — 组织管理员
+├── PROJECT_ADMIN   — 项目管理员 (技术负责人)
+├── DEVELOPER       — 开发者
+└── VIEWER          — 只读
+
+ABAC (属性策略):
+├── 示例: "只允许 senior 开发者审批生产部署"
+└── conditions: {"user.level": "senior", "resource.env": "prod"}
+
+PBAC (策略):
+├── 多条件组合, 优先级排序
+└── ALLOW/DENY effect
+```
+
+权限粒度：
+
+```
+平台级: 用户管理, 租户管理, 全局配置
+  └── 组织级: 团队管理, 组织规范配置
+      └── 项目级: 项目设置, 成员管理, 规范覆盖
+          └── 数据级: 行级 (tenant_id) + 列级 (敏感字段)
+```
+
+### 4.3 多租户隔离
+
+```
+实现方式: 共享表 + tenant_id 隔离
+
+├── 所有业务表含 tenant_id 字段
+├── Go Middleware 自动注入 tenant_id (从 JWT 解析)
+├── 数据库查询自动追加 WHERE tenant_id = ?
+├── 全局默认配置 + 租户级覆盖 (tenants.config JSONB)
+└── 大租户未来支持独立部署 (K8s namespace 隔离)
+```
+
+### 4.4 Token 管理
+
+```
+JWT 策略:
+├── Access Token: 15min TTL, 携带 user_id + tenant_id + roles
+├── Refresh Token: 7d TTL, 仅用于刷新 Access Token
+├── Token 吊销: Redis 黑名单 (token_jti → TTL = 剩余有效期)
+├── 多设备管理: 每用户最多 5 个并发设备, 超出踢掉最早设备
+└── 敏感操作: 需要重新验证密码或 MFA
+```
+
+---
+
+## 5. 规范中心技术设计
+
+### 5.1 内容体系
+
+| 类型 | 内容 | 用途 |
 |------|------|------|
-| 编排服务 → 执行服务（任务派发） | Kafka | 持久化、可回溯、支持消费组 |
-| 执行服务 → 编排服务（结果回报） | Kafka | 同上 |
-| 执行服务心跳 | Redis TTL | 轻量、TTL 天然支持超时检测 |
-| 任务状态缓存 | Redis | 高频读写 |
+| **编码规范** | Java/SQL/Redis/Kafka/API/安全/命名/Git | AI 生成代码时的约束输入 |
+| **Prompt 模板** | 需求分析/代码生成/Code Review/测试生成/修复生成/文档生成 | 标准化 AI 调用 |
+| **Review 规则** | 编码规范/OWASP Top 10/性能/数据库/API 兼容/自定义 | 验证管道的评判标准 |
+| **脚手架模板** | Java 微服务/Vue 前端/API 网关/SDK | 项目初始化模板 |
 
-### 2.3 多模型路由
+### 5.2 三级继承
 
-| 任务类型 | 首选模型 |
-|---------|---------|
-| 需求分析 / 架构设计 | Claude Opus |
-| 代码生成（复杂） | Claude Sonnet |
-| 代码生成（简单） | 通义灵码 |
-| Code Review | Claude Opus |
-| 测试用例生成 | Claude Sonnet |
-| 文档 / 注释生成 | Claude Haiku |
+```
+公司级 (默认)
+  └── 团队级 (覆盖部分规则)
+      └── 项目级 (覆盖部分规则)
 
-每个模型独立熔断统计（成功率 < 80% 触发熔断），Fallback 链：Claude → GPT → 通义 → 排队等待。
+合并策略:
+├── 子级只能覆盖父级的可覆盖项 (override: true)
+├── 父级标记 locked: true 的规则不允许子级修改
+└── 生效规范 = 公司默认 + 团队覆盖 + 项目覆盖 (逐级合并)
 
-模型适配器为插件化设计 — 新增模型只需实现统一接口 + 配置路由规则。
+缓存:
+├── Redis: specs:effective:{project_id}:{category} → 合并后的生效规范
+├── TTL: 10min
+└── 变更时主动失效
+```
 
-### 2.4 上下文构建
+### 5.3 Prompt 模板管理
 
-上下文完全通过代码托管适配器远程获取，不做本地克隆，保持执行服务完全无状态。
+```
+每个 Prompt 模板:
+├── system_prompt: 系统指令
+├── user_template: 用户消息模板 (含 {{variables}})
+├── variables: 变量定义 [{name, type, required}]
+├── version: 版本号 (每次修改自增)
+└── eval_cases: 评估测试用例
 
-**静态上下文**（每个项目固定）：
-- 编码规范 — 来自规范中心
-- 脚手架结构 — 来自规范中心模板库
-- Review 规则 — 来自规范中心规则库
-- Prompt 模板 — 来自规范中心提示词库
+Prompt 变更验证:
+├── 修改 Prompt → 自动运行 eval_cases
+├── 新版本 score ≥ 旧版本 score → 允许发布
+└── score 下降 → 警告, 需要手动确认
+```
 
-**动态上下文**（每次任务通过代码托管适配器动态加载）：
-- 相关代码文件 — 基于需求分析确定
-- 数据库 Schema — 项目 Flyway 迁移文件
-- API 契约 — 已有 Controller/DTO 定义
-- 最近变更 — Git log（避免冲突）
-- 用户对话历史 — 会话存储
+---
 
-**上下文优化策略**：
-- Token 预算管理：按优先级裁剪
-- 代码摘要：大文件只送关键签名 + 注释
-- 增量上下文：迭代修改时只送 diff + 周边
-- RAG 检索：通过 Elasticsearch kNN 向量检索相关段落
+## 6. DevOps 自动化技术设计
 
-**处理上限与降级**：
+### 6.1 四层自动化测试
 
-| 场景 | 策略 |
+| 层 | 工具 | 触发时机 | 通过标准 |
+|---|------|---------|---------|
+| Unit Test | JUnit 5 / Jest | 代码生成后立即 | 覆盖率 ≥ 60% |
+| API Test | MeterSphere | Unit Test 通过后 | 全部用例通过 |
+| Integration Test | MeterSphere | API Test 通过后 | 全部用例通过 |
+| Regression Test | CI Pipeline (Argo) | MR 合入前 | 全部用例通过 |
+
+测试生成策略：
+- AI 生成代码的同时并行生成单元测试
+- AI 生成 API 测试用例 → 推送到 MeterSphere
+- 测试失败 → AI 分析 stacktrace → 自动修复 (≤3 轮)
+
+### 6.2 质量门禁
+
+```
+门禁检查点 (按顺序, 任一失败则阻止):
+
+1. COMPILATION     — 编译通过
+2. LINT            — MegaLinter 零 ERROR
+3. SECURITY        — Semgrep 零 HIGH/CRITICAL
+4. IMAGE_SCAN      — Trivy 镜像漏洞扫描零 CRITICAL
+5. COVERAGE        — 单测覆盖率 ≥ 60%
+6. AI_REVIEW       — Review 评分 ≥ 项目阈值 (默认 90)
+7. API_COMPAT      — API 签名向后兼容
+8. TEST_PASS       — 四层测试全部通过
+```
+
+### 6.3 环境管理
+
+| 环境类型 | 分支 | 部署方式 | 说明 |
+|---------|------|---------|------|
+| 临时环境 | ai/{task_id} | 自动创建/销毁 | AI 分支预览, MR 合并后 30min 销毁 |
+| dev | develop | 自动部署 | 开发环境 |
+| staging | release | 自动部署 | 预发布环境 |
+| prod | master/main | 审批 + 灰度 | 生产环境 |
+
+临时环境：
+```
+创建: AI 分支推送 → 自动创建 K8s namespace
+├── DB: PostgreSQL template DB clone
+├── Redis: 独立 DB index
+├── 应用: 最小副本 (1 replica)
+└── URL: {branch}.preview.forge.internal
+
+销毁: MR 合并 → 30min 后自动清理
+└── Guardian CronJob: 扫描过期/孤儿资源
+```
+
+### 6.4 灰度发布
+
+```
+Argo Rollouts 灰度策略:
+
+canary:
+  steps:
+  - setWeight: 5      # 5% 流量
+  - pause: {duration: 5m}
+  - analysis:          # DeepFlow 指标检查
+      templates:
+      - templateName: success-rate
+        args:
+        - name: threshold
+          value: "0.95"  # 成功率 > 95%
+  - setWeight: 25
+  - pause: {duration: 5m}
+  - analysis: ...
+  - setWeight: 50
+  - pause: {duration: 5m}
+  - analysis: ...
+  - setWeight: 100
+
+自动回滚触发:
+├── 健康检查失败
+├── 错误率超过阈值
+└── P99 延迟超过基线 200%
+```
+
+---
+
+## 7. Web 工作台技术设计
+
+### 7.1 技术栈
+
+| 层 | 选型 | 理由 |
+|---|------|------|
+| 框架 | Next.js 15 (App Router) | SSR + RSC + 流式渲染 |
+| 语言 | TypeScript (strict) | 全量类型安全 |
+| 状态管理 | Zustand | 轻量、TS 友好 |
+| 服务端状态 | TanStack Query | 缓存/重试/乐观更新 |
+| UI 组件库 | shadcn/ui + Radix | 可深度定制暗色主题 |
+| 样式 | Tailwind CSS 4 | 原子化 CSS |
+| 图标 | Lucide Icons | — |
+| 字体 | Geist Sans + Geist Mono | — |
+| 实时通信 | SSE → WebSocket | 流式输出 + 进度推送 |
+| 图表 | Recharts | React 原生 |
+| 代码编辑器 | Monaco Editor (只读) | 内联 Diff 智能注释 |
+| Web IDE | code-server (OpenVSCode Server) | 完整代码浏览, "在 IDE 中打开" |
+| 表单 | React Hook Form + Zod | 类型安全验证 |
+| Markdown | react-markdown + rehype | AI 输出渲染 |
+| 国际化 | next-intl | 中文优先, 预留英文 |
+| 测试 | Vitest + Playwright | 单测 + E2E |
+
+### 7.2 视觉体系: "深空指挥中心"
+
+```
+品牌色: Forge Purple #8B5CF6
+
+深空背景层级:
+├── Deep:    #050510  (最深层背景, OLED 黑)
+├── Primary: #0F0F1A  (主内容区/卡片底色)
+├── Elevated:#1A1A2E  (悬浮面板/弹窗底色)
+├── Hover:   #1C1C2E  (悬停态)
+└── Border:  #2A2A3E  (边框)
+
+视觉效果:
+├── Glassmorphism: bg-white/5 backdrop-blur-xl border border-white/10
+├── Aurora 渐变: 背景动画 (品牌紫 + 蓝 + 翠)
+├── 呼吸光效: AI 运行中的脉冲动画
+└── 卡片悬停: hover 时微亮 + 边框高亮
+```
+
+### 7.3 页面结构
+
+```
+/login                              — 登录 (Aurora 背景)
+/projects                           — 项目大厅 (一键接入 + 项目卡片网格)
+/projects/[id]                      — 项目概览
+/projects/[id]/tasks                — 任务看板 (三级视图)
+/projects/[id]/tasks/new            — 新建任务 (需求对话)
+/projects/[id]/tasks/[taskId]       — AI 工作可视化 (时间线 + 实时工作区)
+/projects/[id]/tasks/[taskId]/changes — 变更结果 (AI Diff + 注释)
+/projects/[id]/tasks/[taskId]/tests   — 测试报告 (四层)
+/projects/[id]/tasks/[taskId]/deploy  — 部署状态
+/projects/[id]/branches             — 分支管理
+/projects/[id]/reviews              — MR 审批列表
+/projects/[id]/reviews/[reviewId]   — MR 审批详情
+/projects/[id]/environments         — 环境管理
+/projects/[id]/quality              — 质量 Dashboard
+/projects/[id]/settings             — 项目设置 (规范/适配器/成员)
+/specs/*                            — 规范中心 (平台级)
+/admin/*                            — 平台管理 (用户/角色/租户/计费/KillSwitch)
+/dashboard                          — 全局 Dashboard
+```
+
+### 7.4 实时通信
+
+```
+Phase 1 (SSE):
+├── 端点: GET /api/stream/tasks/{taskId}
+├── Go API: Temporal Workflow Query 轮询 → SSE 推送
+├── 前端: EventSource + 自动重连 (指数退避, 最大 30s)
+└── 事件类型:
+    ├── STREAM_OUTPUT   — AI 代码流式输出
+    ├── TASK_PROGRESS   — 任务状态变更
+    ├── STEP_COMPLETE   — 步骤完成
+    ├── REVIEW_RESULT   — Review 结果
+    ├── DEPLOY_STATUS   — 部署进度
+    ├── APPROVAL_REQ    — 需要人工审批
+    ├── KILL_SWITCH     — 紧急停止通知
+    └── ERROR           — 错误
+
+Phase 2 (WebSocket):
+├── 端点: WS /ws/tasks/{taskId}
+├── 双向通信: USER_INPUT (client→server) + 所有事件类型 (server→client)
+├── 心跳: 30s 间隔
+└── 断线恢复: 重连后从最近 checkpoint 恢复状态
+```
+
+### 7.5 性能优化
+
+| 策略 | 实现 |
 |------|------|
-| 项目 < 50 文件 | 全量加载 |
-| 项目 50~500 文件 | 签名索引 + 精准加载 + RAG |
-| 项目 > 500 文件 | 仅索引 + RAG，加载限定为需求相关模块 |
-| 单文件 > 1000 行 | 拆分为签名 + 关键方法体 |
-| 上下文仍超限 | 告知用户需求范围太大，建议拆分 |
+| SSR + 流式渲染 | Next.js App Router + Suspense boundary, 首屏秒开 |
+| RSC | 项目列表、规范内容等静态数据在服务端渲染 |
+| 代码分割 | Monaco Editor、Recharts 等大依赖 dynamic import |
+| 虚拟滚动 | 任务列表、日志输出使用 @tanstack/react-virtual |
+| 乐观更新 | TanStack Query mutate + optimistic update |
+| SSE 节流 | AI 流式输出 16ms 合批渲染 (requestAnimationFrame) |
+| 静态资源 CDN | Next.js static export + CDN 缓存 |
 
-### 2.5 代码生成分阶段
+### 7.6 权限控制 (前端层)
 
-Phase A（串行 — 契约先行）：
-- AI 先生成接口契约：DTO 定义、API 接口签名、数据库 Schema 变更
+```
+路由级: Next.js Middleware
+├── 未登录 → /login
+├── 无项目权限 → /projects
+└── 无管理权限 → 隐藏 /admin
 
-Phase B（并行 — 基于契约实现）：
-- 执行服务 A → Java 后端实现
-- 执行服务 B → 前端页面
-- 执行服务 C → 单元测试
-- 每个执行服务生成完毕后通过代码托管适配器原子提交到 ai/feature-xxx 分支
+组件级: <PermissionGate permission="task:approve">
+└── 根据用户角色动态显示/隐藏操作按钮
 
-Phase C（串行 — 集成验证）：
-- 检查跨文件一致性（接口签名是否匹配、DTO 字段是否对齐）
+数据级: API 层 tenant_id 自动注入, 前端不处理多租户过滤
+```
 
----
+### 7.7 code-server 集成 (Web IDE)
 
-## 3. 鉴权中心技术设计
+#### 定位
 
-### 3.1 动态鉴权链（责任链模式）
+双层代码浏览体验：
+- **Monaco Editor（内联）**: 嵌入变更结果页面，展示 Diff + AI 逐行注释，轻量快速
+- **code-server（完整 IDE）**: 提供 VS Code Web 版，用户点击"在 IDE 中打开"后在完整 IDE 环境中浏览代码仓库
 
-运行时可动态增减的插件式鉴权器：
-- OAuth2 / OIDC
-- LDAP / Active Directory
-- API Token / AK-SK 签名
-- 钉钉扫码 / 飞书扫码
-- SSO SAML
-- SSH Key（Git 操作）
-- Personal Access Token
-- OAuth2 Device Flow（CLI）
-- IM 平台回调验签
+#### 架构
 
-每种接入场景的鉴权链可独立配置，配置存 DB，热更新。
+```
+共享 code-server 实例 (Docker 容器)
+├── 部署方式: docker-compose 中独立服务
+├── 端口: 8443 (HTTPS)
+├── 认证: Forge JWT → code-server proxy auth
+├── 仓库访问: 通过 GitHub API clone 到临时目录
+└── 生命周期: 实例常驻, 工作区按需创建/回收
 
-### 3.2 授权引擎
+用户流程:
+1. 用户点击 "在 IDE 中打开" 按钮
+2. forge-core API 调用:
+   ├── 检查工作区是否已存在
+   ├── 不存在 → GitHub clone 到 /workspaces/{project_id}/{branch}
+   └── 已存在 → 直接返回 URL
+3. 前端打开 code-server URL (新标签页或 iframe)
+   └── URL: /ide/{project_id}?folder=/workspaces/{project_id}/{branch}
+4. 工作区回收: 空闲 30min 后自动清理临时目录
+```
 
-- RBAC — 基于角色（管理员/开发/PM）
-- ABAC — 基于属性（部门/项目/环境）
-- PBAC — 基于策略（JSON 规则动态下发）
-- 数据权限 — 行级/列级（MyBatis 插件自动注入 tenant_id）
+#### Docker Compose 配置
 
-### 3.3 Token 服务
+```yaml
+code-server:
+  image: codercom/code-server:latest
+  environment:
+    - DOCKER_USER=$USER
+  volumes:
+    - code-workspaces:/workspaces    # 仓库工作区
+  ports:
+    - "8443:8080"
+  restart: unless-stopped
+```
 
-- JWT 签发 / 刷新 / 吊销
-- 多端登录管理（同时在线数控制）
-- Token 黑名单（Redis，带 TTL 自动清理）
+#### 安全设计
 
-### 3.4 MFA 服务
-
-- TOTP（Google Authenticator）
-- 短信验证码
-- 敏感操作二次验证触发器
-
----
-
-## 4. DevOps 自动化技术设计
-
-### 4.1 流水线模板
-
-| 项目类型 | 流水线阶段 |
-|---------|-----------|
-| Java 微服务 | 编译 → 单测 → 代码扫描 → 镜像构建推送 → Helm 部署 |
-| Vue 前端 | npm install → build → 镜像构建（nginx）→ Helm 部署 |
-| SDK 类库 | 编译 → 单测 → 发布到私有 Nexus |
-
-### 4.2 环境管理
-
-**临时环境**（AI 分支预览）：
-- AI 推送 ai/feature-xxx 分支 → 通过容器编排适配器自动创建临时 K8s Namespace
-- 包含独立的 DB（schema clone）+ Redis + 服务实例
-- MR 合并后 30min 自动销毁，有清理守护进程防止孤儿环境
-- 资源配额限制（防止临时环境耗尽集群资源）
-
-**固定环境**：
-- dev → develop 分支自动部署
-- staging → release 分支自动部署
-- prod → master 分支，人工审批后灰度部署
-
-### 4.3 质量门禁工具链
-
-| 检查项 | 工具 |
-|--------|------|
-| 安全扫描 | SonarQube + OWASP Dependency Check |
-| 镜像漏洞扫描 | Trivy |
-| AI Review | AI 引擎 code-review Prompt |
-
-### 4.4 灰度部署（APISIX 实现）
-
-灰度发布完全通过 APISIX 网关层实现，业务服务零侵入。方法论参见 [references/gray-release-methodology.md](references/gray-release-methodology.md)。
-
-**三层决策模型**：
-
-| 优先级 | 决策层 | 实现方式 |
-|--------|--------|---------|
-| 最高 | 环境分区 | APISIX 路由级别隔离 |
-| 中 | 规则匹配 | APISIX traffic-split 插件条件匹配（Header/Cookie/参数） |
-| 最低 | 比例分流 | APISIX weighted_upstreams 按权重分配 |
-
-灰度规则通过 APISIX Admin API 即时变更，无需重启。
-
-### 4.5 配置自动发布
-
-1. AI 根据项目规范生成配置文件（application.yml 等）
-2. DevOps 模块校验配置（命名规范、敏感字段检测、格式正确性）
-3. 校验通过后自动发布到 Nacos 对应命名空间和分组
-4. 目标服务通过 Nacos 监听机制热加载
-
----
-
-## 5. Web 工作台技术设计
-
-### 5.1 技术选型
-
-| 维度 | 选型 |
+| 层面 | 措施 |
 |------|------|
-| 框架 | Vue 3.5 + TypeScript |
-| 构建 | Vite |
-| UI 库 | Ant Design Vue 4.x |
-| 状态管理 | Pinia 3.x |
-| 路由 | Vue Router 4.x |
-| HTTP | Axios |
-| 代码编辑器 | Monaco Editor |
-| 图表 | ECharts |
-| 图标 | Lucide Icons |
-| 实时通信 | SSE（Phase 1）→ Socket.IO（Phase 2） |
-| 字体 | Geist Sans + Geist Mono |
+| 认证 | forge-core 反向代理 code-server, 校验 Forge JWT 后透传 |
+| 隔离 | 工作区按 project_id + branch 隔离，用户只能访问自己有权限的项目 |
+| 只读 | Phase 1 工作区为只读模式（浏览审查用途），不允许通过 IDE 直接提交 |
+| 资源 | code-server 容器设置 CPU/内存限制，防止单用户耗尽资源 |
 
-### 5.2 视觉设计
+#### 使用场景
 
-"深空指挥中心"风格 — 深色模式唯一，品牌紫 #8B5CF6，Aurora 极光背景，毛玻璃弹窗。
-
-详细视觉规范见 [product-design.md](product-design.md) Section 9。
-
-### 5.3 代码可视化
-
-不自建的能力（由代码托管平台提供）：Git 存储引擎、代码搜索、CI 构建执行器、Webhook 管理
-
-做体验增强：
-- AI Diff 智能注释（每段变更附解释）
-- 风险标注（高亮可能有问题的代码行）
-- AI 对话式 Code Review（在代码行上提问）
-- AI 分支可视化（自动命名 ai/feature-xxx）
-- 变更影响分析（这次改动影响哪些服务/接口）
-
-### 5.4 AI 工作过程实时推送
-
-Phase 1 使用 SSE（Server-Sent Events）实现 AI 工作过程的实时推送：
-- AI 代码生成流式输出
-- 任务步骤状态变更
-- 测试执行进度
-- 部署状态更新
-
-SSE 连接由 AI 引擎直接提供，不经过独立的实时网关（Phase 2 升级为 WebSocket 后再独立部署 forge-beacon）。
-
----
-
-## 6. 实时网关技术设计
-
-### 6.1 业务隔离（Namespace）
-
-| Namespace | 用途 |
-|-----------|------|
-| /portal | Web 工作台的实时推送 |
-| /bot | IM 消息桥接 |
-| /engine | AI 流式输出 |
-| /pipeline | 部署进度推送 |
-
-### 6.2 连接类型
-
-**有状态连接**（绑定用户会话）：
-- AI 对话 — userId → connectionId 映射存 Redis
-- 断线 30s 内重连恢复会话，超时释放
-
-**无状态连接**（订阅模式）：
-- 任务进度广播 — 订阅 task:{taskId} 频道
-- 系统通知 — 订阅 system:alert 频道
-
-### 6.3 消息类型
-
-| 类型 | 方向 | 说明 |
+| 场景 | 入口 | 行为 |
 |------|------|------|
-| STREAM_OUTPUT | server → client | AI 生成代码的流式文本 |
-| TASK_PROGRESS | server → client | 任务状态机变更 |
-| REVIEW_RESULT | server → client | Review 结果通知 |
-| DEPLOY_STATUS | server → client | 部署进度 |
-| APPROVAL_REQ | server → client | 需要人工审批的请求 |
-| SYSTEM_ALERT | server → client | 系统告警 |
-| KILL_SWITCH | server → client | 紧急停止通知 |
-| USER_INPUT | client → server | 用户输入 |
-| HEARTBEAT | 双向 | 心跳保活 |
+| 审查 AI 生成代码 | 变更结果页 "在 IDE 中打开" | 打开 AI 分支，定位到变更文件 |
+| 浏览项目代码 | 项目详情页 "代码浏览" | 打开默认分支，浏览完整仓库 |
+| 对比分支差异 | 任务详情页 "IDE 中查看 Diff" | 打开 AI 分支，VS Code 内置 Diff |
 
 ---
 
-## 7. 外部平台适配器技术设计
+## 8. IM 机器人技术设计
 
-### 7.1 设计原则
+### 8.1 支持平台
 
-- **面向能力抽象，不面向厂商 API**：接口按业务能力定义（如"原子提交多文件"），而非按厂商 API 结构
-- **最小公共能力集**：接口只暴露所有目标平台都能支持的能力；厂商独有能力通过扩展点提供
-- **项目级绑定**：每个孵化项目创建时选择平台组合，生命周期内保持一致
-- **凭证统一管理**：所有平台凭证统一存储在 Nacos 加密配置中
-- **限流与容错由适配器内部封装**：各厂商 API 的限流策略、重试逻辑、缓存策略在实现层处理
+| 平台 | 接入方式 | 实现期 |
+|------|---------|--------|
+| 钉钉 | 企业内部机器人 (Webhook + OAuth) | 二期 |
+| 飞书 | 自建应用 (Event Subscription + OAuth) | 二期 |
 
-### 7.2 适配器能力矩阵
+### 8.2 交互流程
 
-**代码托管适配器**：
+```
+用户 @forge 或私聊:
+1. forge-bot 接收消息 (Webhook)
+2. 解析意图:
+   ├── 需求提交: @forge + 需求描述
+   ├── 查询进度: @forge 查看任务 xxx
+   └── 紧急停止: @forge 停止
+3. 通过 Temporal Client 触发/查询任务
+4. 推送结果:
+   ├── 需求确认卡片 (结构化理解 + 确认按钮)
+   ├── 进度卡片 (进度条 + 当前步骤 + 耗时)
+   ├── 审批卡片 (Review 评分 + 风险 + 批准/拒绝按钮)
+   └── 完成通知 (变更摘要 + MR 链接)
+```
 
-| 能力 | 说明 | 首期实现（Codeup） |
+### 8.3 架构
+
+```
+forge-bot (Go 轻量服务):
+├── 独立部署 (2 replicas)
+├── HTTP Server: 接收 IM Webhook
+├── Temporal Client: 触发/查询 Workflow
+├── IM SDK: 钉钉 SDK + 飞书 SDK
+└── 消息模板: 卡片消息 JSON 模板
+```
+
+---
+
+## 9. 外部平台适配器技术设计
+
+### 9.1 适配器抽象
+
+```go
+// 代码托管适配器
+type CodeHostingAdapter interface {
+    // 仓库
+    ListRepos(ctx context.Context) ([]Repository, error)
+    GetRepo(ctx context.Context, repoID string) (*Repository, error)
+
+    // 文件操作
+    GetFileContent(ctx context.Context, repoID, path, ref string) ([]byte, error)
+    GetTree(ctx context.Context, repoID, ref string) ([]TreeEntry, error)
+
+    // 分支
+    CreateBranch(ctx context.Context, repoID, name, from string) error
+    DeleteBranch(ctx context.Context, repoID, name string) error
+    ListBranches(ctx context.Context, repoID string) ([]Branch, error)
+
+    // 提交
+    CommitFiles(ctx context.Context, repoID, branch, message string, files []FileChange) (*Commit, error)
+
+    // Merge Request
+    CreateMR(ctx context.Context, req CreateMRRequest) (*MergeRequest, error)
+    MergeMR(ctx context.Context, repoID string, mrID int) error
+    GetMRDiff(ctx context.Context, repoID string, mrID int) ([]FileDiff, error)
+
+    // Webhook
+    CreateWebhook(ctx context.Context, repoID string, config WebhookConfig) error
+
+    // Git 历史
+    GetCommitLog(ctx context.Context, repoID, ref string, limit int) ([]Commit, error)
+    GetDiff(ctx context.Context, repoID, from, to string) ([]FileDiff, error)
+}
+
+// 容器编排适配器
+type ContainerAdapter interface {
+    CreateNamespace(ctx context.Context, name string) error
+    ApplyManifest(ctx context.Context, namespace string, manifest []byte) error
+    GetPodStatus(ctx context.Context, namespace, name string) (*PodStatus, error)
+    GetServiceURL(ctx context.Context, namespace, name string) (string, error)
+    DeleteNamespace(ctx context.Context, name string) error
+}
+
+// CI/CD 适配器
+type CICDAdapter interface {
+    // 流水线
+    CreatePipeline(ctx context.Context, config PipelineConfig) (*Pipeline, error)
+    TriggerPipeline(ctx context.Context, pipelineID string, params map[string]string) (*PipelineRun, error)
+    GetPipelineStatus(ctx context.Context, runID string) (*PipelineRun, error)
+    GetPipelineLogs(ctx context.Context, runID string) (io.Reader, error)
+    CancelPipeline(ctx context.Context, runID string) error
+
+    // 产物
+    GetArtifacts(ctx context.Context, runID string) ([]Artifact, error)
+}
+// 首批实现: ArgoWorkflowsAdapter
+// 未来扩展: GitHubActionsAdapter, JenkinsAdapter, GitLabCIAdapter
+```
+
+### 9.2 首批实现
+
+| 适配器 | 平台 | 实现期 |
+|--------|------|--------|
+| GitHubAdapter | GitHub API v3/v4 | 一期 |
+| CodeupAdapter | 阿里云 Codeup API | 一期 |
+| K8sAdapter | Kubernetes API | 一期 |
+
+设计原则：
+- 能力导向抽象（不是 vendor API 结构）
+- 最小公共能力集（平台无关）
+- 每项目绑定一个代码平台（生命周期内一致）
+- 统一凭证管理（Vault 加密存储）
+- 适配器内置限流 + 重试（对上层透明）
+
+---
+
+## 9.5 CLI 入口设计
+
+CLI 作为开发者本地使用的入口, 通过 API Token 鉴权直接调用 forge-core API。
+
+```
+forge-cli (Go 编译为单二进制)
+├── forge login          → 获取 API Token, 存储到 ~/.forge/credentials
+├── forge projects       → 列出项目
+├── forge task create    → 提交需求 (交互式或 --requirement 参数)
+├── forge task status    → 查看任务状态 (支持 --watch 实时流式)
+├── forge task list      → 列出任务
+├── forge killswitch     → 触发紧急停止 (需 PLATFORM_ADMIN 权限)
+└── forge config         → 管理本地配置
+
+技术实现:
+├── Go cobra CLI 框架
+├── 鉴权: auth.active_tokens (token_type = 'CLI_TOKEN')
+├── 实时输出: SSE 订阅 → 终端流式渲染
+└── 分发: GitHub Releases + Homebrew + 直接下载
+```
+
+---
+
+## 9.6 产品加速库 (forge-foundation)
+
+AI 孵化产品的可选组件库, 提供开箱即用的基础设施和业务能力。
+
+### 基础设施层
+
+| 组件 | 能力 | 说明 |
 |------|------|------|
-| 仓库结构读取 | 获取文件树、文件内容、目录结构 | ListRepositoryTree, GetFileBlobs |
-| 代码原子提交 | 一次请求提交多个文件变更 | CreateCommitWithMultipleFiles |
-| 分支管理 | 创建/删除/查询分支 | CreateBranch |
-| 合并请求管理 | 创建/合并/查询/评审 MR | CreateMergeRequest, MergeMergeRequest |
-| 提交历史 | 查询 Git log、diff | ListRepositoryCommits |
-| Webhook 管理 | 注册/注销事件回调 | Push Hook, MR Hook, Note Hook |
+| forge-foundation-web | 统一响应 + 异常处理 | Result[T], ErrorCode, 分页, 断言工具 |
+| forge-foundation-data | 数据库集成 | GORM + 多数据源 + Migration |
+| forge-foundation-cache | 缓存集成 | Redis 客户端 + 分布式锁 |
+| forge-foundation-mq | 消息队列抽象 | 统一 API, Kafka/RocketMQ/NATS 可切换 |
+| forge-foundation-storage | 对象存储 | 阿里云 OSS / MinIO 双支持 |
+| forge-foundation-log | 统一日志 | 结构化日志 + Loki 集成 |
+| forge-foundation-metrics | 指标采集 | Prometheus metrics + DeepFlow 自动覆盖 |
 
-**容器编排适配器**：
+### 业务能力层 (Phase 2+)
 
-| 能力 | 说明 |
+| 组件 | 能力 |
 |------|------|
-| Namespace 管理 | 创建/删除命名空间 |
-| 工作负载管理 | Deployment 创建/更新/回滚/扩缩 |
-| 服务暴露 | Service + Ingress 管理 |
-| 配置管理 | ConfigMap / Secret 的 CRUD |
-| Pod 运维 | 查询 Pod 状态、日志、事件 |
-| 集群信息 | 节点状态、资源用量查询 |
+| forge-foundation-auth | 登录/认证 (可复用 forge-core 的 JWT 验证) |
+| forge-foundation-notification | 通知中心 (邮件/短信/IM) |
 
-**CI/CD 流水线适配器**：
-
-| 能力 | 说明 |
-|------|------|
-| 流水线模板管理 | 创建/更新流水线配置 |
-| 流水线触发 | 手动触发 / 代码推送自动触发 |
-| 状态查询 | 运行状态、各阶段进度 |
-| 日志获取 | 构建日志、测试日志 |
-| 产物管理 | 镜像推送状态、制品版本查询 |
-
-### 7.3 适配器注册机制
-
-适配器实现通过 Spring SPI 机制注册，新增平台支持只需实现适配器接口并注册。
-
-### 7.4 限流应对（代码托管适配器）
-
-- 文件内容 Redis 缓存，仅在 Webhook 通知变更时刷新
-- 适配器内置令牌桶限流，不同平台独立配置
-- 项目结构索引持久化到 DB，避免重复扫描
-
-> 首期 Codeup 适配器 API 详见 [references/codeup-api.md](references/codeup-api.md)
-> 首期 ACK 适配器 API 详见 [references/ack-api.md](references/ack-api.md)
+**设计原则**: 所有组件都是 Go module, AI 生成的 Go 项目可通过 `go get` 直接引入。对于 Java/Python 等其他语言的 AI 生成项目, 由 AI 按规范中心的编码规范直接生成等效代码。
 
 ---
 
-## 8. 自动化测试平台技术设计
+## 9.7 配置自动发布
 
-### 8.1 平台选型
-
-主平台：**MeterSphere**（开源持续测试平台，GPLv3，GitHub 13K+ stars）
-
-| 能力 | 说明 |
-|------|------|
-| 测试管理 | 用例管理、测试计划、缺陷追踪、报告生成 |
-| API 测试 | REST API 测试执行，支持 Swagger 导入 |
-| 编程接口 | REST API + MCP Server，AI 可直接创建和执行测试 |
-| 部署 | Docker，纳入 docker-compose 基础设施 |
-
-### 8.2 四层测试工具链
-
-| 测试层 | 工具 | 触发方式 |
-|--------|------|---------|
-| 单元测试 | JUnit 5（Java）/ Jest（前端） | Maven/npm 构建自动运行 |
-| 接口测试 | MeterSphere（AI 通过 MCP 创建用例） | AI 代码生成完成后触发 |
-| 集成测试 | MeterSphere（AI 编排跨服务测试） | 合并前触发 |
-| 回归测试 | CI/CD 流水线全量运行 | 合并前自动触发 |
-
-### 8.3 集成方式
+AI 生成的业务系统配置（应用配置、环境变量等）需要经过验证后自动发布。
 
 ```
-Forge AI 生成代码
-  ├── 生成单元测试代码 → 写入项目 → Maven/npm 构建运行
-  ├── 通过 MeterSphere MCP Server 创建接口/集成测试用例
-  ├── MeterSphere 执行测试 → 结果通过 Webhook 回传 Forge
-  └── Forge 前端展示四层测试结果
-```
+配置发布流程 (Temporal Activity):
 
-测试平台通过适配器模式接入，可替换为其他开源测试平台。
+1. AI 生成配置文件 (application.yaml, .env, etc.)
+2. 配置验证:
+   ├── 命名规范检查
+   ├── 敏感字段检测 (密码/Key → 必须引用 Vault)
+   ├── 格式校验 (YAML/JSON schema validation)
+   └── 值范围检查 (端口/超时/连接数等)
+3. 配置写入 K8s ConfigMap / Secret
+4. 触发应用热加载 (Pod restart 或 config watcher)
+5. 健康检查确认配置生效
+```
 
 ---
 
-## 9. 产品加速库技术设计
+## 10. 数据架构
 
-### 8.1 设计范式
+### 10.1 数据库总览
 
-复用已有脚手架的 starter 模式（详见 [references/scaffold-patterns.md](references/scaffold-patterns.md)）：
-- 两层结构：parent 模块 + starter jar
-- 自动装配机制（spring.factories / AutoConfiguration）
-- 条件激活（按需引入，不强制全家桶）
-- @EnableXxx 注解一键启用
+```
+PostgreSQL (单实例 HA, 多 Database):
+├── forge_main      → 业务数据 (多 Schema)
+│   ├── auth        → 用户/角色/权限/租户
+│   ├── engine      → 任务/步骤/检查点/模型调用
+│   ├── specs       → 规范/Prompt/规则/脚手架
+│   ├── pipeline    → 环境/部署/流水线
+│   └── billing     → Token用量/预算
+├── forge_temporal  → Temporal 专用
+└── forge_sonarqube → SonarQube 专用
+```
 
-### 8.2 技术基础设施层
+### 10.2 核心表设计
 
-| 组件 | 技术选型 |
-|------|---------|
-| 统一响应 + 异常 + 工具类 | Result\<T>、ErrorCode、分页、断言 |
-| Redis 集成 | Redisson + Spring Data Redis |
-| 数据库集成 | MyBatis-Plus + 多数据源 + Flyway |
-| 消息队列抽象 | 统一 API，Kafka / RocketMQ 可切换 |
-| 分布式调度 | XXL-Job 集成 |
-| 对象存储 | 阿里云 OSS / MinIO 双支持 |
-| 统一日志 | Logback + Logstash 对接 |
-| 指标采集 | Micrometer + Prometheus |
+#### auth Schema
+
+```sql
+-- 租户
+CREATE TABLE auth.tenants (
+    id            BIGSERIAL PRIMARY KEY,
+    name          VARCHAR(100) NOT NULL,
+    code          VARCHAR(50) NOT NULL UNIQUE,
+    status        VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',  -- ACTIVE/SUSPENDED/ARCHIVED
+    plan          VARCHAR(20) NOT NULL DEFAULT 'FREE',    -- FREE/PRO/ENTERPRISE
+    config        JSONB NOT NULL DEFAULT '{}',
+    token_budget  BIGINT DEFAULT 0,                       -- 月 Token 预算 (0=无限)
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 用户
+CREATE TABLE auth.users (
+    id            BIGSERIAL PRIMARY KEY,
+    tenant_id     BIGINT NOT NULL REFERENCES auth.tenants(id),
+    username      VARCHAR(100) NOT NULL,
+    email         VARCHAR(200),
+    password_hash VARCHAR(255),
+    display_name  VARCHAR(100),
+    avatar_url    TEXT,
+    status        VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    mfa_enabled   BOOLEAN NOT NULL DEFAULT FALSE,
+    mfa_secret    VARCHAR(100),
+    last_login_at TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(tenant_id, username)
+);
+
+-- 外部身份绑定
+CREATE TABLE auth.user_identities (
+    id            BIGSERIAL PRIMARY KEY,
+    user_id       BIGINT NOT NULL REFERENCES auth.users(id),
+    provider      VARCHAR(50) NOT NULL,       -- github/codeup/dingtalk/feishu/ldap/saml
+    provider_uid  VARCHAR(200) NOT NULL,
+    access_token  TEXT,                       -- Vault 加密
+    refresh_token TEXT,
+    token_expires TIMESTAMPTZ,
+    profile       JSONB DEFAULT '{}',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(provider, provider_uid)
+);
+
+-- 组织
+CREATE TABLE auth.organizations (
+    id            BIGSERIAL PRIMARY KEY,
+    tenant_id     BIGINT NOT NULL REFERENCES auth.tenants(id),
+    name          VARCHAR(200) NOT NULL,
+    code          VARCHAR(100) NOT NULL,
+    description   TEXT,
+    parent_id     BIGINT REFERENCES auth.organizations(id),  -- 支持多级组织
+    status        VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(tenant_id, code)
+);
+
+-- 角色
+CREATE TABLE auth.roles (
+    id            BIGSERIAL PRIMARY KEY,
+    tenant_id     BIGINT NOT NULL REFERENCES auth.tenants(id),
+    name          VARCHAR(100) NOT NULL,
+    code          VARCHAR(50) NOT NULL,
+    scope         VARCHAR(20) NOT NULL,       -- PLATFORM/ORG/PROJECT
+    description   TEXT,
+    is_system     BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(tenant_id, code)
+);
+
+-- 权限定义
+CREATE TABLE auth.permissions (
+    id            BIGSERIAL PRIMARY KEY,
+    code          VARCHAR(100) NOT NULL UNIQUE,
+    name          VARCHAR(100) NOT NULL,
+    module        VARCHAR(50) NOT NULL,
+    action        VARCHAR(20) NOT NULL,
+    description   TEXT
+);
+
+-- 角色-权限关联
+CREATE TABLE auth.role_permissions (
+    role_id       BIGINT NOT NULL REFERENCES auth.roles(id),
+    permission_id BIGINT NOT NULL REFERENCES auth.permissions(id),
+    PRIMARY KEY (role_id, permission_id)
+);
+
+-- 用户-角色关联
+CREATE TABLE auth.user_roles (
+    id            BIGSERIAL PRIMARY KEY,
+    user_id       BIGINT NOT NULL REFERENCES auth.users(id),
+    role_id       BIGINT NOT NULL REFERENCES auth.roles(id),
+    scope         VARCHAR(20) NOT NULL,
+    scope_id      BIGINT,
+    granted_by    BIGINT REFERENCES auth.users(id),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, role_id, scope, scope_id)
+);
+
+-- ABAC 策略
+CREATE TABLE auth.policies (
+    id            BIGSERIAL PRIMARY KEY,
+    tenant_id     BIGINT NOT NULL REFERENCES auth.tenants(id),
+    name          VARCHAR(100) NOT NULL,
+    description   TEXT,
+    effect        VARCHAR(10) NOT NULL,       -- ALLOW/DENY
+    conditions    JSONB NOT NULL,
+    actions       TEXT[] NOT NULL,
+    priority      INT NOT NULL DEFAULT 0,
+    enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 活跃 Token
+CREATE TABLE auth.active_tokens (
+    id            BIGSERIAL PRIMARY KEY,
+    tenant_id     BIGINT NOT NULL REFERENCES auth.tenants(id),
+    user_id       BIGINT NOT NULL REFERENCES auth.users(id),
+    token_jti     VARCHAR(100) NOT NULL UNIQUE,
+    token_type    VARCHAR(20) NOT NULL DEFAULT 'SESSION',  -- SESSION/API_TOKEN/CLI_TOKEN
+    device_info   VARCHAR(200),
+    ip_address    INET,
+    scopes        TEXT[],                                  -- API Token 权限范围
+    expires_at    TIMESTAMPTZ NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 审计日志 (按月分区)
+CREATE TABLE auth.audit_logs (
+    id            BIGSERIAL PRIMARY KEY,
+    tenant_id     BIGINT NOT NULL,
+    user_id       BIGINT,
+    action        VARCHAR(100) NOT NULL,
+    resource_type VARCHAR(50),
+    resource_id   VARCHAR(100),
+    detail        JSONB,
+    ip_address    INET,
+    user_agent    TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+) PARTITION BY RANGE (created_at);
+```
+
+#### engine Schema
+
+```sql
+-- 项目
+CREATE TABLE engine.projects (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL REFERENCES auth.tenants(id),
+    name            VARCHAR(200) NOT NULL,
+    description     TEXT,
+    status          VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    code_platform   VARCHAR(50),
+    code_repo_url   TEXT,
+    code_credential VARCHAR(100),          -- Vault secret path
+    profile         JSONB DEFAULT '{}',    -- 项目画像 (AI 分析后填充)
+    profile_version INT DEFAULT 0,
+    profile_updated TIMESTAMPTZ,
+    default_branch  VARCHAR(100) DEFAULT 'main',
+    ai_model        VARCHAR(50),
+    risk_threshold  INT DEFAULT 90,
+    auto_merge      BOOLEAN DEFAULT TRUE,
+    created_by      BIGINT REFERENCES auth.users(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(tenant_id, name)
+);
+
+-- 项目收藏
+CREATE TABLE engine.project_stars (
+    id              BIGSERIAL PRIMARY KEY,
+    user_id         BIGINT NOT NULL REFERENCES auth.users(id),
+    project_id      BIGINT NOT NULL REFERENCES engine.projects(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, project_id)
+);
+
+-- 任务
+CREATE TABLE engine.tasks (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL,
+    project_id      BIGINT NOT NULL REFERENCES engine.projects(id),
+    title           VARCHAR(500),
+    requirement     TEXT NOT NULL,
+    source          VARCHAR(20) NOT NULL,  -- WEB/DINGTALK/FEISHU/CLI/API
+    status          VARCHAR(30) NOT NULL DEFAULT 'SUBMITTED',
+    -- SUBMITTED → ANALYZING → PLANNING → PLAN_CONFIRMED
+    -- → GENERATING → REVIEWING → TESTING → DEPLOYING → DEPLOYED
+    -- → COMPLETED / FAILED / CANCELLED
+    workflow_id     VARCHAR(200),
+    workflow_run_id VARCHAR(200),
+    analysis        JSONB,
+    task_graph      JSONB,
+    risk_level      VARCHAR(10),
+    risk_factors    JSONB,
+    risk_score      INT,
+    branch_name     VARCHAR(200),
+    mr_url          TEXT,
+    files_changed   INT,
+    lines_added     INT,
+    lines_deleted   INT,
+    approved_by     BIGINT REFERENCES auth.users(id),
+    approved_at     TIMESTAMPTZ,
+    created_by      BIGINT NOT NULL REFERENCES auth.users(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at    TIMESTAMPTZ
+);
+
+-- 任务步骤
+CREATE TABLE engine.task_steps (
+    id              BIGSERIAL PRIMARY KEY,
+    task_id         BIGINT NOT NULL REFERENCES engine.tasks(id),
+    name            VARCHAR(200) NOT NULL,
+    step_type       VARCHAR(30) NOT NULL,
+    status          VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    child_workflow_id VARCHAR(200),
+    activity_id     VARCHAR(200),
+    input           JSONB,
+    output          JSONB,
+    error           JSONB,
+    attempt         INT NOT NULL DEFAULT 1,
+    max_attempts    INT NOT NULL DEFAULT 3,
+    depends_on      BIGINT[],
+    started_at      TIMESTAMPTZ,
+    completed_at    TIMESTAMPTZ,
+    duration_ms     BIGINT
+);
+
+-- 检查点
+CREATE TABLE engine.task_checkpoints (
+    id              BIGSERIAL PRIMARY KEY,
+    task_id         BIGINT NOT NULL REFERENCES engine.tasks(id),
+    step_id         BIGINT REFERENCES engine.task_steps(id),
+    checkpoint_type VARCHAR(30) NOT NULL,
+    state_snapshot  JSONB NOT NULL,
+    artifacts       JSONB,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- AI 模型调用记录 (按月分区, append-only)
+CREATE TABLE engine.model_calls (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL,
+    task_id         BIGINT REFERENCES engine.tasks(id),
+    step_id         BIGINT REFERENCES engine.task_steps(id),
+    model           VARCHAR(50) NOT NULL,
+    provider        VARCHAR(30) NOT NULL,
+    purpose         VARCHAR(30) NOT NULL,
+    input_tokens    INT NOT NULL,
+    output_tokens   INT NOT NULL,
+    total_tokens    INT NOT NULL,
+    cost_cents      INT NOT NULL,
+    latency_ms      INT NOT NULL,
+    status          VARCHAR(10) NOT NULL,
+    error_code      VARCHAR(50),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+) PARTITION BY RANGE (created_at);
+
+-- AI 对话历史
+CREATE TABLE engine.conversations (
+    id              BIGSERIAL PRIMARY KEY,
+    task_id         BIGINT NOT NULL REFERENCES engine.tasks(id),
+    role            VARCHAR(20) NOT NULL,
+    content         TEXT NOT NULL,
+    tool_calls      JSONB,
+    tokens_used     INT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Review 结果
+CREATE TABLE engine.review_results (
+    id              BIGSERIAL PRIMARY KEY,
+    task_id         BIGINT NOT NULL REFERENCES engine.tasks(id),
+    step_id         BIGINT REFERENCES engine.task_steps(id),
+    review_type     VARCHAR(20) NOT NULL,
+    reviewer        VARCHAR(100),
+    score           INT,
+    passed          BOOLEAN NOT NULL,
+    findings        JSONB NOT NULL DEFAULT '[]',
+    summary         TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+#### specs Schema
+
+```sql
+-- 编码规范
+CREATE TABLE specs.standards (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL,
+    name            VARCHAR(200) NOT NULL,
+    category        VARCHAR(50) NOT NULL,
+    scope           VARCHAR(20) NOT NULL,
+    scope_id        BIGINT,
+    parent_id       BIGINT REFERENCES specs.standards(id),
+    content         TEXT NOT NULL,
+    version         INT NOT NULL DEFAULT 1,
+    status          VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    created_by      BIGINT REFERENCES auth.users(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(tenant_id, category, scope, scope_id)
+);
+
+-- Prompt 模板
+CREATE TABLE specs.prompt_templates (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL,
+    name            VARCHAR(200) NOT NULL,
+    purpose         VARCHAR(50) NOT NULL,
+    system_prompt   TEXT NOT NULL,
+    user_template   TEXT NOT NULL,
+    variables       JSONB NOT NULL DEFAULT '[]',
+    version         INT NOT NULL DEFAULT 1,
+    is_default      BOOLEAN NOT NULL DEFAULT FALSE,
+    eval_cases      JSONB DEFAULT '[]',
+    last_eval_score FLOAT,
+    last_eval_at    TIMESTAMPTZ,
+    created_by      BIGINT REFERENCES auth.users(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Review 规则
+CREATE TABLE specs.review_rules (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL,
+    name            VARCHAR(200) NOT NULL,
+    category        VARCHAR(50) NOT NULL,
+    scope           VARCHAR(20) NOT NULL,
+    scope_id        BIGINT,
+    rule_type       VARCHAR(20) NOT NULL,
+    definition      JSONB NOT NULL,
+    severity        VARCHAR(10) NOT NULL,
+    auto_fix        BOOLEAN DEFAULT FALSE,
+    fix_template    TEXT,
+    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 脚手架模板
+CREATE TABLE specs.scaffold_templates (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL,
+    name            VARCHAR(200) NOT NULL,
+    project_type    VARCHAR(50) NOT NULL,
+    description     TEXT,
+    template_repo   TEXT,
+    variables       JSONB NOT NULL DEFAULT '[]',
+    post_hooks      JSONB DEFAULT '[]',
+    version         INT NOT NULL DEFAULT 1,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+#### pipeline Schema
+
+```sql
+-- 环境定义
+CREATE TABLE pipeline.environments (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL,
+    project_id      BIGINT NOT NULL REFERENCES engine.projects(id),
+    name            VARCHAR(100) NOT NULL,
+    env_type        VARCHAR(20) NOT NULL,
+    cluster_id      VARCHAR(100),
+    namespace       VARCHAR(100),
+    auto_deploy     BOOLEAN NOT NULL DEFAULT FALSE,
+    requires_approval BOOLEAN NOT NULL DEFAULT FALSE,
+    canary_enabled  BOOLEAN NOT NULL DEFAULT FALSE,
+    canary_config   JSONB,
+    status          VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    current_version VARCHAR(100),
+    last_deploy_at  TIMESTAMPTZ,
+    branch_name     VARCHAR(200),
+    expires_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 部署记录
+CREATE TABLE pipeline.deployments (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL,
+    project_id      BIGINT NOT NULL,
+    environment_id  BIGINT NOT NULL REFERENCES pipeline.environments(id),
+    task_id         BIGINT REFERENCES engine.tasks(id),
+    version         VARCHAR(100) NOT NULL,
+    strategy        VARCHAR(20) NOT NULL,
+    status          VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    argo_workflow   VARCHAR(200),
+    argo_app        VARCHAR(200),
+    argo_rollout    VARCHAR(200),
+    build_log_url   TEXT,
+    health_check    JSONB,
+    rollback_reason TEXT,
+    triggered_by    BIGINT REFERENCES auth.users(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at    TIMESTAMPTZ
+);
+
+-- 测试执行记录
+CREATE TABLE pipeline.test_executions (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL,
+    task_id         BIGINT NOT NULL REFERENCES engine.tasks(id),
+    deployment_id   BIGINT REFERENCES pipeline.deployments(id),
+    test_layer      VARCHAR(20) NOT NULL,
+    tool            VARCHAR(50) NOT NULL,
+    status          VARCHAR(20) NOT NULL,
+    total_cases     INT,
+    passed_cases    INT,
+    failed_cases    INT,
+    skipped_cases   INT,
+    coverage_pct    FLOAT,
+    report_url      TEXT,
+    failures        JSONB DEFAULT '[]',
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at    TIMESTAMPTZ,
+    duration_ms     BIGINT
+);
+
+-- 质量门禁记录
+CREATE TABLE pipeline.quality_gates (
+    id              BIGSERIAL PRIMARY KEY,
+    task_id         BIGINT NOT NULL REFERENCES engine.tasks(id),
+    deployment_id   BIGINT REFERENCES pipeline.deployments(id),
+    gate_type       VARCHAR(30) NOT NULL,
+    passed          BOOLEAN NOT NULL,
+    score           INT,
+    threshold       INT,
+    detail          JSONB,
+    checked_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+#### billing Schema
+
+```sql
+-- 租户月度预算
+CREATE TABLE billing.tenant_budgets (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL REFERENCES auth.tenants(id),
+    year_month      VARCHAR(7) NOT NULL,
+    budget_tokens   BIGINT NOT NULL,
+    budget_cents    INT NOT NULL,
+    used_tokens     BIGINT NOT NULL DEFAULT 0,
+    used_cents      INT NOT NULL DEFAULT 0,
+    warning_sent    BOOLEAN DEFAULT FALSE,
+    hard_limit_hit  BOOLEAN DEFAULT FALSE,
+    UNIQUE(tenant_id, year_month)
+);
+
+-- KillSwitch 事件
+CREATE TABLE billing.killswitch_events (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT,
+    level           VARCHAR(5) NOT NULL,
+    action          VARCHAR(10) NOT NULL,
+    trigger_type    VARCHAR(20) NOT NULL,
+    trigger_reason  TEXT,
+    activated_by    BIGINT REFERENCES auth.users(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### 10.3 索引策略
+
+```sql
+CREATE INDEX idx_tasks_tenant_status ON engine.tasks(tenant_id, status);
+CREATE INDEX idx_tasks_project_status ON engine.tasks(project_id, status);
+CREATE INDEX idx_tasks_created_by ON engine.tasks(created_by, created_at DESC);
+CREATE INDEX idx_task_steps_task ON engine.task_steps(task_id, status);
+CREATE INDEX idx_model_calls_tenant_month ON engine.model_calls(tenant_id, created_at);
+CREATE INDEX idx_model_calls_task ON engine.model_calls(task_id);
+CREATE INDEX idx_deployments_project_env ON pipeline.deployments(project_id, environment_id, created_at DESC);
+CREATE INDEX idx_audit_logs_tenant_time ON auth.audit_logs(tenant_id, created_at DESC);
+CREATE INDEX idx_user_roles_user ON auth.user_roles(user_id);
+CREATE INDEX idx_review_results_task ON engine.review_results(task_id);
+CREATE INDEX idx_tasks_requirement_fts ON engine.tasks USING gin(to_tsvector('simple', requirement));
+```
+
+### 10.4 分区策略
+
+```sql
+-- 高增长表按月分区, pg_partman 管理
+-- engine.model_calls: 在线保留 6 个月, 冷数据导出到 MinIO Parquet
+-- auth.audit_logs: 在线保留 12 个月
+```
+
+### 10.5 Redis 数据结构
+
+```
+# 会话管理
+session:{user_id}:{jti}                    → JSON    TTL=JWT有效期
+
+# Token 黑名单
+token:blacklist:{jti}                      → "1"     TTL=JWT剩余有效期
+
+# KillSwitch
+killswitch:global                          → "L0|L1|L2|L3"
+killswitch:tenant:{tenant_id}             → "L0|L1|L2|L3"
+
+# 限流
+ratelimit:user:{user_id}:min              → counter  TTL=60s
+ratelimit:tenant:{tenant_id}:min          → counter  TTL=60s
+
+# 规范缓存
+specs:effective:{project_id}:{category}   → JSON     TTL=10min
+
+# 任务实时状态
+task:status:{task_id}                     → JSON     TTL=24h
+
+# 项目画像缓存
+project:profile:{project_id}              → JSON     TTL=30min
+
+# 全局并发控制
+ai:concurrent:count                       → counter
+ai:concurrent:limit                       → int
+```
+
+### 10.6 Elasticsearch 索引
+
+```
+forge-projects     — 项目搜索 (名称/描述/技术栈)
+forge-code-search  — 代码片段搜索 (文件路径/内容/语言)
+temporal-visibility — Temporal Workflow 查询 (自动管理)
+```
 
 ---
 
-## 10. Harness Engineering 技术设计
+## 11. 部署架构
 
-> 参考调研：[references/harness-engineering-research.md](../references/harness-engineering-research.md)
-
-### 10.1 整体架构
-
-Forge 作为 Harness Engineering 平台，在 AI 引擎周围构建三层 Harness 能力：
+### 11.1 K8s 集群拓扑
 
 ```
-                    ┌─────────────────────────┐
-                    │      AI 引擎（Agent）     │
-                    │   需求解析 → 代码生成      │
-                    └────────┬────────────────┘
-                             │
-         ┌───────────────────┼───────────────────┐
-         ▼                   ▼                   ▼
-┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│ Context Layer    │ │ Constraint Layer │ │ Entropy Layer   │
-│                 │ │                 │ │                 │
-│ 规范中心         │ │ 约束引擎         │ │ 熵管理后台       │
-│ · 编码规范       │ │ · Linter 管理    │ │ · 定期扫描       │
-│ · Prompt 模板    │ │ · 结构测试       │ │ · 自动修复 PR    │
-│ · Review 规则    │ │ · Agent 错误消息  │ │ · 质量趋势       │
-│ · 项目画像       │ │ · Pre-commit     │ │ · 文档同步检查    │
-│                 │ │                 │ │                 │
-│ 可观测性数据      │ │ 质量门禁         │ │ 熵指标告警       │
-│ · DeepFlow 指标  │ │ · CI 流水线      │ │                 │
-│ · 运行时反馈     │ │ · 四层测试       │ │                 │
-└─────────────────┘ └─────────────────┘ └─────────────────┘
+Internet ──── CLB/NLB ──┬─ CDN (静态资源)
+                        │
+                        └─ Traefik Ingress Controller
+                           ├── portal.forge.internal    → Next.js
+                           ├── api.forge.internal       → APISIX
+                           ├── temporal.forge.internal  → Temporal Web UI
+                           ├── grafana.forge.internal   → Grafana
+                           ├── argo.forge.internal      → Argo CD UI
+                           └── ide.forge.internal       → code-server (Web IDE)
 ```
 
-### 10.2 可观测性集成（DeepFlow）
+### 11.2 Namespace 划分
 
-#### 技术选型
+| Namespace | 组件 | 副本数 |
+|-----------|------|--------|
+| **forge-gateway** | APISIX (3) + etcd (3) | 6 |
+| **forge-app** | forge-core (3~10 HPA) + forge-bot (2) + forge-portal (3~8 HPA) | 8~20 |
+| **forge-workers** | ai-worker (3~20 KEDA) + devops-worker (3~15 KEDA) + constraint-worker (2~10 KEDA) | 8~45 |
+| **forge-temporal** | Frontend (3) + History (3) + Matching (3) + Worker (2) + Web UI (1) | 12 |
+| **forge-cicd** | Argo Workflows Controller (2) + Server (2) + Argo CD (3+2+1) + Rollouts (1) | 11 |
+| **forge-ide** | code-server (1~3 HPA) | 1~3 |
+| **forge-quality** | SonarQube (1) + MeterSphere (1) | 2 |
+| **forge-observability** | DeepFlow Server (3) + Agent (DaemonSet) + Grafana (2) + Loki (3) + Prometheus (2) + Alertmanager (3) | 13+ |
+| **forge-data** | PostgreSQL 主从 (1+2) + Redis Sentinel (3) + Elasticsearch (3) + MinIO (4) | 13 |
+| **forge-secrets** | Vault HA (3) | 3 |
+| **forge-sandbox** | 临时环境 (动态创建/销毁) | 动态 |
+| **forge-target-*** | AI 生成产品部署目标 (dev/staging/prod) | 按项目 |
 
-| 维度 | DeepFlow |
-|------|----------|
-| 采集方式 | eBPF（Linux 内核级），零代码侵入 |
-| 部署方式 | Agent 以 DaemonSet 部署在每个 K8s 节点，Server 独立部署 |
-| 存储后端 | ClickHouse（内置 SmartEncoding 10x 压缩） |
-| API 兼容 | SQL、PromQL、OTLP — 可作为 Prometheus/Grafana 数据源 |
-| 协议解析 | HTTP/gRPC/MySQL/Redis/Kafka 等自动识别，Wasm 插件扩展私有协议 |
-| 性能剖析 | OnCPU/OffCPU/GPU/Memory 火焰图，<1% 开销 |
-| License | Apache 2.0 |
+### 11.3 节点规划
 
-#### 集成架构
+| 节点池 | 数量 | 规格 | 用途 |
+|--------|------|------|------|
+| Master | 3 | 4C8G | K8s 控制面 |
+| App | 3~10 | 8C16G | forge-core, portal, bot, APISIX |
+| Worker | 3~20 | 8C32G | AI/DevOps/Constraint Worker (弹性) |
+| Data | 3 | 8C32G, SSD | PostgreSQL, Redis, Elasticsearch |
+| Infra | 3 | 8C16G | Temporal, Argo, DeepFlow, Grafana, Vault |
+| Storage | 4 | 4C8G, HDD | MinIO |
+
+**基线 19 节点, 弹性至 43 节点** (Worker 池根据 AI 任务量伸缩)
+
+### 11.4 资源配置
+
+```yaml
+# forge-core
+resources:
+  requests: { cpu: 500m, memory: 512Mi }
+  limits:   { cpu: "2", memory: 2Gi }
+replicas: 3
+hpa: { minReplicas: 3, maxReplicas: 10, targetCPU: 70% }
+pdb: { minAvailable: 2 }
+
+# ai-worker
+resources:
+  requests: { cpu: "1", memory: 1Gi }
+  limits:   { cpu: "4", memory: 4Gi }
+replicas: 3
+keda: { trigger: temporal-queue-depth, threshold: 5, min: 3, max: 20 }
+terminationGracePeriodSeconds: 300  # 等待当前 Activity 完成
+
+# constraint-worker
+resources:
+  requests: { cpu: "1", memory: 1Gi }
+  limits:   { cpu: "4", memory: 4Gi }  # Lint 吃资源
+replicas: 2
+keda: { trigger: temporal-queue-depth, threshold: 3, min: 2, max: 10 }
+```
+
+### 11.5 网络架构
 
 ```
-K8s 集群（AI 孵化产品部署环境）
-┌─────────────────────────────────────────┐
-│  Node 1              Node 2             │
-│  ┌────────────┐     ┌────────────┐      │
-│  │ App Pods   │     │ App Pods   │      │  ← AI 生成的业务服务
-│  │ (AI 生成)   │     │ (AI 生成)   │      │
-│  └─────┬──────┘     └─────┬──────┘      │
-│        │ eBPF              │ eBPF        │
-│  ┌─────▼──────┐     ┌─────▼──────┐      │
-│  │ DeepFlow   │     │ DeepFlow   │      │  ← DaemonSet, 自动采集
-│  │ Agent      │     │ Agent      │      │
-│  └─────┬──────┘     └─────┬──────┘      │
-│        └───────┬──────────┘              │
-│                ▼                         │
-│  ┌──────────────────────┐               │
-│  │   DeepFlow Server    │               │  ← 集中存储 + 查询
-│  │   (ClickHouse)       │               │
-│  └──────────┬───────────┘               │
-└─────────────┼───────────────────────────┘
-              │ PromQL / SQL API
-              ▼
-┌──────────────────────────┐
-│  Forge Platform          │
-│  ├── forge-engine        │  ← 拉取运行时指标作为迭代上下文
-│  ├── forge-portal        │  ← 展示可观测性仪表盘
-│  └── forge-pipeline      │  ← 部署后健康检查
-└──────────────────────────┘
+NetworkPolicy 规则:
+├── forge-gateway → forge-app (允许)
+├── forge-app → forge-data (允许)
+├── forge-app → forge-temporal (允许)
+├── forge-workers → forge-temporal (允许)
+├── forge-workers → forge-data (允许)
+├── forge-workers → forge-quality (允许)
+├── forge-workers → 外部 API (允许, 通过 Egress)
+├── forge-cicd → forge-target-* (允许)
+├── forge-observability → ALL (允许, 采集)
+└── 其余 → 默认拒绝
+
+CNI: Calico 或 Cilium
 ```
 
-#### 数据流
-
-1. **部署后自动监控**：AI 生成的代码部署到 K8s → DeepFlow Agent 自动通过 eBPF 采集网络流量和系统调用 → 无需任何代码改动
-2. **指标查询**：forge-portal 通过 DeepFlow PromQL API 查询延迟、吞吐、错误率 → 展示在 Web 工作台
-3. **反馈闭环**：forge-engine 在处理迭代任务时，通过 DeepFlow SQL API 查询上次部署后的运行时数据 → 注入 AI 上下文（如"该服务 P99 延迟 120ms，错误率 0.3%"）
-4. **异常告警**：forge-pipeline 部署后定期检查 DeepFlow 指标 → 延迟/错误率超阈值 → 触发告警或自动回滚
-
-#### Phase 规划
-
-| Phase | 内容 |
-|-------|------|
-| Phase 1 | docker-compose 加入 DeepFlow Server，Web 工作台预留可观测性入口 |
-| Phase 2 | 完整集成 — 运行时指标展示 + 反馈闭环 + 部署后验证 |
-| Phase 3 | AI 自主优化 — 根据可观测性数据主动发起性能优化任务 |
-
-### 10.3 机械化约束引擎（Phase 2）
-
-#### 架构设计
+### 11.6 存储架构
 
 ```
-AI 生成代码
+块存储 (K8s PV, StorageClass):
+├── SSD: PG data, ES data, Redis AOF
+└── HDD: MinIO data, Loki chunks
+
+对象存储 (MinIO, S3 兼容):
+├── /forge-artifacts    → 代码产物/Diff
+├── /forge-test-reports → 测试报告
+├── /forge-backups      → PG 备份/WAL
+├── /forge-loki         → Loki 日志数据
+└── /forge-temp         → 临时文件 (TTL 7d)
+
+备份策略:
+├── PostgreSQL: 每日全量 + WAL 持续归档 (保留 7 日全量 + 30 日 WAL)
+├── Redis: AOF + 每日 RDB snapshot
+├── Elasticsearch: 每日 snapshot → MinIO
+├── Vault: Raft snapshot → MinIO
+└── 灾难恢复: RPO < 5min, RTO < 30min
+```
+
+### 11.7 弹性伸缩
+
+| 组件 | 方式 | 触发指标 | 范围 |
+|------|------|---------|------|
+| forge-core | HPA | CPU > 70% | 3 → 10 |
+| forge-portal | HPA | CPU > 60% | 3 → 8 |
+| ai-worker | KEDA | Temporal queue depth > 5 | 3 → 20 |
+| devops-worker | KEDA | Temporal queue depth > 3 | 3 → 15 |
+| constraint-worker | KEDA | Temporal queue depth > 3 | 2 → 10 |
+| Worker 节点池 | Cluster Autoscaler | Pod pending | 3 → 20 |
+
+**KEDA 是关键**: 传统 HPA 基于 CPU/Memory, Worker 负载由 Temporal 队列深度决定, KEDA 直接监听队列精准伸缩。
+
+### 11.8 部署流水线 (GitOps)
+
+```
+开发者 push 代码
       │
       ▼
-┌─────────────────────────┐
-│   Constraint Engine      │
-│                         │
-│  ① Linter 执行           │  ← 秒级反馈
-│     · Checkstyle (Java)  │
-│     · ESLint (TS/Vue)    │
-│     · 自定义规则          │
-│                         │
-│  ② 结构测试               │  ← 验证分层架构
-│     · 依赖方向检查         │
-│     · Provider 接口合规    │
-│     · 禁止横切关注点直接引用 │
-│                         │
-│  ③ Agent 错误消息格式化    │  ← 失败时生成 Agent 可消费的修复指令
-│     · 违规位置             │
-│     · 修复建议             │
-│     · 参考规范链接          │
-└──────────┬──────────────┘
-           │
-    全部通过 │ 有违规
-           │ ▼
-           │ AI 自动修复（基于格式化错误消息）
-           │ 最多 3 轮
-           ▼
-    进入 AI Review
+GitHub Actions / Argo Workflows
+├── Build: Docker multi-stage build
+├── Test: Unit + Integration
+├── Scan: Trivy (镜像漏洞扫描)
+├── Push: 镜像 → Harbor/ACR
+└── Update: Kustomize overlay → Git commit
+      │
+      ▼
+Argo CD (自动同步)
+├── dev:     auto-sync, self-heal
+├── staging: auto-sync, self-heal
+└── prod:    manual sync + Argo Rollouts canary
+               ├── 5% → 观察 5min
+               ├── 25% → 观察 5min
+               ├── 50% → 观察 5min
+               └── 100% (或自动回滚)
 ```
 
-#### 约束规则管理
+### 11.9 监控告警
 
-- 规则存储在 forge-specs 规范中心，与编码规范同层管理
-- 支持公司级 → 团队级 → 项目级继承覆盖
-- 技术管理者可在 Web 工作台配置项目的约束规则
+| 级别 | 触发条件 | 通知方式 |
+|------|---------|---------|
+| P0 Critical | PG 主库不可用 / Temporal 全部不可用 / KillSwitch L3 | 电话 + 钉钉/飞书 |
+| P1 High | AI Worker 全部不可用 / 队列积压 > 100 / API 5xx > 5% | 钉钉/飞书 + 邮件 |
+| P2 Medium | PG 复制延迟 > 10s / 磁盘 > 80% / Token 预算 > 80% | 钉钉/飞书 |
+| P3 Low | Pod 重启 > 3次/小时 / 证书过期 < 30天 | 邮件 |
 
-### 10.4 熵管理系统（Phase 2）
+### 11.10 本地开发环境
 
-#### 定时扫描任务
+```yaml
+# docker-compose.dev.yml
+services:
+  postgres:       # 单实例, 包含所有 DB
+  redis:          # 单实例
+  temporal:       # temporal-dev-server (all-in-one)
+  elasticsearch:  # 单节点
+  minio:          # 单节点
+  # 不启动: APISIX, DeepFlow, SonarQube, MeterSphere (太重)
 
-| 扫描项 | 频率 | 检测内容 | 修复方式 |
-|--------|------|---------|---------|
-| 命名一致性 | 每日 | 变量/类/方法命名是否符合规范基线 | 自动修复 PR |
-| 文档同步 | 每次 MR 合并后 | API 变更是否同步更新了文档 | 告警 + 自动补充 |
-| 死代码检测 | 每周 | 未被引用的类/方法/导入 | 自动清理 PR |
-| 测试覆盖率 | 每日 | 覆盖率是否低于阈值或持续下降 | 告警 |
-| 依赖漏洞 | 每日 | 第三方依赖是否有已知漏洞 | 告警 + 自动升级 PR |
-
-#### 技术实现
-
-- 使用 XXL-Job 调度定时扫描任务
-- 扫描结果存储在 forge-engine 数据库
-- 低风险修复自动生成 PR 并合并
-- 高风险修复生成 PR 等待技术管理者审批
-- Web 工作台质量仪表盘展示趋势
-
----
-
-## 11. 数据架构
-
-### 10.1 AI 引擎数据
-
-| 数据表 | 用途 | 关键字段 |
-|--------|------|---------|
-| 任务主表 | 孵化任务全生命周期 | 任务ID、租户ID、用户ID、需求描述、任务类型、状态、风险等级、Token 消耗、费用 |
-| 任务步骤表 | checkpoint 恢复用 | 任务ID、步骤名、执行状态、Worker 实例、输入/输出快照、Token 消耗 |
-| 模型调用日志 | Token 用量追踪（append-only） | 任务ID、模型ID、用途、input/output tokens、费用、延迟、是否降级 |
-| 代码变更记录 | 跟踪 AI 生成的代码变更 | 任务ID、仓库地址、分支名、commit hash、Review 评分、MR 状态 |
-
-### 10.2 鉴权中心数据
-
-| 数据表 | 用途 | 关键字段 |
-|--------|------|---------|
-| 租户表 | 多租户管理 | 租户ID、名称、月度 Token 预算、状态 |
-| 用户表 | 用户账号 | 租户ID、用户名、邮箱、密码哈希、状态 |
-| 角色表 | RBAC 角色定义 | 租户ID、角色编码、角色名、作用域（平台/项目） |
-| 用户角色绑定 | 用户-角色-项目关联 | 用户ID、角色ID、项目ID |
-| 鉴权链配置 | 动态鉴权链 | 租户ID（NULL=全局）、链路名、鉴权类型、排序、启用状态、配置 |
-
-### 10.3 DevOps 数据
-
-| 数据表 | 用途 | 关键字段 |
-|--------|------|---------|
-| 流水线执行记录 | 流水线运行历史 | 执行ID、任务ID、项目ID、流水线类型、状态、触发方式、开始/结束时间、日志地址 |
-| 部署记录 | 部署历史与回滚依据 | 部署ID、项目ID、环境、版本号、镜像地址、部署状态、灰度比例、回滚源 |
-| 环境状态 | 临时/固定环境管理 | 环境ID、项目ID、Namespace、环境类型、状态、创建时间、过期时间 |
-
-### 10.4 适配器配置数据
-
-| 数据表 | 用途 | 关键字段 |
-|--------|------|---------|
-| 平台适配器注册 | 系统可用的外部平台列表 | 适配器ID、适配器类型（代码托管/容器编排/CI/CD）、平台名称、启用状态 |
-| 项目平台绑定 | 每个孵化项目绑定的平台组合 | 项目ID、代码托管适配器ID、容器编排适配器ID、CI/CD适配器ID |
-| 平台凭证引用 | 项目与 Nacos 凭证的映射 | 项目ID、适配器ID、Nacos 配置 dataId、凭证类型 |
-
-所有业务表带 tenant_id 字段，MyBatis 插件自动注入过滤条件。
+# 开发者启动:
+# 1. docker compose -f docker-compose.dev.yml up -d
+# 2. go run ./cmd/forge-core          (Go API)
+# 3. cd ai-worker && python main.py   (Python Worker)
+# 4. cd portal && npm run dev          (Next.js)
+```
 
 ---
 
 ## 12. 高可用设计
 
-| 风险点 | 解决方案 |
-|--------|---------|
-| AI 引擎单点 | 多实例部署 + K8s Lease Leader 选举，Leader 做编排，Follower 热备秒切 |
-| 任务丢失 | 任务持久化 DB + Redis 双写，重启后从 DB 恢复未完成任务 |
-| Worker 崩溃 | Worker 心跳注册（Redis TTL），超时未完成自动释放给其他 Worker |
-| 长任务中断 | 任务拆分为多个 checkpoint，每步持久化中间状态，恢复时从最后 checkpoint 继续 |
-| 流量突增 | Worker Pool K8s HPA，基于 Kafka 队列深度自动扩容 |
-| AI 模型故障 | 多模型 fallback 链（Claude → GPT → 通义），超时/限流自动降级 |
-| 数据一致性 | 编排状态机 + 幂等设计，唯一 traceId，重复执行跳过已完成步骤 |
-| 网关高可用 | APISIX 多副本 + etcd 集群；实时网关无状态多实例 + Redis Adapter 跨实例广播 |
-| 脑裂防护 | K8s Lease TTL 续约，续约失败主动降级 |
-| 级联故障 | 服务间超时 + 熔断 + 舱壁隔离 |
-| 代码托管平台 API 限流 | 文件内容 Redis 缓存 + Webhook 增量刷新 + 适配器内置令牌桶限流 |
+| 故障场景 | 应对策略 |
+|---------|---------|
+| 单 Pod 崩溃 | K8s 自动重启 + PDB 保证最少副本 |
+| 单 Node 宕机 | Pod 重新调度, PDB 保证服务不中断 |
+| AZ 故障 | 节点池跨 3 AZ, Pod 反亲和性跨 AZ |
+| PG 主库故障 | CloudNativePG 自动 failover (< 30s) |
+| Redis 主节点故障 | Sentinel 自动选举新主 (< 15s) |
+| Temporal Server 故障 | 多节点部署, Frontend/History/Matching 独立扩展 |
+| AI Worker 中途崩溃 | Temporal Activity heartbeat 超时 → 重分配, 从 Checkpoint 恢复 |
+| 外部 API 故障 | 多模型降级链 + 适配器内置重试+熔断 |
+| 全集群灾难 | PG WAL → S3 恢复, MinIO 产物完整, RPO < 5min |
+
+失败处理原则 (No Silent Failures):
+- AI 代码生成失败: 3 轮自动修复, 超限升级人工
+- Pipeline 构建失败: AI 分析日志自动修复 (最多 3 轮)
+- 部署失败: 自动回滚一次, 然后通知
+- 外部 API 失败: 3 次退避重试, 然后暂停任务
+- **所有通知必须包含**: 失败阶段、原因、已完成工作、下一步建议
 
 ---
 
-## 13. 部署架构
+## 13. 技术选型总览
 
-Forge 平台通过容器编排适配器部署，所有服务容器化运行。首期使用阿里云 ACK，后续可切换为原生 K8s 或其他厂商托管集群。
+### 13.1 应用层
 
-**适配器封装两层操作**：
-- K8s 标准 API 层（所有平台通用）：Deployment、Service、Ingress、ConfigMap、Secret、Namespace、Pod 管理
-- 厂商扩展 API 层（平台特有，通过扩展点提供）：集群管理、节点池扩缩、组件管理、安全巡检（首期：阿里云 CS API）
+| 组件 | 技术 | 版本 | 用途 |
+|------|------|------|------|
+| API Server | Go + Gin | Go 1.22+ | 统一 API 入口 |
+| AI Worker | Python + LangGraph | Python 3.12+ | AI 编排 |
+| DevOps Worker | Go | Go 1.22+ | CI/CD + 部署 |
+| Constraint Worker | Go | Go 1.22+ | Lint + 安全扫描 |
+| IM Bot | Go | Go 1.22+ | 钉钉/飞书机器人 |
+| Web Portal | Next.js + React | Next.js 15 | Web 工作台 |
 
-APISIX 作为 Ingress Controller 部署在 K8s 集群上，同时处理水平流量（外部）和垂直流量（内部微服务调用）。
+### 13.2 基础设施
 
-### 12.1 配置管理
-
-| 配置类型 | 存储位置 | 说明 |
-|---------|---------|------|
-| AI 模型 API Key | Nacos 加密配置 | 按模型分组管理 |
-| 代码托管平台凭证 | Nacos 加密配置 | 按平台 + 项目分组 |
-| CI/CD 平台凭证 | Nacos 加密配置 | 按平台分组 |
-| 容器编排平台凭证 | Nacos 加密配置 / RAM 角色绑定 | 首期 ACK 用 RAM 角色无密钥 |
-| 数据库 / Redis 密码 | Nacos 加密配置 | 按环境分组 |
-| JWT 签名密钥 | Nacos 加密配置 | 定期轮转 |
-| 业务应用配置 | Nacos | AI 生成后自动发布 |
-
----
-
-## 14. 技术选型总览
-
-| 维度 | 选型 |
-|------|------|
-| 后端框架 | Java 17 + Spring Boot 3.2 + Spring Cloud 2023.x |
-| 前端框架 | Vue 3.5 + TypeScript + Vite |
-| 前端 UI | Ant Design Vue 4.x |
-| 前端状态管理 | Pinia 3.x |
-| 前端图标 | Lucide Icons |
-| 前端字体 | Geist Sans + Geist Mono |
-| API 网关 | APISIX（统一网关，水平+垂直流量） |
-| 实时通信 | SSE（Phase 1）→ Socket.IO（Phase 2+） |
-| AI 模型 | Claude (Anthropic) + GPT (OpenAI) + 通义灵码 (Alibaba) |
-| 代码托管 | 适配器架构（首期：云效 Codeup） |
-| CI/CD | 适配器架构（首期：云效 Flow） |
-| 容器编排 | 适配器架构（首期：阿里云 ACK） |
-| **自动化测试** | **MeterSphere（开源，GPLv3）+ JUnit 5 + Playwright** |
-| 镜像仓库 | 阿里云 ACR（首期） |
-| 数据库 | MySQL 8.0 |
-| 缓存 | Redis 7 (Redisson) |
-| 消息队列 | Kafka（平台内部）/ Kafka + RocketMQ 双支持（孵化产品可选） |
-| 分布式调度 | XXL-Job |
-| 服务发现 + 配置中心 | Nacos |
-| 向量检索 | Elasticsearch 8.x kNN |
-| **可观测性（AI 孵化产品）** | **DeepFlow（eBPF 零代码全栈监控，Apache 2.0）** |
-| 监控（Forge 平台自身） | Prometheus + Grafana + Micrometer |
-| 日志 | ELK (Elasticsearch + Logstash + Kibana) |
-| 链路追踪 | DeepFlow（首选）/ SkyWalking / Jaeger |
-
----
-
-## 附录：关联文档
-
-| 文档 | 说明 |
-|------|------|
-| [PRD.md](PRD.md) | 产品需求文档 |
-| [product-design.md](product-design.md) | 产品设计规格书 — 页面详细设计、交互流程、视觉规范 |
-| [milestone-plan.md](milestone-plan.md) | 里程碑计划 — 分阶段交付路线图 |
-
-## 附录：引用资料索引
-
-| 文件 | 内容 | 来源 |
+| 组件 | 技术 | 用途 |
 |------|------|------|
-| [references/harness-engineering-research.md](references/harness-engineering-research.md) | Harness Engineering + DeepFlow 调研报告 | OpenAI 博客 + 开源社区 |
-| [references/coding-standards.md](references/coding-standards.md) | 编码规范基线 | aegis 工程实践 |
-| [references/scaffold-patterns.md](references/scaffold-patterns.md) | 脚手架设计范式 | solar-foundation 架构模式 |
-| [references/gray-release-methodology.md](references/gray-release-methodology.md) | 灰度发布方法论 | kohinur 灰度发布理念 |
-| [references/codeup-api.md](references/codeup-api.md) | Codeup API 能力清单与限流策略 | 阿里云云效文档 |
-| [references/ack-api.md](references/ack-api.md) | ACK/K8s API 能力清单与认证方式 | 阿里云 ACK 文档 |
+| 工作流引擎 | Temporal | 状态管理/Checkpoint/编排/恢复 |
+| API 网关 | APISIX + etcd | JWT 验证/限流/灰度路由 |
+| 入口网关 | Traefik | TLS 终止/负载均衡 |
+| 数据库 | PostgreSQL (CloudNativePG) | 业务数据 |
+| 缓存 | Redis Sentinel | 会话/缓存/KillSwitch |
+| 搜索引擎 | Elasticsearch | 项目搜索/代码搜索 |
+| 对象存储 | MinIO | 产物/报告/备份 |
+| 密钥管理 | HashiCorp Vault | API Key/凭证加密存储 |
+
+### 13.3 DevOps
+
+| 组件 | 技术 | 用途 |
+|------|------|------|
+| CI Pipeline | Argo Workflows | 构建/测试编排 |
+| CD GitOps | Argo CD | 声明式部署 |
+| 灰度发布 | Argo Rollouts | Canary/BlueGreen |
+| 约束引擎 | MegaLinter + Semgrep | Lint + 安全扫描 |
+| 代码质量 | SonarQube | 深度静态分析 |
+| 测试平台 | MeterSphere | API 测试 + 测试管理 |
+
+### 13.4 可观测性
+
+| 组件 | 技术 | 用途 |
+|------|------|------|
+| 全栈监控 | DeepFlow (eBPF) | AI 生成产品零代码监控 |
+| Dashboard | Grafana | 统一可视化 |
+| 日志 | Loki | 日志聚合 |
+| 指标 | Prometheus + Alertmanager | 指标采集 + 告警 |
+| 工作流可视化 | Temporal Web UI | Workflow 状态/调试 |
+
+### 13.5 前端
+
+| 组件 | 技术 | 用途 |
+|------|------|------|
+| 框架 | Next.js 15 (App Router) | SSR + RSC |
+| UI | shadcn/ui + Radix | 组件库 |
+| 样式 | Tailwind CSS 4 | 原子化 CSS |
+| 状态 | Zustand + TanStack Query | 客户端/服务端状态 |
+| 图表 | Recharts | 数据可视化 |
+| 代码 | Monaco Editor + react-diff-viewer | 代码/Diff 展示 |
+| 表单 | React Hook Form + Zod | 表单验证 |
+| 字体 | Geist Sans + Geist Mono | — |
+| 图标 | Lucide Icons | — |
+
+---
+
+## 14. 三期工程实施计划
+
+### 总体验收标准
+
+> 1. 用户通过 Web/IM/CLI 输入需求 → AI 在 Harness 环境中生成生产级代码
+> 2. 代码受机械化约束 (Lint + 安全 + 架构测试), 违规自动修复
+> 3. 四层自动化测试全部通过 → 质量门禁放行
+> 4. 低风险自动合并部署, 高风险走审批流
+> 5. 部署后 DeepFlow 零代码监控, 运行指标反馈 AI 迭代
+> 6. 代码质量有熵管理, 退化自动修复
+> 7. 多模型降级、Token 成本控制、三级紧急停止
+> 8. 多租户隔离、完整 RBAC、OAuth/OIDC
+> 9. 完整"深空指挥中心"UI + 钉钉/飞书机器人
+
+### 三期是工程依赖顺序, 不是功能裁剪
+
+### 一期: 基座与核心引擎
+
+**交付物**: 完整的 需求→生成→验证→测试→部署 闭环, 所有基础设施生产级部署。
+
+| 模块 | 交付内容 |
+|------|---------|
+| 基础设施 | PostgreSQL HA, Redis Sentinel, Temporal Server (多节点), APISIX + etcd, Argo Workflows + Argo CD, Elasticsearch, MinIO, Traefik, Loki + Grafana |
+| Go API Server | Auth (账号密码+JWT+OAuth GitHub/Codeup), Project, Task, Specs (CRUD+三级继承), Adapter (GitHub+Codeup), Settings (KillSwitch L1/L2/L3), Billing (Token追踪+预算) |
+| Temporal 编排 | TaskWorkflow 完整主流程, 子工作流并行, 全节点 Checkpoint, Signal (人工审批), 三个 Interceptor |
+| AI Worker | Planner/Coder/Reviewer/Fixer Agent, 多模型路由+降级链, 项目画像, RAG, 上下文压缩 |
+| DevOps Worker | GitHub+Codeup 全量操作, Argo 构建+测试, Argo CD 部署, MeterSphere 四层测试, 临时环境 |
+| Constraint Worker | MegaLinter + Semgrep + Trivy 镜像扫描 + 错误格式化 |
+| 前端 | 登录, 项目大厅, 需求对话, 任务看板, AI 工作可视化, 变更结果, 测试报告, 部署环境, WebSocket |
+| CLI | forge-cli (Go 单二进制, API Token 鉴权, SSE 实时输出) |
+| forge-foundation | 基础设施层组件库 (web/data/cache/storage/log/metrics) |
+| 配置发布 | 配置验证 + K8s ConfigMap 写入 + 热加载 + 健康检查 |
+| 数据层 | PostgreSQL 全量 Schema (含 organizations 表), Redis, Elasticsearch, MinIO |
+
+### 二期: 约束闭环与企业能力
+
+**交付物**: Harness 三大支柱完整落地 + 企业级鉴权 + IM 入口。
+
+| 模块 | 交付内容 |
+|------|---------|
+| 约束引擎 | SonarQube, 架构约束测试, 自定义规则管理 API+UI, 规则三级继承 |
+| 熵管理 | EntropyWorkflow, 命名/文档/死代码/覆盖率扫描, 自动修复 PR, 质量趋势 |
+| 完整鉴权 | OAuth2/OIDC, 钉钉/飞书扫码, LDAP/SSO, MFA, 完整 RBAC 四级, ABAC, 动态鉴权链, 多租户隔离 |
+| 成本控制 | 每任务预估+硬限, 每租户月预算, 全局并发限制, 成本报表 |
+| IM 机器人 | 钉钉/飞书 Bot (需求提交+进度推送+审批卡片+L1 停止) |
+| 前端 | 分支管理, MR 审批, 规范配置 UI, 用户/角色/权限管理 |
+
+### 三期: 可观测闭环与运营成熟
+
+**交付物**: 运行时反馈闭环 + 灰度发布 + 完整运营视图。
+
+| 模块 | 交付内容 |
+|------|---------|
+| DeepFlow | eBPF 零代码全栈监控, Service Map, 分布式追踪, Profiling |
+| 反馈闭环 | DeepFlow → Temporal → AI 上下文, 部署后健康检查, 异常自动回滚/AI修复 |
+| 灰度发布 | Argo Rollouts Canary, 蓝绿, 标签流量切分, 灰度管理 UI |
+| 质量 Dashboard | 合规率/覆盖率/复杂度趋势, 模型使用分析 |
+| 前端 | 完整"深空指挥中心"视觉, Dashboard, 灰度管理, 变更影响分析, AI 对话 Code Review |
+| 平台可观测 | Prometheus + Grafana, Temporal Metrics, AI 调用追踪 |
+| 高级适配器 | K8s 多集群, Jenkins/GitLab 适配器, 适配器管理 UI |
+
+### 依赖关系
+
+```
+一期 (基座+引擎) ← 没有基座, 上层功能无法运行
+      │
+      ▼
+二期 (约束+企业能力) ← 依赖一期的引擎和适配器
+      │
+      ▼
+三期 (观测+运营) ← 依赖二期的约束和权限体系
+```
+
+---
+
+*文档版本: 2.0 | 最后更新: 2026-03-31 | 架构: Go + Python + Temporal*
