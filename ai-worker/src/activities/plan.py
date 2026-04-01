@@ -1,6 +1,6 @@
 import logging
-from dataclasses import dataclass
-from typing import Any, Dict, List
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 from temporalio import activity
 from src.agents.planner import PlannerAgent
 from src.context.builder import ContextBuilder
@@ -8,11 +8,14 @@ from src.models.router import ModelRouter
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class PlanInput:
-    project_id: int
     task_id: int
-    requirement_summary: str
+    tenant_id: int
+    project_id: int
+    requirement_summary: Optional[str] = None  # May come from Go or be fetched
+
 
 @dataclass
 class PlanOutput:
@@ -25,15 +28,20 @@ class PlanOutput:
     provider: str
     latency_ms: int
 
+
 @activity.defn(name="plan_task")
 async def plan_task_activity(input: PlanInput) -> PlanOutput:
     logger.info(f"Planning task {input.task_id}")
     builder = ContextBuilder()
     try:
         ctx = await builder.build(input.project_id, purpose="requirement-analysis")
+
+        # Use provided summary or a default prompt
+        summary = input.requirement_summary or "Please analyze the task and create an implementation plan."
+
         router = ModelRouter()
         agent = PlannerAgent(router)
-        result = await agent.run(input.requirement_summary, ctx)
+        result = await agent.run(summary, ctx)
         return PlanOutput(
             title=result.structured.get("title", ""),
             tasks=result.structured.get("tasks", []),

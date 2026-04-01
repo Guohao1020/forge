@@ -1,6 +1,7 @@
+import json
 import logging
-from dataclasses import dataclass
-from typing import Any, Dict, List
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 from temporalio import activity
 from src.agents.reviewer import ReviewerAgent
 from src.context.builder import ContextBuilder
@@ -8,11 +9,16 @@ from src.models.router import ModelRouter
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class ReviewInput:
-    project_id: int
     task_id: int
-    files: List[Dict[str, Any]]
+    tenant_id: int
+    project_id: int
+    code: Optional[Dict[str, Any]] = None     # Generated code result from previous step
+    files: Optional[List[Dict[str, Any]]] = None
+    attempt: Optional[int] = 1
+
 
 @dataclass
 class ReviewOutput:
@@ -26,16 +32,32 @@ class ReviewOutput:
     provider: str
     latency_ms: int
 
+
 @activity.defn(name="review_code")
 async def review_code_activity(input: ReviewInput) -> ReviewOutput:
-    logger.info(f"Reviewing code for task {input.task_id}")
+    logger.info(f"Reviewing code for task {input.task_id} (attempt {input.attempt})")
     builder = ContextBuilder()
     try:
         ctx = await builder.build(input.project_id, purpose="code-review")
+
+        # Extract files from direct files param or from code result
+        files = input.files
+        if not files and input.code:
+            files = input.code.get("files", [])
+        if not files:
+            files = []
+
+        # Build code review prompt
         code_sections = []
-        for f in input.files:
-            code_sections.append(f"### {f.get('path', 'unknown')} ({f.get('action', 'create')})\n```{f.get('language', '')}\n{f.get('content', '')}\n```")
-        user_prompt = "## Code to Review\n\n" + "\n\n".join(code_sections)
+        for f in files:
+            path = f.get("path", "unknown")
+            action = f.get("action", "create")
+            language = f.get("language", "")
+            content = f.get("content", "")
+            code_sections.append(f"### {path} ({action})\n```{language}\n{content}\n```")
+
+        user_prompt = "## Code to Review\n\n" + "\n\n".join(code_sections) if code_sections else "No code files provided for review."
+
         router = ModelRouter()
         agent = ReviewerAgent(router)
         result = await agent.run(user_prompt, ctx)

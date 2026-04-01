@@ -1,6 +1,6 @@
 __pycache__/
 *.pyc
-.env
+# .env is committed for this project
 *.egg-info/
 dist/
 build/
