@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { MarkdownPreview } from "@/components/markdown-preview";
 import {
   Dialog,
   DialogContent,
@@ -353,7 +354,7 @@ export default function PromptsPage() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="bg-[#0A0A12] border-white/10 text-white max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="bg-[#0A0A12] border-white/10 text-white max-w-[75vw] sm:max-w-[75vw] max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingTemplate ? "编辑 Prompt 模板" : "新建 Prompt 模板"}
@@ -391,30 +392,46 @@ export default function PromptsPage() {
               </Select>
             </div>
 
-            {/* System Prompt */}
+            {/* System Prompt — Split-pane */}
             <div className="space-y-2">
-              <Label>System Prompt</Label>
-              <Textarea
-                value={form.systemPrompt}
-                onChange={(e) =>
-                  setForm({ ...form, systemPrompt: e.target.value })
-                }
-                placeholder="输入系统提示词..."
-                className="bg-[#0A0A12] border-white/10 font-mono text-sm min-h-[160px]"
-              />
+              <div className="flex items-center justify-between">
+                <Label>System Prompt</Label>
+                <span className="text-xs text-white/30">左侧编辑 · 右侧预览</span>
+              </div>
+              <div className="grid grid-cols-2 gap-3 min-h-[180px]">
+                <Textarea
+                  value={form.systemPrompt}
+                  onChange={(e) =>
+                    setForm({ ...form, systemPrompt: e.target.value })
+                  }
+                  placeholder="输入系统提示词..."
+                  className="bg-[#0A0A12] border-white/10 font-mono text-sm resize-none h-full overflow-y-auto"
+                />
+                <div className="border border-white/10 rounded-lg bg-[#0A0A12] p-3 overflow-y-auto">
+                  <MarkdownPreview content={form.systemPrompt} />
+                </div>
+              </div>
             </div>
 
-            {/* User Template */}
+            {/* User Template — Split-pane */}
             <div className="space-y-2">
-              <Label>User Template</Label>
-              <Textarea
-                value={form.userTemplate}
-                onChange={(e) =>
-                  setForm({ ...form, userTemplate: e.target.value })
-                }
-                placeholder="输入用户模板，使用 {{variable}} 引用变量..."
-                className="bg-[#0A0A12] border-white/10 font-mono text-sm min-h-[160px]"
-              />
+              <div className="flex items-center justify-between">
+                <Label>User Template</Label>
+                <span className="text-xs text-white/30">左侧编辑 · 右侧预览</span>
+              </div>
+              <div className="grid grid-cols-2 gap-3 min-h-[180px]">
+                <Textarea
+                  value={form.userTemplate}
+                  onChange={(e) =>
+                    setForm({ ...form, userTemplate: e.target.value })
+                  }
+                  placeholder="输入用户模板，使用 {{variable}} 引用变量..."
+                  className="bg-[#0A0A12] border-white/10 font-mono text-sm resize-none h-full overflow-y-auto"
+                />
+                <div className="border border-white/10 rounded-lg bg-[#0A0A12] p-3 overflow-y-auto">
+                  <MarkdownPreview content={form.userTemplate} />
+                </div>
+              </div>
             </div>
 
             {/* Variables */}

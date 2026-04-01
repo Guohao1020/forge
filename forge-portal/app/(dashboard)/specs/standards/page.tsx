@@ -9,6 +9,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { MarkdownPreview } from "@/components/markdown-preview";
 import {
   Dialog,
   DialogContent,
@@ -293,13 +294,13 @@ export default function StandardsPage() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="bg-[#0A0A12] border-white/10 text-white max-w-2xl">
+        <DialogContent className="bg-[#0A0A12] border-white/10 text-white max-w-[75vw] sm:max-w-[75vw] max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>
               {editingStandard ? "编辑编码规范" : "新建编码规范"}
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          <div className="space-y-4 py-2">
             <div className="space-y-2">
               <Label>名称</Label>
               <Input
@@ -349,14 +350,24 @@ export default function StandardsPage() {
                 </div>
               </div>
             )}
-            <div className="space-y-2">
-              <Label>规范内容（Markdown）</Label>
-              <Textarea
-                value={form.content}
-                onChange={(e) => setForm({ ...form, content: e.target.value })}
-                placeholder="输入编码规范内容，支持 Markdown 格式..."
-                className="bg-[#0A0A12] border-white/10 font-mono text-sm min-h-[300px]"
-              />
+            {/* Split-pane: Editor + Preview */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>规范内容（Markdown）</Label>
+                <span className="text-xs text-white/30">左侧编辑 · 右侧预览</span>
+              </div>
+              <div className="grid grid-cols-2 gap-4" style={{ height: "calc(85vh - 260px)" }}>
+                <Textarea
+                  value={form.content}
+                  onChange={(e) => setForm({ ...form, content: e.target.value })}
+                  placeholder="输入编码规范内容，支持 Markdown 格式..."
+                  className="bg-[#0A0A12] border-white/10 font-mono text-sm resize-none overflow-y-auto"
+                  style={{ height: "100%", minHeight: "unset", fieldSizing: "fixed" }}
+                />
+                <div className="border border-white/10 rounded-lg bg-[#0A0A12] p-4 overflow-y-auto">
+                  <MarkdownPreview content={form.content} />
+                </div>
+              </div>
             </div>
           </div>
           <DialogFooter>
