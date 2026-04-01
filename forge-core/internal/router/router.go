@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/shulex/forge/forge-core/internal/middleware"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
+	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/project"
 	"github.com/shulex/forge/forge-core/internal/module/specs"
 	"github.com/shulex/forge/forge-core/internal/module/task"
@@ -13,9 +14,10 @@ type Deps struct {
 	AuthHandler    *auth.Handler
 	AuthService    *auth.Service
 	ProjectHandler *project.Handler
-	TaskHandler    *task.Handler
-	TaskSSE        *task.SSEHandler
-	SpecsHandler   *specs.Handler
+	TaskHandler         *task.Handler
+	TaskSSE             *task.SSEHandler
+	ConversationHandler *conversation.Handler
+	SpecsHandler        *specs.Handler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -65,6 +67,13 @@ func Setup(deps *Deps) *gin.Engine {
 				protected.POST("/projects/:id/tasks", deps.TaskHandler.CreateTask)
 				protected.GET("/projects/:id/tasks", deps.TaskHandler.ListTasks)
 				protected.GET("/projects/:id/tasks/:taskId", deps.TaskHandler.GetTask)
+			}
+
+			// Conversations
+			if deps.ConversationHandler != nil {
+				protected.POST("/projects/:id/tasks/:taskId/messages", deps.ConversationHandler.SendMessage)
+				protected.GET("/projects/:id/tasks/:taskId/messages", deps.ConversationHandler.GetHistory)
+				protected.POST("/projects/:id/tasks/:taskId/confirm", deps.ConversationHandler.ConfirmPlan)
 			}
 
 			// SSE

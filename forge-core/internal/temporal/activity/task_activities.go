@@ -2,6 +2,7 @@ package activity
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -97,5 +98,41 @@ func (a *TaskActivities) FailTask(ctx context.Context, taskID int64, errMsg stri
 		return fmt.Errorf("fail task: %w", err)
 	}
 	slog.Error("task failed", "task_id", taskID, "error", errMsg)
+	return nil
+}
+
+// UpdateTaskAnalysis saves the AI analysis result as JSONB on the task.
+func (a *TaskActivities) UpdateTaskAnalysis(ctx context.Context, taskID int64, analysis string) error {
+	_, err := a.db.Exec(ctx,
+		`UPDATE engine.tasks SET analysis = $2::jsonb, updated_at = NOW() WHERE id = $1`,
+		taskID, analysis,
+	)
+	if err != nil {
+		return fmt.Errorf("update task analysis: %w", err)
+	}
+	slog.Info("task analysis updated", "task_id", taskID)
+	return nil
+}
+
+// SaveStepOutput saves the output of a workflow step.
+func (a *TaskActivities) SaveStepOutput(ctx context.Context, taskID int64, stepType string, output map[string]interface{}) error {
+	outputJSON, err := json.Marshal(output)
+	if err != nil {
+		return fmt.Errorf("marshal step output: %w", err)
+	}
+
+	_, err = a.db.Exec(ctx,
+		`UPDATE engine.task_steps SET output = $3, status = 'COMPLETED',
+		    completed_at = NOW(),
+		    duration_ms = CASE WHEN started_at IS NOT NULL
+		                       THEN EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000
+		                       ELSE duration_ms END
+		 WHERE task_id = $1 AND step_type = $2`,
+		taskID, stepType, string(outputJSON),
+	)
+	if err != nil {
+		return fmt.Errorf("save step output: %w", err)
+	}
+	slog.Info("step output saved", "task_id", taskID, "step", stepType)
 	return nil
 }

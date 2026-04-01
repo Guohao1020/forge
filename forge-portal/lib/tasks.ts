@@ -22,6 +22,7 @@ export interface TaskStep {
   name: string;
   step_type: string;
   status: string;
+  output?: string;
   started_at?: string;
   completed_at?: string;
   duration_ms?: number;

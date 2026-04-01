@@ -31,6 +31,12 @@ func StartWorker(c client.Client, db *pgxpool.Pool) (worker.Worker, error) {
 	w.RegisterActivityWithOptions(activities.FailTask, sdkactivity.RegisterOptions{
 		Name: "FailTask",
 	})
+	w.RegisterActivityWithOptions(activities.UpdateTaskAnalysis, sdkactivity.RegisterOptions{
+		Name: "UpdateTaskAnalysis",
+	})
+	w.RegisterActivityWithOptions(activities.SaveStepOutput, sdkactivity.RegisterOptions{
+		Name: "SaveStepOutput",
+	})
 
 	if err := w.Start(); err != nil {
 		return nil, err

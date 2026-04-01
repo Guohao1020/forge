@@ -6,7 +6,10 @@ import (
 	"os"
 
 	"github.com/shulex/forge/forge-core/internal/config"
+	"go.temporal.io/sdk/client"
+
 	"github.com/shulex/forge/forge-core/internal/module/auth"
+	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/project"
 	"github.com/shulex/forge/forge-core/internal/module/specs"
 	"github.com/shulex/forge/forge-core/internal/module/task"
@@ -75,18 +78,28 @@ func main() {
 	taskHandler := task.NewHandler(taskService)
 	taskSSE := task.NewSSEHandler(sseHub)
 
+	// Conversation module
+	convRepo := conversation.NewRepository(db)
+	var temporalInner client.Client
+	if temporalClient != nil {
+		temporalInner = temporalClient.Inner()
+	}
+	convService := conversation.NewService(convRepo, taskRepo, temporalInner)
+	convHandler := conversation.NewHandler(convService)
+
 	// Specs module
 	specsRepo := specs.NewRepository(db)
 	specsService := specs.NewService(specsRepo, rdb)
 	specsHandler := specs.NewHandler(specsService)
 
 	r := router.Setup(&router.Deps{
-		AuthHandler:    authHandler,
-		AuthService:    authService,
-		ProjectHandler: projectHandler,
-		TaskHandler:    taskHandler,
-		TaskSSE:        taskSSE,
-		SpecsHandler:   specsHandler,
+		AuthHandler:         authHandler,
+		AuthService:         authService,
+		ProjectHandler:      projectHandler,
+		TaskHandler:         taskHandler,
+		TaskSSE:             taskSSE,
+		ConversationHandler: convHandler,
+		SpecsHandler:        specsHandler,
 	})
 
 	slog.Info("forge-core starting", "port", cfg.ServerPort)
