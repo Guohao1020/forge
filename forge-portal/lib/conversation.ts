@@ -28,7 +28,10 @@ export async function getHistory(
   projectId: number,
   taskId: number
 ): Promise<Conversation[]> {
-  return api.get(`/projects/${projectId}/tasks/${taskId}/messages`);
+  const res = await api.get<{ messages: Conversation[] }>(
+    `/projects/${projectId}/tasks/${taskId}/messages`
+  );
+  return res.messages || [];
 }
 
 export async function confirmPlan(
