@@ -11,14 +11,24 @@ import (
 
 func JWTAuth(authService *auth.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		var tokenString string
+
+		// Try Authorization header first
 		header := c.GetHeader("Authorization")
-		if header == "" || !strings.HasPrefix(header, "Bearer ") {
+		if header != "" && strings.HasPrefix(header, "Bearer ") {
+			tokenString = strings.TrimPrefix(header, "Bearer ")
+		}
+
+		// Fallback to query parameter (for SSE/EventSource which cannot set headers)
+		if tokenString == "" {
+			tokenString = c.Query("token")
+		}
+
+		if tokenString == "" {
 			response.Fail(c, http.StatusUnauthorized, "请先登录")
 			c.Abort()
 			return
 		}
-
-		tokenString := strings.TrimPrefix(header, "Bearer ")
 		claims, err := authService.ValidateToken(c.Request.Context(), tokenString)
 		if err != nil {
 			response.Fail(c, http.StatusUnauthorized, "登录已过期，请重新登录")

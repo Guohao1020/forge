@@ -52,7 +52,7 @@ cd ai-worker && pytest
 ## Local Dev Environment
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d    # Start PostgreSQL, Redis, Temporal, ES, MinIO
+docker compose -f docker-compose.dev.yml up -d    # Start PostgreSQL, Redis, Temporal
 docker compose -f docker-compose.dev.yml down      # Stop all
 ```
 
@@ -67,16 +67,11 @@ docker compose -f docker-compose.dev.yml down      # Stop all
 | Redis | 6379 | 缓存（密码：forge_redis_2026）|
 | Temporal | 7233 | 工作流引擎 |
 | Temporal Web UI | 8233 | 工作流可视化 |
-| Elasticsearch | 9200 | 搜索引擎 |
-| MinIO | 9000 | 对象存储 |
-| MinIO Console | 9001 | 对象存储管理 |
 | code-server | 8443 | Web IDE (VS Code Web) |
-| APISIX (gateway) | 9080 | API 网关（生产环境） |
-| APISIX (admin) | 9180 | 网关管理（生产环境） |
 
 ### Frontend Dev
 
-前端开发时 Next.js 按路径前缀代理到 forge-core（不依赖 APISIX）：
+前端开发时 Next.js 按路径前缀代理到 forge-core：
 - `/api/*` → localhost:8080 (forge-core，统一 API 入口)
 
 ### Default Credentials
@@ -178,7 +173,7 @@ When updating any feature:
 ```
 用户（Web / IM / CLI）
         │
-   Traefik + APISIX（路由 / 鉴权 / 限流 / 灰度）
+   Traefik（TLS + 路由 + JWT + 限流 + 灰度）
         │
    forge-core（Go 模块化单体）
    ├── Auth / Project / Task / Specs / Adapter / Billing / Settings
@@ -189,14 +184,16 @@ When updating any feature:
    ▼    ▼              ▼              ▼
 AI Worker  DevOps Worker  Constraint Worker
 (Python    (Go)            (Go)
-LangGraph) Argo CD         MegaLinter
-Claude/GPT Argo Workflows  Semgrep
-           MeterSphere     SonarQube
+LangGraph) Argo CD         golangci-lint/eslint
+Claude/GPT GitHub Actions  Semgrep
            GitHub/Codeup
 
    ──── 可观测性层 ────
-   DeepFlow (eBPF) + Grafana + Loki + Prometheus
+   Grafana + Loki + Prometheus
 ```
+
+> **AI 替代中间件**: Claude 替代 SonarQube (代码质量)、MeterSphere (测试平台)、
+> Elasticsearch (搜索)。详见技术设计文档 §13.6。
 
 ## Current Status
 
@@ -205,7 +202,7 @@ Claude/GPT Argo Workflows  Semgrep
 **三期工程实施**（不是 MVP，是生产级企业版的工程依赖顺序）:
 - **一期 — 基座与核心引擎**: 基础设施 + Harness 六大组件 + AI 引擎完整版 + 适配器
 - **二期 — 约束闭环与企业能力**: 约束引擎 + 熵管理 + 完整鉴权 + 成本控制 + IM 机器人
-- **三期 — 可观测闭环与运营成熟**: DeepFlow 集成 + 运行时反馈 + 灰度发布 + 质量 Dashboard
+- **三期 — 可观测闭环与运营成熟**: 全栈监控 (评估 DeepFlow/OTel) + 运行时反馈 + 灰度发布 + 质量 Dashboard
 
 **Key Design Decisions**:
 - **Temporal 驱动** — 所有 AI 任务都是有状态、可恢复、可观测的 Workflow
@@ -215,7 +212,7 @@ Claude/GPT Argo Workflows  Semgrep
 - 项目优先导航 — 先选项目再看子页面
 - 一键接入 — OAuth 授权后同步全部仓库
 - 混合式需求输入 — 自然语言 → AI 澄清 → 确认卡片
-- 四层自动化测试 — 单测/接口/集成/回归，AI 选择工具
+- 四层自动化测试 — AI 生成测试 + 原生框架运行（替代 MeterSphere）
 - 分支全自动 — 低风险自动合并，高风险等审批
-- DeepFlow — eBPF 零代码全栈可观测性
+- Grafana + Loki + Prometheus — 平台可观测性（三期评估 DeepFlow/OTel 用于 AI 生成产品）
 - "深空指挥中心" — 暗色主题 + Forge 紫 #8B5CF6 + Aurora 背景

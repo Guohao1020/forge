@@ -31,6 +31,7 @@ export function CreateTaskDialog({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
     if (!requirement.trim()) {
       setError("请输入需求描述");
       return;
@@ -43,6 +44,7 @@ export function CreateTaskDialog({
       onOpenChange(false);
       onCreated();
     } catch (err: unknown) {
+      console.error("[CreateTask] error:", err);
       setError(err instanceof Error ? err.message : "创建失败");
     } finally {
       setLoading(false);

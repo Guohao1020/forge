@@ -27,8 +27,8 @@
 4. 创建后记录 **Client ID** 和 **Client Secret**
 5. 在本地环境设置环境变量：
    ```bash
-   export GITHUB_CLIENT_ID="your_client_id"
-   export GITHUB_CLIENT_SECRET="your_client_secret"
+   export GITHUB_CLIENT_ID="Ov23liZInCCCo4fv4rre"
+   export GITHUB_CLIENT_SECRET="a1252b8ad3e805df9ef3de56e455af33a381a7cf"
    ```
 
 ### 本切片交付后你可以做什么

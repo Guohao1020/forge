@@ -24,8 +24,9 @@ func (s *Service) CreateTask(ctx context.Context, tenantID, projectID, userID in
 	title := req.Title
 	if title == "" {
 		title = req.Requirement
-		if len(title) > 50 {
-			title = title[:50] + "..."
+		runes := []rune(title)
+		if len(runes) > 50 {
+			title = string(runes[:50]) + "..."
 		}
 	}
 
