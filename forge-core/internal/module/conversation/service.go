@@ -58,7 +58,9 @@ func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, 
 
 	// Update task status to ANALYZING if still SUBMITTED
 	if t.Status == task.StatusSubmitted {
-		_ = s.taskRepo.UpdateStatus(ctx, taskID, task.StatusAnalyzing)
+		if err := s.taskRepo.UpdateStatus(ctx, taskID, task.StatusAnalyzing); err != nil {
+			slog.Warn("failed to update task status to ANALYZING", "task_id", taskID, "error", err)
+		}
 	}
 
 	// Call AI worker via Temporal workflow wrapping analyze_requirement activity
@@ -67,7 +69,10 @@ func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, 
 	var aiMetadata map[string]interface{}
 	if s.temporalClient != nil {
 		// Load conversation history for context
-		history, _ := s.repo.ListByTaskID(ctx, taskID)
+		history, err := s.repo.ListByTaskID(ctx, taskID)
+		if err != nil {
+			slog.Warn("failed to load conversation history", "task_id", taskID, "error", err)
+		}
 		messages := make([]map[string]interface{}, 0, len(history))
 		for _, h := range history {
 			messages = append(messages, map[string]interface{}{
@@ -116,7 +121,9 @@ func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, 
 				// If confirmed, update task analysis
 				if aiStatus == "confirmed" {
 					if metadata, err := json.Marshal(aiMetadata); err == nil {
-						_ = s.taskRepo.UpdateAnalysis(ctx, taskID, string(metadata))
+						if err := s.taskRepo.UpdateAnalysis(ctx, taskID, string(metadata)); err != nil {
+							slog.Warn("failed to update task analysis", "task_id", taskID, "error", err)
+						}
 					}
 				}
 			}
@@ -187,7 +194,9 @@ func (s *Service) ConfirmPlan(ctx context.Context, taskID, tenantID int64) error
 		Content:  "方案已确认，代码生成流程已启动。",
 		Metadata: &raw,
 	}
-	_ = s.repo.Create(ctx, sysMsg)
+	if err := s.repo.Create(ctx, sysMsg); err != nil {
+		slog.Warn("failed to save system message for plan confirmation", "task_id", taskID, "error", err)
+	}
 
 	return nil
 }
