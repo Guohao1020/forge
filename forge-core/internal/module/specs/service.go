@@ -186,18 +186,7 @@ func (s *Service) GetEffectiveSpecs(ctx context.Context, tenantID, projectID int
 		return nil, fmt.Errorf("get project standards: %w", err)
 	}
 
-	// Merge: project standards override company standards (by category)
-	standardsByCategory := make(map[string]*Standard)
-	for _, std := range companyStandards {
-		standardsByCategory[std.Category] = std
-	}
-	for _, std := range projectStandards {
-		standardsByCategory[std.Category] = std // override
-	}
-	mergedStandards := make([]*Standard, 0, len(standardsByCategory))
-	for _, std := range standardsByCategory {
-		mergedStandards = append(mergedStandards, std)
-	}
+	mergedStandards := mergeStandards(companyStandards, projectStandards)
 
 	// Resolve review rules similarly
 	companyRules, err := s.repo.GetReviewRulesByScope(ctx, tenantID, "COMPANY", 0)
@@ -209,19 +198,7 @@ func (s *Service) GetEffectiveSpecs(ctx context.Context, tenantID, projectID int
 		return nil, fmt.Errorf("get project rules: %w", err)
 	}
 
-	// Merge: project rules override company rules (by name within same category)
-	ruleKey := func(r *ReviewRule) string { return r.Category + ":" + r.Name }
-	rulesByKey := make(map[string]*ReviewRule)
-	for _, rule := range companyRules {
-		rulesByKey[ruleKey(rule)] = rule
-	}
-	for _, rule := range projectRules {
-		rulesByKey[ruleKey(rule)] = rule // override
-	}
-	mergedRules := make([]*ReviewRule, 0, len(rulesByKey))
-	for _, rule := range rulesByKey {
-		mergedRules = append(mergedRules, rule)
-	}
+	mergedRules := mergeRules(companyRules, projectRules)
 
 	result := &EffectiveSpecs{
 		Standards: mergedStandards,
@@ -236,6 +213,39 @@ func (s *Service) GetEffectiveSpecs(ctx context.Context, tenantID, projectID int
 	}
 
 	return result, nil
+}
+
+// mergeStandards merges company and project standards. Project-level overrides company-level by category.
+func mergeStandards(company, project []*Standard) []*Standard {
+	byCategory := make(map[string]*Standard)
+	for _, std := range company {
+		byCategory[std.Category] = std
+	}
+	for _, std := range project {
+		byCategory[std.Category] = std // override
+	}
+	result := make([]*Standard, 0, len(byCategory))
+	for _, std := range byCategory {
+		result = append(result, std)
+	}
+	return result
+}
+
+// mergeRules merges company and project review rules. Project-level overrides company-level by category+name.
+func mergeRules(company, project []*ReviewRule) []*ReviewRule {
+	ruleKey := func(r *ReviewRule) string { return r.Category + ":" + r.Name }
+	byKey := make(map[string]*ReviewRule)
+	for _, rule := range company {
+		byKey[ruleKey(rule)] = rule
+	}
+	for _, rule := range project {
+		byKey[ruleKey(rule)] = rule // override
+	}
+	result := make([]*ReviewRule, 0, len(byKey))
+	for _, rule := range byKey {
+		result = append(result, rule)
+	}
+	return result
 }
 
 // invalidateEffectiveCache removes all effective specs cache entries for a tenant.
