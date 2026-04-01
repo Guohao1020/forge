@@ -1,7 +1,7 @@
-from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 from temporalio import activity
 from src.agents.coder import CoderAgent
 from src.context.builder import ContextBuilder
@@ -14,12 +14,12 @@ class GenerateInput:
     project_id: int
     task_id: int
     requirement_summary: str
-    task_plan: list[dict]
-    fix_instructions: str | None = None
+    task_plan: List[Dict[str, Any]]
+    fix_instructions: Optional[str] = None
 
 @dataclass
 class GenerateOutput:
-    files: list[dict]
+    files: List[Dict[str, Any]]
     commit_message: str
     files_changed: int
     lines_added: int

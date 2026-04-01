@@ -20,6 +20,9 @@ func StartWorker(c client.Client, db *pgxpool.Pool) (worker.Worker, error) {
 	w.RegisterWorkflowWithOptions(wf.TaskWorkflow, workflow.RegisterOptions{
 		Name: "TaskWorkflow",
 	})
+	w.RegisterWorkflowWithOptions(wf.AnalyzeRequirementWorkflow, workflow.RegisterOptions{
+		Name: "AnalyzeRequirementWorkflow",
+	})
 
 	activities := activity.NewTaskActivities(db)
 	w.RegisterActivityWithOptions(activities.ExecuteStep, sdkactivity.RegisterOptions{

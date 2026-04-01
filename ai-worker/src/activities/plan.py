@@ -1,6 +1,6 @@
-from __future__ import annotations
 import logging
 from dataclasses import dataclass
+from typing import Any, Dict, List
 from temporalio import activity
 from src.agents.planner import PlannerAgent
 from src.context.builder import ContextBuilder
@@ -17,9 +17,9 @@ class PlanInput:
 @dataclass
 class PlanOutput:
     title: str
-    tasks: list[dict]
+    tasks: List[Dict[str, Any]]
     risk_level: str
-    risk_factors: list[str]
+    risk_factors: List[str]
     tokens_used: int
     model: str
     provider: str

@@ -110,6 +110,14 @@ func (r *Repository) UpdateStatus(ctx context.Context, taskID int64, status stri
 	return err
 }
 
+func (r *Repository) UpdateAnalysis(ctx context.Context, taskID int64, analysis string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE engine.tasks SET analysis = $1, updated_at = NOW() WHERE id = $2`,
+		analysis, taskID,
+	)
+	return err
+}
+
 func (r *Repository) UpdateWorkflowIDs(ctx context.Context, taskID int64, workflowID, runID string) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE engine.tasks SET workflow_id = $1, workflow_run_id = $2, updated_at = NOW() WHERE id = $3`,

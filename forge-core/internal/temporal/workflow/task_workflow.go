@@ -145,3 +145,29 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 	logger.Info("TaskWorkflow completed", "task_id", input.TaskID)
 	return nil
 }
+
+// AnalyzeRequirementWorkflow is a thin wrapper that calls the Python analyze_requirement activity.
+// Used by conversation.SendMessage to synchronously get AI analysis results.
+func AnalyzeRequirementWorkflow(ctx workflow.Context, input map[string]interface{}) (map[string]interface{}, error) {
+	logger := workflow.GetLogger(ctx)
+	logger.Info("AnalyzeRequirementWorkflow started")
+
+	aiCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		TaskQueue:           "ai-worker",
+		StartToCloseTimeout: 3 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts:    2,
+			InitialInterval:    3 * time.Second,
+			BackoffCoefficient: 2.0,
+		},
+	})
+
+	var result map[string]interface{}
+	err := workflow.ExecuteActivity(aiCtx, "analyze_requirement", input).Get(ctx, &result)
+	if err != nil {
+		logger.Error("analyze_requirement activity failed", "error", err)
+		return nil, err
+	}
+
+	return result, nil
+}

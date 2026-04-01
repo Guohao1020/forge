@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"time"
+
 	"github.com/shulex/forge/forge-core/internal/module/task"
 	"github.com/shulex/forge/forge-core/internal/temporal/activity"
 	"go.temporal.io/sdk/client"
@@ -16,6 +18,7 @@ type TaskRepo interface {
 	FindByID(ctx context.Context, id int64) (*task.Task, error)
 	UpdateStatus(ctx context.Context, id int64, status string) error
 	UpdateWorkflowIDs(ctx context.Context, taskID int64, workflowID, runID string) error
+	UpdateAnalysis(ctx context.Context, taskID int64, analysis string) error
 }
 
 type Service struct {
@@ -58,7 +61,7 @@ func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, 
 		_ = s.taskRepo.UpdateStatus(ctx, taskID, task.StatusAnalyzing)
 	}
 
-	// Call AI worker via Temporal activity (if available)
+	// Call AI worker via Temporal workflow wrapping analyze_requirement activity
 	aiResponse := "AI 分析功能即将上线，当前为占位响应。您的需求已记录。"
 	if s.temporalClient != nil {
 		// Load conversation history for context
@@ -71,25 +74,43 @@ func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, 
 			})
 		}
 
-		// Execute AI analysis as a Temporal activity on ai-worker queue
 		actInput := map[string]interface{}{
-			"task_id":     taskID,
-			"tenant_id":   tenantID,
-			"project_id":  projectID,
-			"requirement": content,
-			"history":     messages,
+			"project_id":           projectID,
+			"task_id":              taskID,
+			"requirement":          content,
+			"conversation_history": messages,
 		}
 
-		// Use async activity execution — don't block on Python worker availability
-		_, err := s.temporalClient.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+		// Start a lightweight wrapper workflow that calls the Python activity
+		workflowOpts := client.StartWorkflowOptions{
 			ID:        fmt.Sprintf("analyze-%d-%d", taskID, userMsg.ID),
-			TaskQueue: "ai-worker",
-		}, "AnalyzeRequirement", actInput)
+			TaskQueue: "forge-task-queue", // Go worker queue — runs the wrapper workflow
+		}
+
+		we, err := s.temporalClient.ExecuteWorkflow(ctx, workflowOpts, "AnalyzeRequirementWorkflow", actInput)
 		if err != nil {
 			slog.Warn("failed to trigger AI analysis", "task_id", taskID, "error", err)
-			// Fall through to placeholder response
 		} else {
-			aiResponse = "需求已收到，AI 正在分析中。分析完成后将自动更新。"
+			// Wait for the result synchronously (with timeout)
+			waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+			defer cancel()
+
+			var result map[string]interface{}
+			if err := we.Get(waitCtx, &result); err != nil {
+				slog.Warn("AI analysis failed", "task_id", taskID, "error", err)
+				aiResponse = "AI 分析遇到问题，请稍后重试。错误: " + err.Error()
+			} else {
+				// Extract AI response content
+				if c, ok := result["content"].(string); ok && c != "" {
+					aiResponse = c
+				}
+				// If confirmed, update task analysis
+				if status, ok := result["status"].(string); ok && status == "confirmed" {
+					if metadata, err := json.Marshal(result["metadata"]); err == nil {
+						_ = s.taskRepo.UpdateAnalysis(ctx, taskID, string(metadata))
+					}
+				}
+			}
 		}
 	}
 

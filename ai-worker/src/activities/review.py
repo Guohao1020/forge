@@ -1,6 +1,6 @@
-from __future__ import annotations
 import logging
 from dataclasses import dataclass
+from typing import Any, Dict, List
 from temporalio import activity
 from src.agents.reviewer import ReviewerAgent
 from src.context.builder import ContextBuilder
@@ -12,13 +12,13 @@ logger = logging.getLogger(__name__)
 class ReviewInput:
     project_id: int
     task_id: int
-    files: list[dict]
+    files: List[Dict[str, Any]]
 
 @dataclass
 class ReviewOutput:
     passed: bool
     score: int
-    findings: list[dict]
+    findings: List[Dict[str, Any]]
     summary: str
     fix_instructions: str
     tokens_used: int

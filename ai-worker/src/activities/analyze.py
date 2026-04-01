@@ -1,6 +1,6 @@
-from __future__ import annotations
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 from temporalio import activity
 from src.agents.analyst import AnalystAgent
 from src.context.builder import ContextBuilder
@@ -13,13 +13,13 @@ class AnalyzeInput:
     project_id: int
     task_id: int
     requirement: str
-    conversation_history: list[dict] | None = None
+    conversation_history: Optional[List[Dict[str, Any]]] = None
 
 @dataclass
 class AnalyzeOutput:
     status: str          # "clarify" | "confirmed"
     content: str         # Raw AI response text
-    metadata: dict       # Structured data
+    metadata: Dict[str, Any]  # Structured data
     tokens_used: int
     model: str
     provider: str
