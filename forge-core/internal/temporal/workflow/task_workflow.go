@@ -46,9 +46,10 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 
 	var planResult map[string]interface{}
 	err = workflow.ExecuteActivity(aiCtx, "plan_task", map[string]interface{}{
-		"task_id":    input.TaskID,
-		"tenant_id":  input.TenantID,
-		"project_id": input.ProjectID,
+		"task_id":             input.TaskID,
+		"tenant_id":           input.TenantID,
+		"project_id":          input.ProjectID,
+		"requirement_summary": input.Requirement,
 	}).Get(ctx, &planResult)
 	if err != nil {
 		logger.Error("AI plan failed", "error", err)
@@ -70,10 +71,11 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 
 	var generateResult map[string]interface{}
 	err = workflow.ExecuteActivity(aiCtx, "generate_code", map[string]interface{}{
-		"task_id":    input.TaskID,
-		"tenant_id":  input.TenantID,
-		"project_id": input.ProjectID,
-		"plan":       planResult,
+		"task_id":             input.TaskID,
+		"tenant_id":           input.TenantID,
+		"project_id":          input.ProjectID,
+		"requirement_summary": input.Requirement,
+		"plan":                planResult,
 	}).Get(ctx, &generateResult)
 	if err != nil {
 		logger.Error("AI generate failed", "error", err)
@@ -121,11 +123,12 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 		if attempt < maxReviewAttempts {
 			logger.Info("review not passed, triggering fix", "attempt", attempt)
 			err = workflow.ExecuteActivity(aiCtx, "generate_code", map[string]interface{}{
-				"task_id":    input.TaskID,
-				"tenant_id":  input.TenantID,
-				"project_id": input.ProjectID,
-				"code":       generateResult,
-				"review":     reviewResult,
+				"task_id":             input.TaskID,
+				"tenant_id":           input.TenantID,
+				"project_id":          input.ProjectID,
+				"requirement_summary": input.Requirement,
+				"code":                generateResult,
+				"review":              reviewResult,
 			}).Get(ctx, &generateResult)
 			if err != nil {
 				logger.Error("AI fix failed", "attempt", attempt, "error", err)

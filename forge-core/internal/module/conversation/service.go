@@ -162,9 +162,10 @@ func (s *Service) ConfirmPlan(ctx context.Context, taskID, tenantID int64) error
 		ID:        workflowID,
 		TaskQueue: "forge-task-queue",
 	}, "TaskWorkflow", activity.TaskWorkflowInput{
-		TaskID:    taskID,
-		TenantID:  tenantID,
-		ProjectID: t.ProjectID,
+		TaskID:      taskID,
+		TenantID:    tenantID,
+		ProjectID:   t.ProjectID,
+		Requirement: t.Requirement,
 	})
 	if err != nil {
 		return fmt.Errorf("start generation workflow: %w", err)
