@@ -8,6 +8,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/config"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/project"
+	"github.com/shulex/forge/forge-core/internal/module/specs"
 	"github.com/shulex/forge/forge-core/internal/module/task"
 	forgetemporal "github.com/shulex/forge/forge-core/internal/temporal"
 	"github.com/shulex/forge/forge-core/internal/pkg/database"
@@ -74,12 +75,18 @@ func main() {
 	taskHandler := task.NewHandler(taskService)
 	taskSSE := task.NewSSEHandler(sseHub)
 
+	// Specs module
+	specsRepo := specs.NewRepository(db)
+	specsService := specs.NewService(specsRepo, rdb)
+	specsHandler := specs.NewHandler(specsService)
+
 	r := router.Setup(&router.Deps{
 		AuthHandler:    authHandler,
 		AuthService:    authService,
 		ProjectHandler: projectHandler,
 		TaskHandler:    taskHandler,
 		TaskSSE:        taskSSE,
+		SpecsHandler:   specsHandler,
 	})
 
 	slog.Info("forge-core starting", "port", cfg.ServerPort)

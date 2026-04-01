@@ -5,6 +5,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/middleware"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/project"
+	"github.com/shulex/forge/forge-core/internal/module/specs"
 	"github.com/shulex/forge/forge-core/internal/module/task"
 )
 
@@ -14,6 +15,7 @@ type Deps struct {
 	ProjectHandler *project.Handler
 	TaskHandler    *task.Handler
 	TaskSSE        *task.SSEHandler
+	SpecsHandler   *specs.Handler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -68,6 +70,44 @@ func Setup(deps *Deps) *gin.Engine {
 			// SSE
 			if deps.TaskSSE != nil {
 				protected.GET("/stream/tasks/:taskId", deps.TaskSSE.Stream)
+			}
+
+			// Specs Center
+			if deps.SpecsHandler != nil {
+				specsGroup := protected.Group("/specs")
+				{
+					// Standards
+					standards := specsGroup.Group("/standards")
+					standards.GET("", deps.SpecsHandler.ListStandards)
+					standards.GET("/:id", deps.SpecsHandler.GetStandard)
+					standards.POST("", deps.SpecsHandler.CreateStandard)
+					standards.PUT("/:id", deps.SpecsHandler.UpdateStandard)
+					standards.DELETE("/:id", deps.SpecsHandler.DeleteStandard)
+
+					// Prompt Templates
+					prompts := specsGroup.Group("/prompts")
+					prompts.GET("", deps.SpecsHandler.ListPromptTemplates)
+					prompts.GET("/:id", deps.SpecsHandler.GetPromptTemplate)
+					prompts.POST("", deps.SpecsHandler.CreatePromptTemplate)
+					prompts.PUT("/:id", deps.SpecsHandler.UpdatePromptTemplate)
+					prompts.DELETE("/:id", deps.SpecsHandler.DeletePromptTemplate)
+
+					// Review Rules
+					rules := specsGroup.Group("/rules")
+					rules.GET("", deps.SpecsHandler.ListReviewRules)
+					rules.GET("/:id", deps.SpecsHandler.GetReviewRule)
+					rules.POST("", deps.SpecsHandler.CreateReviewRule)
+					rules.PUT("/:id", deps.SpecsHandler.UpdateReviewRule)
+					rules.DELETE("/:id", deps.SpecsHandler.ToggleReviewRule)
+
+					// Scaffold Templates (read-only)
+					scaffolds := specsGroup.Group("/scaffolds")
+					scaffolds.GET("", deps.SpecsHandler.ListScaffoldTemplates)
+					scaffolds.GET("/:id", deps.SpecsHandler.GetScaffoldTemplate)
+
+					// Effective specs (resolved inheritance)
+					specsGroup.GET("/effective/:projectId", deps.SpecsHandler.GetEffectiveSpecs)
+				}
 			}
 		}
 	}

@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ForgeLogo } from "./forge-logo";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, BookOpen } from "lucide-react";
 
 const navItems = [
   { href: "/projects", label: "项目大厅", icon: FolderOpen },
+  { href: "/specs", label: "规范中心", icon: BookOpen },
 ];
 
 export function Sidebar() {
@@ -20,7 +21,7 @@ export function Sidebar() {
 
       <nav className="flex-1 p-3 space-y-1">
         {navItems.map((item) => {
-          const active = pathname === item.href;
+          const active = pathname === item.href || pathname.startsWith(item.href + "/");
           return (
             <Link
               key={item.href}
