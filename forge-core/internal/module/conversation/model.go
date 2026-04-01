@@ -56,6 +56,12 @@ type SendMessageRequest struct {
 	Content string `json:"content" binding:"required,min=1,max=10000"`
 }
 
+type SendMessageResponse struct {
+	Conversation *Conversation          `json:"conversation"`
+	Status       string                 `json:"status"`
+	Metadata     map[string]interface{} `json:"metadata"`
+}
+
 type ConversationListResponse struct {
 	Messages []*Conversation `json:"messages"`
 }

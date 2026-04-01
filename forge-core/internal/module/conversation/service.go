@@ -36,7 +36,7 @@ func NewService(repo *Repository, taskRepo TaskRepo, tc client.Client) *Service 
 }
 
 // SendMessage saves user message, triggers AI analysis activity, saves AI response.
-func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, userID int64, content string) (*Conversation, error) {
+func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, userID int64, content string) (*SendMessageResponse, error) {
 	// Verify task exists
 	t, err := s.taskRepo.FindByID(ctx, taskID)
 	if err != nil {
@@ -63,6 +63,8 @@ func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, 
 
 	// Call AI worker via Temporal workflow wrapping analyze_requirement activity
 	aiResponse := "AI 分析功能即将上线，当前为占位响应。您的需求已记录。"
+	aiStatus := "clarify"
+	var aiMetadata map[string]interface{}
 	if s.temporalClient != nil {
 		// Load conversation history for context
 		history, _ := s.repo.ListByTaskID(ctx, taskID)
@@ -104,9 +106,16 @@ func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, 
 				if c, ok := result["content"].(string); ok && c != "" {
 					aiResponse = c
 				}
+				// Extract status and metadata from AI result
+				if status, ok := result["status"].(string); ok && status != "" {
+					aiStatus = status
+				}
+				if md, ok := result["metadata"].(map[string]interface{}); ok {
+					aiMetadata = md
+				}
 				// If confirmed, update task analysis
-				if status, ok := result["status"].(string); ok && status == "confirmed" {
-					if metadata, err := json.Marshal(result["metadata"]); err == nil {
+				if aiStatus == "confirmed" {
+					if metadata, err := json.Marshal(aiMetadata); err == nil {
 						_ = s.taskRepo.UpdateAnalysis(ctx, taskID, string(metadata))
 					}
 				}
@@ -124,7 +133,11 @@ func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, 
 		return nil, fmt.Errorf("save assistant message: %w", err)
 	}
 
-	return assistantMsg, nil
+	return &SendMessageResponse{
+		Conversation: assistantMsg,
+		Status:       aiStatus,
+		Metadata:     aiMetadata,
+	}, nil
 }
 
 // ConfirmPlan confirms the AI analysis and starts the task generation workflow.
