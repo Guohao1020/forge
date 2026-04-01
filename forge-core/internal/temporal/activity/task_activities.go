@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/shulex/forge/forge-core/internal/module/task"
 )
 
 // TaskWorkflowInput is the input to the TaskWorkflow.
@@ -19,11 +20,12 @@ type TaskWorkflowInput struct {
 }
 
 type TaskActivities struct {
-	db *pgxpool.Pool
+	db  *pgxpool.Pool
+	sse *task.SSEHub
 }
 
-func NewTaskActivities(db *pgxpool.Pool) *TaskActivities {
-	return &TaskActivities{db: db}
+func NewTaskActivities(db *pgxpool.Pool, sse *task.SSEHub) *TaskActivities {
+	return &TaskActivities{db: db, sse: sse}
 }
 
 type StepInput struct {
@@ -39,7 +41,7 @@ type StepOutput struct {
 	Status   string `json:"status"`
 }
 
-// ExecuteStep is the generic skeleton activity for all workflow steps.
+// ExecuteStep marks the step as RUNNING (actual work is done by AI activities).
 func (a *TaskActivities) ExecuteStep(ctx context.Context, input StepInput) (*StepOutput, error) {
 	slog.Info("step started", "task_id", input.TaskID, "step", input.StepType, "status", input.TaskStatus)
 
@@ -59,21 +61,18 @@ func (a *TaskActivities) ExecuteStep(ctx context.Context, input StepInput) (*Ste
 		return nil, fmt.Errorf("mark step running: %w", err)
 	}
 
-	time.Sleep(time.Duration(input.Duration) * time.Second)
-
-	_, err = a.db.Exec(ctx,
-		`UPDATE engine.task_steps
-		 SET status = 'COMPLETED', completed_at = NOW(),
-		     duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000
-		 WHERE task_id = $1 AND step_type = $2`,
-		input.TaskID, input.StepType,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("mark step completed: %w", err)
+	if a.sse != nil {
+		a.sse.Broadcast(input.TaskID, task.TaskProgressEvent{
+			Type:       "step_progress",
+			TaskID:     input.TaskID,
+			Status:     input.TaskStatus,
+			StepType:   input.StepType,
+			StepStatus: "RUNNING",
+		})
 	}
 
-	slog.Info("step completed", "task_id", input.TaskID, "step", input.StepType)
-	return &StepOutput{TaskID: input.TaskID, StepType: input.StepType, Status: "COMPLETED"}, nil
+	slog.Info("step marked running", "task_id", input.TaskID, "step", input.StepType)
+	return &StepOutput{TaskID: input.TaskID, StepType: input.StepType, Status: "RUNNING"}, nil
 }
 
 // CompleteTask marks the task as COMPLETED.
@@ -85,6 +84,16 @@ func (a *TaskActivities) CompleteTask(ctx context.Context, taskID int64) error {
 	if err != nil {
 		return fmt.Errorf("complete task: %w", err)
 	}
+
+	if a.sse != nil {
+		a.sse.Broadcast(taskID, task.TaskProgressEvent{
+			Type:     "task_complete",
+			TaskID:   taskID,
+			Status:   "COMPLETED",
+			Progress: 100,
+		})
+	}
+
 	slog.Info("task completed", "task_id", taskID)
 	return nil
 }
@@ -98,6 +107,16 @@ func (a *TaskActivities) FailTask(ctx context.Context, taskID int64, errMsg stri
 	if err != nil {
 		return fmt.Errorf("fail task: %w", err)
 	}
+
+	if a.sse != nil {
+		a.sse.Broadcast(taskID, task.TaskProgressEvent{
+			Type:   "task_failed",
+			TaskID: taskID,
+			Status: "FAILED",
+			Data:   map[string]string{"error": errMsg},
+		})
+	}
+
 	slog.Error("task failed", "task_id", taskID, "error", errMsg)
 	return nil
 }
@@ -134,6 +153,16 @@ func (a *TaskActivities) SaveStepOutput(ctx context.Context, taskID int64, stepT
 	if err != nil {
 		return fmt.Errorf("save step output: %w", err)
 	}
+
+	if a.sse != nil {
+		a.sse.Broadcast(taskID, task.TaskProgressEvent{
+			Type:       "step_progress",
+			TaskID:     taskID,
+			StepType:   stepType,
+			StepStatus: "COMPLETED",
+		})
+	}
+
 	slog.Info("step output saved", "task_id", taskID, "step", stepType)
 	return nil
 }

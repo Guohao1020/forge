@@ -56,6 +56,9 @@ func main() {
 	projectService := project.NewService(projectRepo)
 	projectHandler := project.NewHandler(projectService)
 
+	// Task module — SSEHub must be created before Temporal worker
+	sseHub := task.NewSSEHub()
+
 	// Temporal (optional — gracefully skip if unavailable)
 	var workflowStarter task.WorkflowStarter
 	temporalClient, err := forgetemporal.NewClient(ctx, cfg.TemporalAddress)
@@ -65,14 +68,11 @@ func main() {
 		defer temporalClient.Close()
 		workflowStarter = temporalClient
 
-		_, err := forgetemporal.StartWorker(temporalClient.Inner(), db)
+		_, err := forgetemporal.StartWorker(temporalClient.Inner(), db, sseHub)
 		if err != nil {
 			slog.Error("failed to start temporal worker", "error", err)
 		}
 	}
-
-	// Task module
-	sseHub := task.NewSSEHub()
 	taskRepo := task.NewRepository(db)
 	taskService := task.NewService(taskRepo, workflowStarter)
 	taskHandler := task.NewHandler(taskService)

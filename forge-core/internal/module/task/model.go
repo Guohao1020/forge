@@ -103,10 +103,12 @@ type TaskListResponse struct {
 }
 
 type TaskProgressEvent struct {
-	Type     string `json:"type"`
-	TaskID   int64  `json:"task_id"`
-	Status   string `json:"status"`
-	StepType string `json:"step_type,omitempty"`
-	StepName string `json:"step_name,omitempty"`
-	Progress int    `json:"progress"`
+	Type       string      `json:"type"`
+	TaskID     int64       `json:"task_id"`
+	Status     string      `json:"status"`
+	StepType   string      `json:"step_type,omitempty"`
+	StepName   string      `json:"step_name,omitempty"`
+	StepStatus string      `json:"step_status,omitempty"`
+	Progress   int         `json:"progress"`
+	Data       interface{} `json:"data,omitempty"`
 }
