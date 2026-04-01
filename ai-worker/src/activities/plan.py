@@ -34,7 +34,7 @@ async def plan_task_activity(input: PlanInput) -> PlanOutput:
     logger.info(f"Planning task {input.task_id}")
     builder = ContextBuilder()
     try:
-        ctx = await builder.build(input.project_id, purpose="requirement-analysis")
+        ctx = await builder.build(input.project_id, purpose="code-generation")
 
         # Use provided summary or a default prompt
         summary = input.requirement_summary or "Please analyze the task and create an implementation plan."
