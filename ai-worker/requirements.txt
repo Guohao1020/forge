@@ -1,0 +1,17 @@
+# Temporal
+temporalio==1.9.0
+
+# LLM SDKs
+anthropic>=0.42.0
+openai>=1.60.0
+dashscope>=1.20.0
+
+# HTTP
+httpx>=0.28.0
+
+# Config
+pydantic-settings>=2.7.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.24.0

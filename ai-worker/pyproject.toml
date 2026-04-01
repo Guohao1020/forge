@@ -1,0 +1,9 @@
+[project]
+name = "forge-ai-worker"
+version = "0.1.0"
+description = "Forge AI Worker — LLM-powered code generation via Temporal"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
