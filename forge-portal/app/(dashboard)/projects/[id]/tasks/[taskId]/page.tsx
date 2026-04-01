@@ -31,6 +31,14 @@ interface ReviewFinding {
   line?: number;
 }
 
+interface ReviewOutput {
+  passed: boolean;
+  score: number;
+  findings: ReviewFinding[];
+  summary: string;
+  fix_instructions?: string;
+}
+
 interface GenerateOutput {
   files: { path: string; content: string; action: string; language?: string }[];
   commitMessage?: string;
@@ -166,11 +174,32 @@ export default function TaskDetailPage() {
       {(steps || [])
         .filter((s) => s.step_type === "REVIEW" && s.status === "COMPLETED" && s.output)
         .map((step) => {
-          const findings = tryParseOutput<ReviewFinding[]>(step);
-          if (!findings?.length) return null;
+          const reviewOutput = tryParseOutput<ReviewOutput>(step);
+          const findings = reviewOutput?.findings || [];
+          if (!reviewOutput) return null;
           return (
             <div key={`rev-${step.id}`} className="rounded-xl border border-border bg-card p-5 mt-6">
-              <h2 className="text-sm font-medium mb-3">审查结果</h2>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-medium">审查结果</h2>
+                <div className="flex items-center gap-3">
+                  {reviewOutput.score != null && (
+                    <span className="text-xs text-white/50">
+                      评分: <span className="text-white/80 font-mono">{reviewOutput.score}</span>
+                    </span>
+                  )}
+                  {reviewOutput.passed != null && (
+                    <Badge variant="secondary" className={reviewOutput.passed
+                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                      : "bg-red-500/10 text-red-400 border-red-500/20"
+                    }>
+                      {reviewOutput.passed ? "通过" : "未通过"}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+              {reviewOutput.summary && (
+                <p className="text-sm text-white/60 mb-3">{reviewOutput.summary}</p>
+              )}
               <div className="space-y-2">
                 {findings.map((f, i) => (
                   <div
