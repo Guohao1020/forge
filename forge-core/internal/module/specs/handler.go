@@ -18,7 +18,7 @@ func NewHandler(svc *Service) *Handler {
 
 // Helper: extract tenant_id from JWT context (set by auth middleware)
 func getTenantID(c *gin.Context) int64 {
-	if v, ok := c.Get("tenantId"); ok {
+	if v, ok := c.Get("tenant_id"); ok {
 		if tid, ok := v.(int64); ok {
 			return tid
 		}
@@ -28,7 +28,7 @@ func getTenantID(c *gin.Context) int64 {
 
 // Helper: extract user_id from JWT context
 func getUserID(c *gin.Context) int64 {
-	if v, ok := c.Get("userId"); ok {
+	if v, ok := c.Get("user_id"); ok {
 		if uid, ok := v.(int64); ok {
 			return uid
 		}
