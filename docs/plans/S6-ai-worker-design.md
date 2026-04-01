@@ -282,6 +282,55 @@ forge-portal/
 - 系统消息：居中，小字灰色
 - 确认卡片：全宽，带边框，包含需求摘要 + "确认执行"按钮
 
+### 5.4 代码预览（任务详情页内嵌）
+
+AI 生成的代码在任务详情页直接展示，不需要跳转其他页面。
+
+**数据存储**：Coder Agent 输出的 `files[]` 存入 task_steps 表的 `output` 字段（JSON）。
+
+**UI 布局**：任务详情页 GENERATING 步骤展开后显示代码预览区：
+
+```
+┌─────────────────────────────────────────────────┐
+│ 代码生成  ✅ COMPLETED                           │
+│                                                  │
+│ ┌──────────┬────────────────────────────────┐   │
+│ │ 文件列表  │ 代码内容                        │   │
+│ │          │                                │   │
+│ │ ▸ src/   │  // auth/service.go            │   │
+│ │   auth/  │  package auth                  │   │
+│ │   ✚ service.go │                          │   │
+│ │   ✚ handler.go │  func NewService(...)    │   │
+│ │   ✎ model.go   │    return &Service{...}  │   │
+│ │          │  }                              │   │
+│ │          │                                │   │
+│ └──────────┴────────────────────────────────┘   │
+│                                                  │
+│ commit message: feat(auth): add OAuth service    │
+│ 文件变更: 3 files (+180 / -0)                     │
+└─────────────────────────────────────────────────┘
+```
+
+**组件结构**：
+```
+components/
+└── code-preview/
+    ├── code-preview-panel.tsx     # 主面板（左文件树 + 右代码）
+    ├── file-tree.tsx              # 文件树（带 create/modify 图标）
+    └── code-viewer.tsx            # 代码展示（语法高亮 + 行号）
+```
+
+**语法高亮**：使用 `shiki`（与 Next.js 生态兼容好，支持深色主题）或简单方案先用 `<pre>` + Geist Mono 字体。
+
+**文件树交互**：
+- 点击文件名切换右侧代码内容
+- 文件图标标记操作类型：✚ create（绿色）、✎ modify（黄色）
+- 折叠/展开目录
+
+**Review 结果叠加**：当 REVIEWING 步骤完成后，在代码预览中叠加 review findings：
+- 行内标注（红色/黄色/蓝色下划线，对应 ERROR/WARNING/INFO）
+- hover 显示问题描述和修复建议
+
 ---
 
 ## 6. Phase 1 简化
@@ -294,6 +343,8 @@ forge-portal/
 | GitHub 提交 | 不提交，仅生成代码 | S7 devops-worker |
 | 成本控制 | 记录 model_calls，无硬限 | Phase 2 |
 | 风险评估 | 简单规则 (HIGH/MEDIUM/LOW) | Phase 2 AI 评估 |
+| 代码预览语法高亮 | Geist Mono + 基础 pre 渲染 | 后续可升级 shiki |
+| Review 行内标注 | 文件级 findings 列表 | 后续可做行内标注 |
 
 ---
 
