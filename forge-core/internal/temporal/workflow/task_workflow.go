@@ -45,7 +45,7 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 	}
 
 	var planResult map[string]interface{}
-	err = workflow.ExecuteActivity(aiCtx, "PlanGeneration", map[string]interface{}{
+	err = workflow.ExecuteActivity(aiCtx, "plan_task", map[string]interface{}{
 		"task_id":    input.TaskID,
 		"tenant_id":  input.TenantID,
 		"project_id": input.ProjectID,
@@ -69,7 +69,7 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 	}
 
 	var generateResult map[string]interface{}
-	err = workflow.ExecuteActivity(aiCtx, "GenerateCode", map[string]interface{}{
+	err = workflow.ExecuteActivity(aiCtx, "generate_code", map[string]interface{}{
 		"task_id":    input.TaskID,
 		"tenant_id":  input.TenantID,
 		"project_id": input.ProjectID,
@@ -95,7 +95,7 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 	maxReviewAttempts := 3
 	var reviewResult map[string]interface{}
 	for attempt := 1; attempt <= maxReviewAttempts; attempt++ {
-		err = workflow.ExecuteActivity(aiCtx, "ReviewCode", map[string]interface{}{
+		err = workflow.ExecuteActivity(aiCtx, "review_code", map[string]interface{}{
 			"task_id":    input.TaskID,
 			"tenant_id":  input.TenantID,
 			"project_id": input.ProjectID,
@@ -120,7 +120,7 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 		// If not passed and not last attempt, trigger fix
 		if attempt < maxReviewAttempts {
 			logger.Info("review not passed, triggering fix", "attempt", attempt)
-			err = workflow.ExecuteActivity(aiCtx, "FixCode", map[string]interface{}{
+			err = workflow.ExecuteActivity(aiCtx, "generate_code", map[string]interface{}{
 				"task_id":    input.TaskID,
 				"tenant_id":  input.TenantID,
 				"project_id": input.ProjectID,
