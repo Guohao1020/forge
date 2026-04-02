@@ -84,3 +84,24 @@ export async function createTask(projectId: string | number, requirement: string
 export async function getTaskDetail(projectId: string | number, taskId: string | number): Promise<TaskDetail> {
   return api.get<TaskDetail>(`/projects/${projectId}/tasks/${taskId}`);
 }
+
+export interface TaskNode {
+  id: number;
+  taskId: number;
+  nodeOrder: number;
+  title: string;
+  description?: string;
+  nodeType: string;
+  status: string;
+  dependsOn: number[];
+  files: string[];
+  estimateHours?: number;
+  requirementRef?: string;
+}
+
+export async function getTaskNodes(projectId: number, taskId: number): Promise<TaskNode[]> {
+  const res = await api.get<{ nodes: TaskNode[] }>(
+    `/projects/${projectId}/tasks/${taskId}/nodes`
+  );
+  return res.nodes || [];
+}
