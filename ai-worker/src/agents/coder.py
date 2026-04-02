@@ -92,11 +92,104 @@ The JSON must follow this exact structure:
 """
 
 
+# Language-specific coding patterns injected when tech_stack is detected
+_LANGUAGE_PATTERNS: dict[str, str] = {
+    "go": (
+        "- Use Go modules (go.mod) for dependency management\n"
+        "- Return errors as values (do NOT use panic/recover for control flow)\n"
+        "- Follow gofmt / goimports formatting\n"
+        "- Use structured logging (slog)\n"
+        "- Prefer table-driven tests\n"
+        "- Use context.Context for cancellation and timeouts"
+    ),
+    "java": (
+        "- Follow Maven/Gradle project conventions\n"
+        "- Use standard Java package structure (com.company.module)\n"
+        "- Prefer constructor injection for dependencies\n"
+        "- Use checked exceptions for recoverable errors\n"
+        "- Follow Google Java Style Guide formatting"
+    ),
+    "python": (
+        "- Use pip/poetry for dependency management\n"
+        "- Add type hints to all function signatures\n"
+        "- Follow PEP 8 style conventions\n"
+        "- Use dataclasses or Pydantic for data structures\n"
+        "- Prefer f-strings for string formatting"
+    ),
+    "javascript": (
+        "- Use npm/yarn for dependency management\n"
+        "- Use ES modules (import/export)\n"
+        "- Follow ESLint recommended rules\n"
+        "- Use async/await over raw Promises\n"
+        "- Add JSDoc comments for public APIs"
+    ),
+    "typescript": (
+        "- Use npm/yarn for dependency management\n"
+        "- Use ES modules (import/export)\n"
+        "- Enable TypeScript strict mode\n"
+        "- Define explicit types/interfaces (avoid 'any')\n"
+        "- Use async/await over raw Promises\n"
+        "- Add TSDoc comments for public APIs"
+    ),
+}
+
+
+def _build_language_constraints(tech_stack: dict) -> str:
+    """Build a language constraint block from a project's tech_stack dict."""
+    languages: list[str] = tech_stack.get("languages", [])
+    frameworks: list[str] = tech_stack.get("frameworks", [])
+
+    if not languages and not frameworks:
+        return ""
+
+    parts: list[str] = []
+    parts.append("## Language Constraints (STRICTLY ENFORCED)")
+
+    if languages:
+        parts.append(f"This project uses: {', '.join(languages)}")
+    if frameworks:
+        parts.append(f"Frameworks: {', '.join(frameworks)}")
+
+    parts.append(
+        "\nRULES:\n"
+        "- ONLY generate code in the detected language(s) listed above\n"
+        "- Use the project's existing framework patterns\n"
+        "- Do NOT introduce dependencies outside the detected ecosystem\n"
+        "- Follow the language-specific coding standards below"
+    )
+
+    # Append language-specific patterns
+    for lang in languages:
+        key = lang.lower().strip()
+        # Normalize common aliases
+        if key in ("js", "node", "nodejs"):
+            key = "javascript"
+        elif key in ("ts",):
+            key = "typescript"
+        elif key in ("golang",):
+            key = "go"
+        elif key in ("py", "python3"):
+            key = "python"
+
+        patterns = _LANGUAGE_PATTERNS.get(key)
+        if patterns:
+            parts.append(f"\n### {lang} Coding Patterns\n{patterns}")
+
+    return "\n".join(parts)
+
+
 class CoderAgent(BaseAgent):
     purpose = Purpose.GENERATE
 
     def _build_system_prompt(self, context: ProjectContext) -> str:
         base = CODER_SYSTEM_PROMPT
+
+        # Inject language constraints before project context
+        if context.tech_stack:
+            lang_constraints = _build_language_constraints(context.tech_stack)
+            if lang_constraints:
+                base += f"\n\n{lang_constraints}"
+
         project_context = context.to_system_prompt()
         if project_context:
             base += f"\n\n{project_context}"

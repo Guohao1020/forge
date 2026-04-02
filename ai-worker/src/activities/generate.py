@@ -86,9 +86,14 @@ async def generate_code_activity(input: GenerateInput) -> GenerateOutput:
 
         # Try streaming mode first — publishes tokens to Redis for live UI
         try:
-            from src.agents.coder import CoderAgent, CODER_SYSTEM_PROMPT
-            project_context = ctx.to_system_prompt()
+            from src.agents.coder import CoderAgent, CODER_SYSTEM_PROMPT, _build_language_constraints
             system_prompt = CODER_SYSTEM_PROMPT
+            # Inject language constraints (same logic as CoderAgent._build_system_prompt)
+            if ctx.tech_stack:
+                lang_constraints = _build_language_constraints(ctx.tech_stack)
+                if lang_constraints:
+                    system_prompt += f"\n\n{lang_constraints}"
+            project_context = ctx.to_system_prompt()
             if project_context:
                 system_prompt += f"\n\n{project_context}"
             messages = [{"role": "user", "content": user_prompt}]
