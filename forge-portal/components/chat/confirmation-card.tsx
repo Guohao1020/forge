@@ -1,7 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { CheckCircle, Edit3, X } from "lucide-react";
+import { CheckCircle, Edit3, X, Info } from "lucide-react";
+import { RiskAlert, Risk } from "./risk-alert";
 
 interface ConfirmationCardProps {
   summary: string;
@@ -9,6 +10,8 @@ interface ConfirmationCardProps {
   affectedModules?: string[];
   riskLevel?: string;
   estimatedComplexity?: string;
+  risks?: Risk[];
+  nonFunctional?: string[];
   onConfirm: () => void;
   onModify: () => void;
   onCancel: () => void;
@@ -27,6 +30,8 @@ export function ConfirmationCard({
   affectedModules = [],
   riskLevel = "MEDIUM",
   estimatedComplexity,
+  risks,
+  nonFunctional,
   onConfirm,
   onModify,
   onCancel,
@@ -67,6 +72,24 @@ export function ConfirmationCard({
           </span>
         )}
       </div>
+
+      {risks && risks.length > 0 && <RiskAlert risks={risks} />}
+
+      {nonFunctional && nonFunctional.length > 0 && (
+        <div className="border border-white/5 rounded-lg bg-white/[0.02] p-2.5 mb-4">
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <Info className="h-3.5 w-3.5 text-[#8B5CF6]/60" />
+            <span className="text-xs font-medium text-white/50">非功能需求</span>
+          </div>
+          <ul className="space-y-1">
+            {nonFunctional.map((item, idx) => (
+              <li key={idx} className="text-xs text-white/40 pl-5 relative before:content-[''] before:absolute before:left-2 before:top-[7px] before:w-1 before:h-1 before:rounded-full before:bg-white/20">
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="flex gap-2">
         <Button

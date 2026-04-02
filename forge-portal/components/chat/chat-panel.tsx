@@ -5,6 +5,7 @@ import { Send, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MessageBubble } from "./message-bubble";
 import { ConfirmationCard } from "./confirmation-card";
+import { RiskAlert, Risk } from "./risk-alert";
 import { Conversation } from "@/lib/conversation";
 
 interface ChatPanelProps {
@@ -20,8 +21,11 @@ interface ChatPanelProps {
     affectedModules?: string[];
     riskLevel?: string;
     estimatedComplexity?: string;
+    risks?: Risk[];
+    nonFunctional?: string[];
   } | null;
   isConfirming?: boolean;
+  risks?: Risk[];
 }
 
 export function ChatPanel({
@@ -33,6 +37,7 @@ export function ChatPanel({
   isLoading,
   confirmationData,
   isConfirming = false,
+  risks = [],
 }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -72,6 +77,9 @@ export function ChatPanel({
             createdAt={msg.createdAt}
           />
         ))}
+        {risks.length > 0 && !confirmationData && (
+          <RiskAlert risks={risks} />
+        )}
         {confirmationData && (
           <ConfirmationCard
             {...confirmationData}

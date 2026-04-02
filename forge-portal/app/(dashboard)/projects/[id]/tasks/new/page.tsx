@@ -1,17 +1,29 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { ChatPanel } from "@/components/chat/chat-panel";
+import { TechStackBadge } from "@/components/chat/tech-stack-badge";
 import { createTask } from "@/lib/tasks";
+import { api } from "@/lib/api";
+import { Risk } from "@/components/chat/risk-alert";
 import {
   Conversation,
   SendMessageResponse,
   sendMessage,
   confirmPlan,
 } from "@/lib/conversation";
+
+interface ProjectInfo {
+  id: number;
+  name: string;
+  tech_stack?: {
+    languages?: Record<string, number>;
+    frameworks?: string[];
+  };
+}
 
 export default function NewTaskPage() {
   const params = useParams();
@@ -22,13 +34,21 @@ export default function NewTaskPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
   const [taskId, setTaskId] = useState<number | null>(null);
+  const [project, setProject] = useState<ProjectInfo | null>(null);
+  const [latestRisks, setLatestRisks] = useState<Risk[]>([]);
   const [confirmationData, setConfirmationData] = useState<{
     summary: string;
     taskTitle: string;
     affectedModules?: string[];
     riskLevel?: string;
     estimatedComplexity?: string;
+    risks?: Risk[];
+    nonFunctional?: string[];
   } | null>(null);
+
+  useEffect(() => {
+    api.get<ProjectInfo>(`/projects/${projectId}`).then(setProject).catch(() => {});
+  }, [projectId]);
 
   const handleSend = useCallback(
     async (content: string) => {
@@ -63,6 +83,11 @@ export default function NewTaskPage() {
         // Add AI response
         setMessages((prev) => [...prev, res.conversation]);
 
+        // Extract risks from metadata if present
+        if (res.metadata?.risks) {
+          setLatestRisks(res.metadata.risks as Risk[]);
+        }
+
         // If confirmed, show confirmation card
         if (res.status === "confirmed" && res.metadata) {
           setConfirmationData({
@@ -71,6 +96,8 @@ export default function NewTaskPage() {
             affectedModules: res.metadata.affectedModules as string[] | undefined,
             riskLevel: res.metadata.riskLevel as string | undefined,
             estimatedComplexity: res.metadata.estimatedComplexity as string | undefined,
+            risks: res.metadata.risks as Risk[] | undefined,
+            nonFunctional: res.metadata.non_functional as string[] | undefined,
           });
         }
       } catch (err) {
@@ -131,6 +158,8 @@ export default function NewTaskPage() {
         <h1 className="text-lg font-semibold mt-1">New requirement</h1>
       </div>
 
+      {project?.tech_stack && <TechStackBadge techStack={project.tech_stack} />}
+
       <ChatPanel
         messages={messages}
         onSend={handleSend}
@@ -140,6 +169,7 @@ export default function NewTaskPage() {
         isLoading={isLoading}
         confirmationData={confirmationData}
         isConfirming={isConfirming}
+        risks={latestRisks}
       />
     </div>
   );
