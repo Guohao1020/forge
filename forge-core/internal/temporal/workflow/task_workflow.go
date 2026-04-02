@@ -60,6 +60,17 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 	// Save plan output locally
 	_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "PLAN", planResult).Get(ctx, nil)
 
+	// Save DAG nodes if plan has tasks
+	if tasks, ok := planResult["tasks"].([]interface{}); ok && len(tasks) > 0 {
+		taskNodes := make([]map[string]interface{}, 0, len(tasks))
+		for _, t := range tasks {
+			if node, ok := t.(map[string]interface{}); ok {
+				taskNodes = append(taskNodes, node)
+			}
+		}
+		_ = workflow.ExecuteActivity(localCtx, "SaveTaskNodes", input.TaskID, taskNodes).Get(ctx, nil)
+	}
+
 	// ---- Step 2: Generate ----
 	err = workflow.ExecuteActivity(localCtx, "ExecuteStep", activity.StepInput{
 		TaskID: input.TaskID, StepType: "GENERATE", TaskStatus: "GENERATING", Duration: 0,

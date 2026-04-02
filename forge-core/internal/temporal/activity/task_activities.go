@@ -135,6 +135,38 @@ func (a *TaskActivities) UpdateTaskAnalysis(ctx context.Context, taskID int64, a
 	return nil
 }
 
+// SaveTaskNodes persists the DAG nodes from plan output.
+func (a *TaskActivities) SaveTaskNodes(ctx context.Context, taskID int64, nodes []map[string]interface{}) error {
+	// Delete existing nodes (re-planning case)
+	_, _ = a.db.Exec(ctx, `DELETE FROM engine.task_nodes WHERE task_id = $1`, taskID)
+
+	for _, n := range nodes {
+		order, _ := n["order"].(float64)
+		title, _ := n["title"].(string)
+		desc, _ := n["description"].(string)
+		nodeType, _ := n["type"].(string)
+		if nodeType == "" {
+			nodeType = "BACKEND"
+		}
+
+		depsJSON, _ := json.Marshal(n["depends_on"])
+		filesJSON, _ := json.Marshal(n["files"])
+		estHours, _ := n["estimate_hours"].(float64)
+		reqRef, _ := n["requirement_ref"].(string)
+
+		_, err := a.db.Exec(ctx,
+			`INSERT INTO engine.task_nodes (task_id, node_order, title, description, node_type, depends_on, files, estimate_hours, requirement_ref)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			taskID, int(order), title, desc, nodeType, string(depsJSON), string(filesJSON), estHours, reqRef,
+		)
+		if err != nil {
+			slog.Warn("failed to save task node", "task_id", taskID, "order", order, "error", err)
+		}
+	}
+	slog.Info("task nodes saved", "task_id", taskID, "count", len(nodes))
+	return nil
+}
+
 // SaveStepOutput saves the output of a workflow step.
 func (a *TaskActivities) SaveStepOutput(ctx context.Context, taskID int64, stepType string, output map[string]interface{}) error {
 	outputJSON, err := json.Marshal(output)
