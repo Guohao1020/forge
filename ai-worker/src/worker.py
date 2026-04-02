@@ -8,6 +8,8 @@ from src.activities.analyze import analyze_requirement_activity
 from src.activities.plan import plan_task_activity
 from src.activities.generate import generate_code_activity
 from src.activities.review import review_code_activity
+from src.activities.test_writing import generate_test_cases_activity
+from src.activities.profile import scan_project_profile_activity
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -24,6 +26,8 @@ async def main() -> None:
             plan_task_activity,
             generate_code_activity,
             review_code_activity,
+            generate_test_cases_activity,
+            scan_project_profile_activity,
         ],
     )
     logger.info("AI Worker started. Waiting for activities...")

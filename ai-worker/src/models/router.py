@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Any
 
 from src.config import settings
-from src.models.client import PROVIDER_CALLERS, LLMResponse
+from src.models.client import PROVIDER_CALLERS, LLMResponse, stream_llm
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 class Purpose(Enum):
     ANALYZE = "analyze"
     PLAN = "plan"
+    TEST_WRITING = "test_writing"
     GENERATE = "generate"
     REVIEW = "review"
 
@@ -62,6 +63,12 @@ ROUTING_RULES: dict[Purpose, list[tuple[str, str]]] = {
         ("deepseek", "deepseek-chat"),
     ],
     Purpose.PLAN: [
+        ("anthropic", "claude-sonnet-4-20250514"),
+        ("openai", "gpt-4o"),
+        ("dashscope", "qwen-max"),
+        ("deepseek", "deepseek-chat"),
+    ],
+    Purpose.TEST_WRITING: [
         ("anthropic", "claude-sonnet-4-20250514"),
         ("openai", "gpt-4o"),
         ("dashscope", "qwen-max"),
@@ -145,4 +152,89 @@ class ModelRouter:
 
         raise RuntimeError(
             f"All models failed for purpose={purpose.value}: {'; '.join(errors)}"
+        )
+
+    async def chat_stream(
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        purpose: Purpose = Purpose.GENERATE,
+        task_id: int = 0,
+    ) -> LLMResponse:
+        """Stream a chat request, publishing chunks to Redis when task_id is set.
+
+        Falls back through the model chain just like ``chat()``.  Each text
+        chunk is published to ``code:stream:{task_id}`` so the Go SSE handler
+        can forward it to the browser in real time.
+        """
+        import redis.asyncio as aioredis
+        from src.config import settings as _settings
+
+        chain = ROUTING_RULES[purpose]
+        errors: list[str] = []
+
+        redis_client = None
+        channel = f"code:stream:{task_id}" if task_id else None
+        if task_id:
+            try:
+                redis_client = aioredis.from_url(
+                    f"redis://:{_settings.redis_password}@{_settings.redis_host}:{_settings.redis_port}"
+                )
+            except Exception as exc:
+                logger.warning("Redis unavailable for streaming: %s", exc)
+
+        try:
+            for provider, model in chain:
+                api_key = self._get_api_key(provider)
+                if not api_key:
+                    continue
+
+                breaker_key = f"{provider}:{model}"
+                breaker = self._get_breaker(breaker_key)
+                if not breaker.is_available():
+                    continue
+
+                try:
+                    import time as _time
+
+                    start = _time.monotonic()
+                    full_text = ""
+
+                    async for chunk in stream_llm(
+                        api_key, model, provider, system, messages
+                    ):
+                        full_text += chunk
+                        if redis_client and channel:
+                            try:
+                                await redis_client.publish(channel, chunk)
+                            except Exception:
+                                pass  # fire-and-forget
+
+                    latency_ms = int((_time.monotonic() - start) * 1000)
+                    breaker.record_success()
+                    logger.info(
+                        "LLM stream succeeded: provider=%s model=%s latency=%dms",
+                        provider,
+                        model,
+                        latency_ms,
+                    )
+                    return LLMResponse(
+                        content=full_text,
+                        model=model,
+                        provider=provider,
+                        input_tokens=0,
+                        output_tokens=0,
+                        latency_ms=latency_ms,
+                    )
+                except Exception as exc:
+                    breaker.record_failure()
+                    error_msg = f"{provider}/{model}: {exc}"
+                    errors.append(error_msg)
+                    logger.warning("LLM stream failed: %s", error_msg)
+        finally:
+            if redis_client:
+                await redis_client.aclose()
+
+        raise RuntimeError(
+            f"All models failed (stream) for purpose={purpose.value}: {'; '.join(errors)}"
         )
