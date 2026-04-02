@@ -1,59 +1,30 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Wifi, AlertTriangle, AlertCircle, Info } from "lucide-react";
+import { ArrowLeft, Wifi, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { StepTimeline } from "@/components/tasks/step-timeline";
-import { CodePreviewPanel } from "@/components/code-preview/code-preview-panel";
+import { TaskWorkspace } from "@/components/tasks/task-workspace";
 import { getTaskDetail, TaskDetail, TaskStep, STATUS_LABELS, STATUS_COLORS } from "@/lib/tasks";
 import { useTaskStream, TaskStreamEvent } from "@/lib/use-task-stream";
 
 const TERMINAL_STATUSES = ["COMPLETED", "FAILED"];
 
-const SEVERITY_STYLES: Record<string, string> = {
-  ERROR: "bg-red-500/10 text-red-400 border-red-500/20",
-  WARNING: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
-  INFO: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-};
-
-const SEVERITY_ICONS: Record<string, React.ReactNode> = {
-  ERROR: <AlertCircle className="h-3.5 w-3.5 text-red-400" />,
-  WARNING: <AlertTriangle className="h-3.5 w-3.5 text-yellow-400" />,
-  INFO: <Info className="h-3.5 w-3.5 text-blue-400" />,
-};
-
-interface ReviewFinding {
-  severity: string;
-  file: string;
-  message: string;
-  line?: number;
-}
-
-interface ReviewOutput {
-  passed: boolean;
-  score: number;
-  findings: ReviewFinding[];
-  summary: string;
-  fix_instructions?: string;
-}
-
-interface GenerateOutput {
-  files: { path: string; content: string; action: string; language?: string }[];
-  commitMessage?: string;
-  filesChanged?: number;
-  linesAdded?: number;
-  linesDeleted?: number;
-}
-
-function tryParseOutput<T>(step: TaskStep): T | null {
-  if (!step.output) return null;
-  try {
-    return JSON.parse(step.output) as T;
-  } catch {
-    return null;
-  }
+/**
+ * Pick the best step to auto-select:
+ * 1. First RUNNING step
+ * 2. Last COMPLETED step
+ * 3. First step
+ */
+function pickDefaultStep(steps: TaskStep[]): TaskStep | null {
+  if (!steps.length) return null;
+  const running = steps.find((s) => s.status === "RUNNING");
+  if (running) return running;
+  const completed = [...steps].reverse().find((s) => s.status === "COMPLETED");
+  if (completed) return completed;
+  return steps[0];
 }
 
 export default function TaskDetailPage() {
@@ -62,6 +33,9 @@ export default function TaskDetailPage() {
   const taskId = params.taskId as string;
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedStep, setSelectedStep] = useState<TaskStep | null>(null);
+  // Track whether user has manually clicked a step
+  const userSelectedRef = useRef(false);
 
   const fetchDetail = useCallback(async () => {
     try {
@@ -78,12 +52,11 @@ export default function TaskDetailPage() {
 
   const handleStreamEvent = useCallback((event: TaskStreamEvent) => {
     if (event.type === "TASK_PROGRESS" || event.type === "STEPS_UPDATE" || event.type === "TASK_COMPLETE" || event.type === "FULL_STATE") {
-      // Refetch full state on any meaningful event
       fetchDetail();
     }
   }, [fetchDetail]);
 
-  const { connected } = useTaskStream({
+  const { connected, streamingTokens, isStreaming } = useTaskStream({
     taskId,
     onEvent: handleStreamEvent,
     enabled: !isTerminal,
@@ -93,142 +66,138 @@ export default function TaskDetailPage() {
     fetchDetail();
   }, [fetchDetail]);
 
+  // Auto-select step when steps update (unless user has manually selected)
+  useEffect(() => {
+    if (!detail?.steps) return;
+    const steps = detail.steps;
+
+    if (!userSelectedRef.current) {
+      // Auto-select: pick running or last completed
+      const autoStep = pickDefaultStep(steps);
+      setSelectedStep(autoStep);
+    } else {
+      // User has selected — update the step object to latest data but keep the selection
+      setSelectedStep((prev) => {
+        if (!prev) return prev;
+        const updated = steps.find((s) => s.id === prev.id);
+        return updated || prev;
+      });
+    }
+
+    // If a step is RUNNING, auto-switch to it even if user previously selected
+    const running = steps.find((s) => s.status === "RUNNING");
+    if (running) {
+      setSelectedStep(running);
+      userSelectedRef.current = false;
+    }
+  }, [detail?.steps]);
+
+  const handleStepClick = useCallback((step: TaskStep) => {
+    userSelectedRef.current = true;
+    setSelectedStep(step);
+  }, []);
+
   if (loading) {
     return (
-      <div className="space-y-4">
-        <div className="h-8 w-48 rounded-lg bg-card animate-pulse" />
-        <div className="h-64 rounded-xl bg-card animate-pulse" />
+      <div className="flex h-[calc(100vh-64px)]">
+        <div className="w-[280px] shrink-0 border-r border-white/10 p-4 space-y-4">
+          <div className="h-6 w-32 rounded bg-card animate-pulse" />
+          <div className="h-4 w-24 rounded bg-card animate-pulse" />
+          <div className="space-y-3 mt-6">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="h-10 rounded bg-card animate-pulse" />
+            ))}
+          </div>
+        </div>
+        <div className="flex-1 p-6">
+          <div className="h-64 rounded-xl bg-card animate-pulse" />
+        </div>
       </div>
     );
   }
 
   if (!detail) {
-    return <p className="text-muted-foreground">任务不存在</p>;
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-64px)]">
+        <p className="text-muted-foreground">任务不存在</p>
+      </div>
+    );
   }
 
   const { task, steps } = detail;
   const color = STATUS_COLORS[task.status] || "#8888A0";
 
   return (
-    <div className="max-w-4xl">
-      <Link
-        href={`/projects/${projectId}`}
-        className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        返回任务列表
-      </Link>
+    <div className="flex h-[calc(100vh-64px)]">
+      {/* Left panel: Timeline */}
+      <div className="w-[280px] shrink-0 border-r border-white/10 overflow-y-auto">
+        <div className="p-4">
+          {/* Back link */}
+          <Link
+            href={`/projects/${projectId}`}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mb-4"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            返回任务列表
+          </Link>
 
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-xl font-semibold">{task.title || "任务详情"}</h1>
-          <Badge variant="secondary" style={{ color, borderColor: `${color}40` }}>
-            {STATUS_LABELS[task.status] || task.status}
-          </Badge>
-        </div>
-        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <span>#{task.id} · 创建于 {new Date(task.created_at).toLocaleString("zh-CN")}</span>
-          {!isTerminal && connected && (
-            <span className="flex items-center gap-1 text-xs text-emerald-400">
-              <Wifi size={12} />
-              实时更新中
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Requirement */}
-      <div className="rounded-xl border border-border bg-card p-5 mb-6">
-        <h2 className="text-sm font-medium mb-2">需求描述</h2>
-        <p className="text-sm text-foreground whitespace-pre-wrap">{task.requirement}</p>
-      </div>
-
-      {/* Step Timeline */}
-      <div className="rounded-xl border border-border bg-card p-5">
-        <h2 className="text-sm font-medium mb-4">执行步骤</h2>
-        <StepTimeline steps={steps || []} />
-      </div>
-
-      {/* Code Preview — for completed GENERATE steps */}
-      {(steps || [])
-        .filter((s) => s.step_type === "GENERATE" && s.status === "COMPLETED" && s.output)
-        .map((step) => {
-          const output = tryParseOutput<GenerateOutput>(step);
-          if (!output?.files?.length) return null;
-          return (
-            <div key={`gen-${step.id}`} className="mt-6">
-              <h2 className="text-sm font-medium mb-3">生成代码预览</h2>
-              <CodePreviewPanel
-                files={output.files}
-                commitMessage={output.commitMessage}
-                filesChanged={output.filesChanged}
-                linesAdded={output.linesAdded}
-                linesDeleted={output.linesDeleted}
-              />
-            </div>
-          );
-        })}
-
-      {/* Review Findings — for completed REVIEW steps */}
-      {(steps || [])
-        .filter((s) => s.step_type === "REVIEW" && s.status === "COMPLETED" && s.output)
-        .map((step) => {
-          const reviewOutput = tryParseOutput<ReviewOutput>(step);
-          const findings = reviewOutput?.findings || [];
-          if (!reviewOutput) return null;
-          return (
-            <div key={`rev-${step.id}`} className="rounded-xl border border-border bg-card p-5 mt-6">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-medium">审查结果</h2>
-                <div className="flex items-center gap-3">
-                  {reviewOutput.score != null && (
-                    <span className="text-xs text-white/50">
-                      评分: <span className="text-white/80 font-mono">{reviewOutput.score}</span>
-                    </span>
-                  )}
-                  {reviewOutput.passed != null && (
-                    <Badge variant="secondary" className={reviewOutput.passed
-                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                      : "bg-red-500/10 text-red-400 border-red-500/20"
-                    }>
-                      {reviewOutput.passed ? "通过" : "未通过"}
-                    </Badge>
-                  )}
-                </div>
-              </div>
-              {reviewOutput.summary && (
-                <p className="text-sm text-white/60 mb-3">{reviewOutput.summary}</p>
+          {/* Task header */}
+          <div className="mb-5">
+            <h1 className="text-sm font-semibold leading-snug mb-2">
+              {task.title || "任务详情"}
+            </h1>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge variant="secondary" className="text-[10px]" style={{ color, borderColor: `${color}40` }}>
+                {STATUS_LABELS[task.status] || task.status}
+              </Badge>
+              <span className="text-[10px] text-muted-foreground">#{task.id}</span>
+              {task.reviewScore != null && (
+                <span className={`text-[10px] font-mono ${task.reviewScore >= 90 ? "text-emerald-400" : task.reviewScore >= 70 ? "text-yellow-400" : "text-red-400"}`}>
+                  评分 {task.reviewScore}
+                </span>
               )}
-              <div className="space-y-2">
-                {findings.map((f, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start gap-2 p-2 rounded-lg bg-white/[0.02] border border-white/5"
-                  >
-                    {SEVERITY_ICONS[f.severity] || SEVERITY_ICONS.INFO}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] border ${
-                            SEVERITY_STYLES[f.severity] || SEVERITY_STYLES.INFO
-                          }`}
-                        >
-                          {f.severity}
-                        </span>
-                        <span className="text-xs text-white/50 font-mono truncate">
-                          {f.file}
-                          {f.line != null && `:${f.line}`}
-                        </span>
-                      </div>
-                      <p className="text-sm text-white/70 mt-1">{f.message}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              {task.mrUrl && (
+                <a
+                  href={task.mrUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 transition-colors"
+                >
+                  <ExternalLink size={10} />
+                  PR
+                </a>
+              )}
+              {!isTerminal && connected && (
+                <span className="flex items-center gap-1 text-[10px] text-emerald-400">
+                  <Wifi size={10} />
+                  实时
+                </span>
+              )}
             </div>
-          );
-        })}
+          </div>
+
+          {/* Step timeline */}
+          <div className="mb-2">
+            <h2 className="text-xs text-white/30 uppercase tracking-wide mb-3">执行步骤</h2>
+            <StepTimeline
+              steps={steps || []}
+              selectedStepId={selectedStep?.id}
+              onStepClick={handleStepClick}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Right panel: Workspace */}
+      <div className="flex-1 overflow-y-auto p-6">
+        <TaskWorkspace
+          selectedStep={selectedStep}
+          steps={steps || []}
+          requirement={task.requirement}
+          streamingTokens={streamingTokens}
+          isStreaming={isStreaming}
+        />
+      </div>
     </div>
   );
 }
