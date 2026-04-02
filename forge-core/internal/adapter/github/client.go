@@ -359,6 +359,68 @@ func (c *Client) GetTree(ctx context.Context, owner, repo, ref string) ([]string
 	return paths, nil
 }
 
+// ListBranches returns all branches for a repository.
+func (c *Client) ListBranches(ctx context.Context, owner, repo string) ([]Branch, error) {
+	var allBranches []Branch
+	opts := &ghlib.BranchListOptions{ListOptions: ghlib.ListOptions{PerPage: 100}}
+	for {
+		branches, resp, err := c.client.Repositories.ListBranches(ctx, owner, repo, opts)
+		if resp != nil {
+			c.logRateLimit(resp)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("list branches: %w", err)
+		}
+		for _, b := range branches {
+			allBranches = append(allBranches, Branch{
+				Name:      b.GetName(),
+				SHA:       b.GetCommit().GetSHA(),
+				Protected: b.GetProtected(),
+			})
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return allBranches, nil
+}
+
+// ListPRs returns pull requests for a repository.
+func (c *Client) ListPRs(ctx context.Context, owner, repo, state string) ([]PullRequestSummary, error) {
+	if state == "" {
+		state = "open"
+	}
+	opts := &ghlib.PullRequestListOptions{
+		State:       state,
+		Sort:        "updated",
+		Direction:   "desc",
+		ListOptions: ghlib.ListOptions{PerPage: 30},
+	}
+	prs, resp, err := c.client.PullRequests.List(ctx, owner, repo, opts)
+	if resp != nil {
+		c.logRateLimit(resp)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list PRs: %w", err)
+	}
+	result := make([]PullRequestSummary, 0, len(prs))
+	for _, pr := range prs {
+		result = append(result, PullRequestSummary{
+			Number:    pr.GetNumber(),
+			Title:     pr.GetTitle(),
+			State:     pr.GetState(),
+			HTMLURL:   pr.GetHTMLURL(),
+			Head:      pr.GetHead().GetRef(),
+			Base:      pr.GetBase().GetRef(),
+			CreatedAt: pr.GetCreatedAt().Format(time.RFC3339),
+			UpdatedAt: pr.GetUpdatedAt().Format(time.RFC3339),
+			User:      pr.GetUser().GetLogin(),
+		})
+	}
+	return result, nil
+}
+
 func repoFromGitHub(r *ghlib.Repository) Repository {
 	return Repository{
 		ID:            r.GetID(),

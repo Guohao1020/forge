@@ -62,3 +62,23 @@ type PRFile struct {
 	Deletions int    `json:"deletions"`
 	Patch     string `json:"patch"`
 }
+
+// Branch represents a GitHub branch.
+type Branch struct {
+	Name      string `json:"name"`
+	SHA       string `json:"sha"`
+	Protected bool   `json:"protected"`
+}
+
+// PullRequestSummary for listing PRs.
+type PullRequestSummary struct {
+	Number    int    `json:"number"`
+	Title     string `json:"title"`
+	State     string `json:"state"`
+	HTMLURL   string `json:"html_url"`
+	Head      string `json:"head"`
+	Base      string `json:"base"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	User      string `json:"user"`
+}
