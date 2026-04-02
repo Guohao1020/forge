@@ -60,3 +60,45 @@ func (r *Repository) GetByID(ctx context.Context, id int64) (*Environment, error
 	}
 	return &e, nil
 }
+
+// --- Deploy Records ---
+
+func (r *Repository) ListDeployRecords(ctx context.Context, environmentID int64) ([]DeployRecord, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, tenant_id, project_id, environment_id, artifact_id, version,
+		       status, deployed_by, started_at, completed_at, k8s_manifest,
+		       error_message, created_at
+		FROM pipeline.deploy_records
+		WHERE environment_id = $1
+		ORDER BY created_at DESC
+		LIMIT 50`, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []DeployRecord
+	for rows.Next() {
+		var d DeployRecord
+		if err := rows.Scan(
+			&d.ID, &d.TenantID, &d.ProjectID, &d.EnvironmentID, &d.ArtifactID, &d.Version,
+			&d.Status, &d.DeployedBy, &d.StartedAt, &d.CompletedAt, &d.K8sManifest,
+			&d.ErrorMessage, &d.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		records = append(records, d)
+	}
+	return records, rows.Err()
+}
+
+func (r *Repository) CreateDeployRecord(ctx context.Context, d *DeployRecord) error {
+	return r.db.QueryRow(ctx, `
+		INSERT INTO pipeline.deploy_records
+			(tenant_id, project_id, environment_id, artifact_id, version, status, deployed_by, started_at, completed_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, created_at`,
+		d.TenantID, d.ProjectID, d.EnvironmentID, d.ArtifactID, d.Version,
+		d.Status, d.DeployedBy, d.StartedAt, d.CompletedAt,
+	).Scan(&d.ID, &d.CreatedAt)
+}

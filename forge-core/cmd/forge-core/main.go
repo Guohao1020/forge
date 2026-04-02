@@ -8,13 +8,16 @@ import (
 	"github.com/shulex/forge/forge-core/internal/config"
 	"go.temporal.io/sdk/client"
 
+	"github.com/shulex/forge/forge-core/internal/module/artifact"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/pipeline"
+	"github.com/shulex/forge/forge-core/internal/module/preview"
 	"github.com/shulex/forge/forge-core/internal/module/profile"
 	"github.com/shulex/forge/forge-core/internal/module/project"
 	"github.com/shulex/forge/forge-core/internal/module/specs"
 	"github.com/shulex/forge/forge-core/internal/module/task"
+	"github.com/shulex/forge/forge-core/internal/module/testresult"
 	forgetemporal "github.com/shulex/forge/forge-core/internal/temporal"
 	"github.com/shulex/forge/forge-core/internal/temporal/activity"
 	"github.com/shulex/forge/forge-core/internal/pkg/database"
@@ -102,6 +105,21 @@ func main() {
 	profileSvc := profile.NewService(profileRepo)
 	profileHandler := profile.NewHandler(profileSvc)
 
+	// Test Results module
+	testResultRepo := testresult.NewRepository(db)
+	testResultSvc := testresult.NewService(testResultRepo)
+	testResultHandler := testresult.NewHandler(testResultSvc)
+
+	// Preview module
+	previewRepo := preview.NewRepository(db)
+	previewSvc := preview.NewService(previewRepo)
+	previewHandler := preview.NewHandler(previewSvc)
+
+	// Artifact module
+	artifactRepo := artifact.NewRepository(db)
+	artifactSvc := artifact.NewService(artifactRepo)
+	artifactHandler := artifact.NewHandler(artifactSvc)
+
 	// Specs module
 	specsRepo := specs.NewRepository(db)
 	specsService := specs.NewService(specsRepo, rdb)
@@ -116,7 +134,10 @@ func main() {
 		ConversationHandler: convHandler,
 		SpecsHandler:        specsHandler,
 		PipelineHandler:     pipelineHandler,
+		PreviewHandler:      previewHandler,
 		ProfileHandler:      profileHandler,
+		TestResultHandler:   testResultHandler,
+		ArtifactHandler:     artifactHandler,
 	})
 
 	slog.Info("forge-core starting", "port", cfg.ServerPort)

@@ -9,6 +9,7 @@ import {
   GitCommit,
   FlaskConical,
   Rocket,
+  Package,
   Brain,
   Settings,
 } from "lucide-react";
@@ -28,6 +29,7 @@ export function ProjectSidebar({ projectId, projectName }: ProjectSidebarProps) 
     { href: `${base}/code`, label: "代码", icon: Code2 },
     { href: `${base}/changes`, label: "变更", icon: GitCommit },
     { href: `${base}/tests`, label: "测试", icon: FlaskConical },
+    { href: `${base}/artifacts`, label: "制品", icon: Package },
     { href: `${base}/deploy`, label: "部署", icon: Rocket },
     { href: `${base}/profile`, label: "画像", icon: Brain },
     { href: `${base}/settings`, label: "设置", icon: Settings },

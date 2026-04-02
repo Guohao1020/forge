@@ -3,13 +3,16 @@ package router
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/shulex/forge/forge-core/internal/middleware"
+	"github.com/shulex/forge/forge-core/internal/module/artifact"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/pipeline"
+	"github.com/shulex/forge/forge-core/internal/module/preview"
 	"github.com/shulex/forge/forge-core/internal/module/profile"
 	"github.com/shulex/forge/forge-core/internal/module/project"
 	"github.com/shulex/forge/forge-core/internal/module/specs"
 	"github.com/shulex/forge/forge-core/internal/module/task"
+	"github.com/shulex/forge/forge-core/internal/module/testresult"
 )
 
 type Deps struct {
@@ -21,7 +24,10 @@ type Deps struct {
 	ConversationHandler *conversation.Handler
 	SpecsHandler        *specs.Handler
 	PipelineHandler     *pipeline.Handler
+	PreviewHandler      *preview.Handler
 	ProfileHandler      *profile.Handler
+	TestResultHandler   *testresult.Handler
+	ArtifactHandler     *artifact.Handler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -81,6 +87,12 @@ func Setup(deps *Deps) *gin.Engine {
 				protected.GET("/projects/:id/tasks/:taskId/nodes", deps.TaskHandler.ListTaskNodes)
 			}
 
+			// Test Results
+			if deps.TestResultHandler != nil {
+				protected.GET("/projects/:id/tasks/:taskId/test-results", deps.TestResultHandler.ListTestResults)
+				protected.POST("/projects/:id/tasks/:taskId/test-results", deps.TestResultHandler.CreateTestResult)
+			}
+
 			// Conversations
 			if deps.ConversationHandler != nil {
 				protected.POST("/projects/:id/tasks/:taskId/messages", deps.ConversationHandler.SendMessage)
@@ -93,10 +105,26 @@ func Setup(deps *Deps) *gin.Engine {
 				protected.GET("/stream/tasks/:taskId", deps.TaskSSE.Stream)
 			}
 
-			// Pipeline / Environments
+			// Preview Environments
+			if deps.PreviewHandler != nil {
+				protected.GET("/projects/:id/previews", deps.PreviewHandler.ListPreviews)
+				protected.GET("/projects/:id/tasks/:taskId/preview", deps.PreviewHandler.GetPreviewByTask)
+				protected.POST("/projects/:id/tasks/:taskId/preview", deps.PreviewHandler.CreatePreview)
+				protected.DELETE("/projects/:id/previews/:previewId", deps.PreviewHandler.DestroyPreview)
+			}
+
+			// Pipeline / Environments + Deploy Records
 			if deps.PipelineHandler != nil {
 				protected.GET("/projects/:id/environments", deps.PipelineHandler.ListEnvironments)
 				protected.GET("/projects/:id/environments/:envId", deps.PipelineHandler.GetEnvironment)
+				protected.GET("/projects/:id/environments/:envId/deploys", deps.PipelineHandler.ListDeployRecords)
+				protected.POST("/projects/:id/environments/:envId/deploy", deps.PipelineHandler.TriggerDeploy)
+			}
+
+			// Artifacts
+			if deps.ArtifactHandler != nil {
+				protected.GET("/projects/:id/artifacts", deps.ArtifactHandler.ListArtifacts)
+				protected.GET("/projects/:id/artifacts/:artifactId", deps.ArtifactHandler.GetArtifact)
 			}
 
 			// Profile

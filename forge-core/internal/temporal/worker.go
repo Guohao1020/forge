@@ -44,6 +44,13 @@ func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken 
 	w.RegisterActivityWithOptions(activities.SaveTaskNodes, sdkactivity.RegisterOptions{
 		Name: "SaveTaskNodes",
 	})
+	w.RegisterActivityWithOptions(activities.RunTests, sdkactivity.RegisterOptions{
+		Name: "RunTests",
+	})
+
+	w.RegisterActivityWithOptions(activities.CreatePreview, sdkactivity.RegisterOptions{
+		Name: "CreatePreview",
+	})
 
 	// DevOps activities (GitHub operations)
 	devops := activity.NewDevOpsActivities(db, authToken, projectProv, taskPR, sse)

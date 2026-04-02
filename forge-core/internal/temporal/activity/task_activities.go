@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -167,6 +168,65 @@ func (a *TaskActivities) SaveTaskNodes(ctx context.Context, taskID int64, nodes 
 	return nil
 }
 
+// RunTests executes test cases and saves results to the database.
+// TODO(k8s): Replace mock execution with real K8s Job runner when K8s is available.
+// Currently generates simulated test results based on the test_cases output from TEST_WRITING step.
+func (a *TaskActivities) RunTests(ctx context.Context, taskID int64, testCases map[string]interface{}) error {
+	slog.Info("running tests (mock mode)", "task_id", taskID)
+
+	// Extract framework from test cases output
+	framework := "unknown"
+	if f, ok := testCases["framework"].(string); ok {
+		framework = f
+	}
+
+	// Extract test file count for realistic mock data
+	total := 3 // default mock count
+	if testFiles, ok := testCases["test_files"].([]interface{}); ok && len(testFiles) > 0 {
+		total = len(testFiles)
+	}
+	if tc, ok := testCases["test_count"].(float64); ok && int(tc) > 0 {
+		total = int(tc)
+	}
+
+	// TODO(k8s): In future, this will:
+	// 1. Create a K8s Job with the test runner image
+	// 2. Mount generated code + test files
+	// 3. Execute tests and parse JUnit XML / JSON output
+	// 4. Save real results to DB
+
+	// Mock mode: simulate all tests passing with 85% coverage
+	coveragePct := 85.0
+	durationMs := 3200 + (total * 400) // simulate ~400ms per test file
+
+	_, err := a.db.Exec(ctx,
+		`INSERT INTO engine.test_results (task_id, layer, framework, total_cases, passed, failed, skipped, coverage_pct, duration_ms, report, status)
+		 VALUES ($1, 'UNIT', $2, $3, $3, 0, 0, $4, $5, '{"mock": true, "message": "Mock test execution - all tests passed"}'::jsonb, 'PASSED')`,
+		taskID, framework, total, coveragePct, durationMs)
+	if err != nil {
+		return fmt.Errorf("insert mock test results: %w", err)
+	}
+
+	if a.sse != nil {
+		a.sse.Broadcast(taskID, task.TaskProgressEvent{
+			Type:       "step_progress",
+			TaskID:     taskID,
+			Status:     "TESTING",
+			StepType:   "TEST",
+			StepStatus: "COMPLETED",
+			Data: map[string]interface{}{
+				"total":    total,
+				"passed":   total,
+				"failed":   0,
+				"coverage": coveragePct,
+			},
+		})
+	}
+
+	slog.Info("mock test results saved", "task_id", taskID, "total", total, "framework", framework)
+	return nil
+}
+
 // SaveStepOutput saves the output of a workflow step.
 func (a *TaskActivities) SaveStepOutput(ctx context.Context, taskID int64, stepType string, output map[string]interface{}) error {
 	outputJSON, err := json.Marshal(output)
@@ -197,5 +257,46 @@ func (a *TaskActivities) SaveStepOutput(ctx context.Context, taskID int64, stepT
 	}
 
 	slog.Info("step output saved", "task_id", taskID, "step", stepType)
+	return nil
+}
+
+// CreatePreview creates a mock preview environment for a task after deploy.
+// TODO: Replace mock URL/namespace with real K8s namespace creation when available.
+func (a *TaskActivities) CreatePreview(ctx context.Context, input map[string]interface{}) error {
+	taskID := int64(input["task_id"].(float64))
+	projectID := int64(input["project_id"].(float64))
+	tenantID := int64(input["tenant_id"].(float64))
+	branchName, _ := input["branch_name"].(string)
+	prNumber := 0
+	if pn, ok := input["pr_number"].(float64); ok {
+		prNumber = int(pn)
+	}
+
+	previewURL := fmt.Sprintf("https://%d.preview.forge.example.com", taskID)
+	namespace := fmt.Sprintf("preview-%d", taskID)
+	expiresAt := time.Now().Add(30 * time.Minute)
+
+	_, err := a.db.Exec(ctx,
+		`INSERT INTO pipeline.preview_environments (tenant_id, project_id, task_id, branch_name, pr_number, preview_url, status, namespace, expires_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'READY', $7, $8)
+		 ON CONFLICT DO NOTHING`,
+		tenantID, projectID, taskID, branchName, prNumber, previewURL, namespace, expiresAt)
+	if err != nil {
+		slog.Warn("failed to create preview environment", "task_id", taskID, "error", err)
+		return err
+	}
+
+	if a.sse != nil {
+		a.sse.Broadcast(taskID, task.TaskProgressEvent{
+			Type:   "preview_ready",
+			TaskID: taskID,
+			Data: map[string]interface{}{
+				"preview_url": previewURL,
+				"namespace":   namespace,
+			},
+		})
+	}
+
+	slog.Info("preview environment created", "task_id", taskID, "url", previewURL)
 	return nil
 }

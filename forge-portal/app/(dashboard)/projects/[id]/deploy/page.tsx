@@ -2,9 +2,11 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { Rocket, Server, Clock } from "lucide-react";
+import { Rocket, Server, Clock, Play, CheckCircle2, XCircle, Loader2, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { listDeployRecords, triggerDeploy, type DeployRecord } from "@/lib/deploy";
 
 interface Environment {
   id: number;
@@ -32,6 +34,22 @@ const ENV_TYPE_STYLES: Record<string, string> = {
   DEV: "bg-blue-500/10 text-blue-400 border-blue-500/20",
   STAGING: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
   PROD: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+};
+
+const DEPLOY_STATUS_ICON: Record<string, React.ReactNode> = {
+  PENDING: <Clock className="h-3 w-3 text-white/40" />,
+  DEPLOYING: <Loader2 className="h-3 w-3 text-blue-400 animate-spin" />,
+  DEPLOYED: <CheckCircle2 className="h-3 w-3 text-emerald-400" />,
+  FAILED: <XCircle className="h-3 w-3 text-red-400" />,
+  ROLLED_BACK: <RotateCcw className="h-3 w-3 text-yellow-400" />,
+};
+
+const DEPLOY_STATUS_LABELS: Record<string, string> = {
+  PENDING: "等待中",
+  DEPLOYING: "部署中",
+  DEPLOYED: "已部署",
+  FAILED: "失败",
+  ROLLED_BACK: "已回滚",
 };
 
 function formatTime(dateStr?: string): string {
@@ -73,11 +91,66 @@ function EmptyState() {
   );
 }
 
+function DeployHistory({ projectId, envId }: { projectId: string; envId: number }) {
+  const [records, setRecords] = useState<DeployRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const recs = await listDeployRecords(projectId, envId);
+        if (!cancelled) setRecords(recs);
+      } catch {
+        if (!cancelled) setRecords([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [projectId, envId]);
+
+  if (loading) {
+    return (
+      <div className="mt-3 pt-3 border-t border-white/5 animate-pulse">
+        <div className="h-3 w-24 bg-white/5 rounded mb-2" />
+        <div className="h-3 w-40 bg-white/5 rounded" />
+      </div>
+    );
+  }
+
+  if (records.length === 0) {
+    return (
+      <div className="mt-3 pt-3 border-t border-white/5">
+        <p className="text-xs text-white/20">暂无部署记录</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-white/5 space-y-2">
+      <p className="text-xs text-white/30 mb-2">部署历史</p>
+      {records.slice(0, 5).map((rec) => (
+        <div key={rec.id} className="flex items-center gap-2 text-xs">
+          {DEPLOY_STATUS_ICON[rec.status] || <Clock className="h-3 w-3 text-white/20" />}
+          <code className="font-mono text-white/50">{rec.version}</code>
+          <span className="text-white/20">
+            {DEPLOY_STATUS_LABELS[rec.status] || rec.status}
+          </span>
+          <span className="text-white/15 ml-auto">{formatTime(rec.startedAt)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function DeployPage() {
   const params = useParams();
   const projectId = params.id as string;
   const [loading, setLoading] = useState(true);
   const [environments, setEnvironments] = useState<Environment[]>([]);
+  const [deploying, setDeploying] = useState<number | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const fetchEnvironments = useCallback(async () => {
     try {
@@ -97,6 +170,22 @@ export default function DeployPage() {
   useEffect(() => {
     fetchEnvironments();
   }, [fetchEnvironments]);
+
+  const handleDeploy = async (envId: number) => {
+    // TODO: Replace with real deploy dialog that lets user pick artifact/version
+    // For now, mock deploy with a generated version string
+    const version = `v0.1.${Date.now() % 10000}`;
+    try {
+      setDeploying(envId);
+      await triggerDeploy(projectId, envId, version);
+      setRefreshKey((k) => k + 1);
+      await fetchEnvironments();
+    } catch (err) {
+      console.error("Deploy failed:", err);
+    } finally {
+      setDeploying(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -123,6 +212,7 @@ export default function DeployPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {environments.map((env) => {
           const isActive = env.status === "ACTIVE";
+          const isDeploying = deploying === env.id;
           return (
             <div
               key={env.id}
@@ -165,7 +255,7 @@ export default function DeployPage() {
               </div>
 
               {/* Last deploy time */}
-              <div className="flex items-center gap-1.5 text-xs text-white/30">
+              <div className="flex items-center gap-1.5 text-xs text-white/30 mb-3">
                 <Clock className="h-3 w-3" />
                 <span>
                   {env.last_deploy_at
@@ -173,6 +263,30 @@ export default function DeployPage() {
                     : "暂无部署记录"}
                 </span>
               </div>
+
+              {/* Deploy button */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full text-xs"
+                disabled={isDeploying}
+                onClick={() => handleDeploy(env.id)}
+              >
+                {isDeploying ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                    部署中...
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-3 w-3 mr-1.5" />
+                    部署
+                  </>
+                )}
+              </Button>
+
+              {/* Deploy history timeline */}
+              <DeployHistory key={refreshKey} projectId={projectId} envId={env.id} />
             </div>
           );
         })}

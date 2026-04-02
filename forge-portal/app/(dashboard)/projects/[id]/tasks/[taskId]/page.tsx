@@ -3,12 +3,13 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Wifi, ExternalLink } from "lucide-react";
+import { ArrowLeft, Wifi, ExternalLink, Globe } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { StepTimeline } from "@/components/tasks/step-timeline";
 import { TaskWorkspace } from "@/components/tasks/task-workspace";
 import { getTaskDetail, TaskDetail, TaskStep, STATUS_LABELS, STATUS_COLORS } from "@/lib/tasks";
 import { useTaskStream, TaskStreamEvent } from "@/lib/use-task-stream";
+import { getTaskPreview, PreviewEnvironment } from "@/lib/preview";
 
 const TERMINAL_STATUSES = ["COMPLETED", "FAILED"];
 
@@ -34,6 +35,7 @@ export default function TaskDetailPage() {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedStep, setSelectedStep] = useState<TaskStep | null>(null);
+  const [previewEnv, setPreviewEnv] = useState<PreviewEnvironment | null>(null);
   // Track whether user has manually clicked a step
   const userSelectedRef = useRef(false);
 
@@ -41,6 +43,9 @@ export default function TaskDetailPage() {
     try {
       const data = await getTaskDetail(projectId, taskId);
       setDetail(data);
+      // Fetch preview environment for this task
+      const preview = await getTaskPreview(projectId, taskId);
+      setPreviewEnv(preview);
     } catch {
       // ignore
     } finally {
@@ -165,6 +170,17 @@ export default function TaskDetailPage() {
                 >
                   <ExternalLink size={10} />
                   PR
+                </a>
+              )}
+              {previewEnv?.previewUrl && previewEnv.status === "READY" && (
+                <a
+                  href={previewEnv.previewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-[10px] text-emerald-400 hover:text-emerald-300 transition-colors"
+                >
+                  <Globe size={10} />
+                  Preview
                 </a>
               )}
               {!isTerminal && connected && (
