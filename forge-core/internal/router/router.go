@@ -5,6 +5,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/middleware"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
+	"github.com/shulex/forge/forge-core/internal/module/pipeline"
 	"github.com/shulex/forge/forge-core/internal/module/project"
 	"github.com/shulex/forge/forge-core/internal/module/specs"
 	"github.com/shulex/forge/forge-core/internal/module/task"
@@ -18,6 +19,7 @@ type Deps struct {
 	TaskSSE             *task.SSEHandler
 	ConversationHandler *conversation.Handler
 	SpecsHandler        *specs.Handler
+	PipelineHandler     *pipeline.Handler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -79,6 +81,12 @@ func Setup(deps *Deps) *gin.Engine {
 			// SSE
 			if deps.TaskSSE != nil {
 				protected.GET("/stream/tasks/:taskId", deps.TaskSSE.Stream)
+			}
+
+			// Pipeline / Environments
+			if deps.PipelineHandler != nil {
+				protected.GET("/projects/:id/environments", deps.PipelineHandler.ListEnvironments)
+				protected.GET("/projects/:id/environments/:envId", deps.PipelineHandler.GetEnvironment)
 			}
 
 			// Specs Center

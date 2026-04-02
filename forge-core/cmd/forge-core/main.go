@@ -10,6 +10,7 @@ import (
 
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
+	"github.com/shulex/forge/forge-core/internal/module/pipeline"
 	"github.com/shulex/forge/forge-core/internal/module/project"
 	"github.com/shulex/forge/forge-core/internal/module/specs"
 	"github.com/shulex/forge/forge-core/internal/module/task"
@@ -76,7 +77,7 @@ func main() {
 	taskRepo := task.NewRepository(db)
 	taskService := task.NewService(taskRepo, workflowStarter)
 	taskHandler := task.NewHandler(taskService)
-	taskSSE := task.NewSSEHandler(sseHub)
+	taskSSE := task.NewSSEHandler(sseHub, rdb)
 
 	// Conversation module
 	convRepo := conversation.NewRepository(db)
@@ -86,6 +87,11 @@ func main() {
 	}
 	convService := conversation.NewService(convRepo, taskRepo, temporalInner)
 	convHandler := conversation.NewHandler(convService)
+
+	// Pipeline module
+	pipelineRepo := pipeline.NewRepository(db)
+	pipelineSvc := pipeline.NewService(pipelineRepo)
+	pipelineHandler := pipeline.NewHandler(pipelineSvc)
 
 	// Specs module
 	specsRepo := specs.NewRepository(db)
@@ -100,6 +106,7 @@ func main() {
 		TaskSSE:             taskSSE,
 		ConversationHandler: convHandler,
 		SpecsHandler:        specsHandler,
+		PipelineHandler:     pipelineHandler,
 	})
 
 	slog.Info("forge-core starting", "port", cfg.ServerPort)
