@@ -20,13 +20,15 @@ class PlanInput:
 @dataclass
 class PlanOutput:
     title: str
-    tasks: List[Dict[str, Any]]
+    tasks: List[Dict[str, Any]]  # includes depends_on, requirement_ref, description
     risk_level: str
     risk_factors: List[str]
-    tokens_used: int
-    model: str
-    provider: str
-    latency_ms: int
+    total_estimate_hours: float = 0
+    parallel_tracks: int = 1
+    tokens_used: int = 0
+    model: str = ""
+    provider: str = ""
+    latency_ms: int = 0
 
 
 @activity.defn(name="plan_task")
@@ -47,6 +49,8 @@ async def plan_task_activity(input: PlanInput) -> PlanOutput:
             tasks=result.structured.get("tasks", []),
             risk_level=result.structured.get("risk_level", "MEDIUM"),
             risk_factors=result.structured.get("risk_factors", []),
+            total_estimate_hours=result.structured.get("total_estimate_hours", 0),
+            parallel_tracks=result.structured.get("parallel_tracks", 1),
             tokens_used=result.tokens_used,
             model=result.model,
             provider=result.provider,
