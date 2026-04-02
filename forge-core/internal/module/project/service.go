@@ -2,19 +2,31 @@ package project
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	ghAdapter "github.com/shulex/forge/forge-core/internal/adapter/github"
 )
 
-type Service struct {
-	repo *Repository
+// AuthTokenProvider retrieves the decrypted GitHub access token for a user.
+type AuthTokenProvider interface {
+	GetGitHubToken(ctx context.Context, userID int64) (string, error)
 }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo}
+type Service struct {
+	repo    *Repository
+	authSvc AuthTokenProvider
+}
+
+func NewService(repo *Repository, authSvc AuthTokenProvider) *Service {
+	return &Service{repo: repo, authSvc: authSvc}
 }
 
 func (s *Service) Create(ctx context.Context, tenantID, userID int64, req *CreateProjectRequest) (*Project, error) {
@@ -73,6 +85,91 @@ func (s *Service) Unstar(ctx context.Context, projectID, tenantID, userID int64)
 	return s.repo.Unstar(ctx, projectID, userID)
 }
 
+// DetectTechStack scans a GitHub repo and detects its tech stack.
+func (s *Service) DetectTechStack(ctx context.Context, projectID, tenantID, userID int64) error {
+	project, err := s.repo.GetByID(ctx, projectID, tenantID, userID)
+	if err != nil {
+		return err
+	}
+	if project.CodeRepoURL == "" {
+		return nil // No repo to scan
+	}
+
+	// Parse owner/repo from URL — format: https://github.com/owner/repo
+	parts := strings.Split(strings.TrimSuffix(project.CodeRepoURL, ".git"), "/")
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid repo URL: %s", project.CodeRepoURL)
+	}
+	owner := parts[len(parts)-2]
+	repo := parts[len(parts)-1]
+
+	// Get GitHub token
+	token, err := s.authSvc.GetGitHubToken(ctx, userID)
+	if err != nil || token == "" {
+		slog.Warn("no GitHub token for tech stack detection", "user_id", userID)
+		return nil
+	}
+
+	ghClient := ghAdapter.NewClient(token)
+
+	// Get languages
+	languages, err := ghClient.GetRepoLanguages(ctx, owner, repo)
+	if err != nil {
+		slog.Warn("failed to get repo languages", "error", err)
+		languages = map[string]int{}
+	}
+
+	// Get file tree for config detection
+	files, err := ghClient.GetTree(ctx, owner, repo, project.DefaultBranch)
+	if err != nil {
+		slog.Warn("failed to get repo tree", "error", err)
+		files = []string{}
+	}
+
+	// Detect tech stack from files
+	techStack := map[string]interface{}{
+		"languages":   languages,
+		"frameworks":  detectFrameworks(files),
+		"detected_at": time.Now().Format(time.RFC3339),
+	}
+
+	tsJSON, _ := json.Marshal(techStack)
+	return s.repo.UpdateTechStack(ctx, projectID, string(tsJSON))
+}
+
+func detectFrameworks(files []string) []string {
+	frameworks := []string{}
+	for _, f := range files {
+		base := filepath.Base(f)
+		switch {
+		case base == "go.mod":
+			frameworks = append(frameworks, "Go")
+		case base == "pom.xml":
+			frameworks = append(frameworks, "Java/Maven")
+		case base == "build.gradle" || base == "build.gradle.kts":
+			frameworks = append(frameworks, "Java/Gradle")
+		case base == "package.json":
+			frameworks = append(frameworks, "Node.js")
+		case base == "requirements.txt" || base == "pyproject.toml":
+			frameworks = append(frameworks, "Python")
+		case base == "Cargo.toml":
+			frameworks = append(frameworks, "Rust")
+		case base == "Dockerfile":
+			frameworks = append(frameworks, "Docker")
+		}
+	}
+	// Deduplicate
+	seen := map[string]bool{}
+	result := []string{}
+	for _, f := range frameworks {
+		if !seen[f] {
+			seen[f] = true
+			result = append(result, f)
+		}
+	}
+	return result
+}
+
 // ImportFromGitHub imports selected GitHub repos as Forge projects.
 func (s *Service) ImportFromGitHub(ctx context.Context, tenantID, userID int64, req *ImportRequest) (*ImportResponse, error) {
 	resp := &ImportResponse{}
@@ -89,6 +186,14 @@ func (s *Service) ImportFromGitHub(ctx context.Context, tenantID, userID int64, 
 		}
 		resp.Imported++
 		resp.Projects = append(resp.Projects, *brief)
+
+		// Trigger async tech stack detection for the newly imported project
+		go func(pid int64) {
+			bgCtx := context.Background()
+			if err := s.DetectTechStack(bgCtx, pid, tenantID, userID); err != nil {
+				slog.Warn("tech stack detection failed", "project_id", pid, "error", err)
+			}
+		}(brief.ID)
 	}
 
 	if resp.Projects == nil {

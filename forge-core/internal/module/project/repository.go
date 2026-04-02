@@ -37,13 +37,13 @@ func (r *Repository) Create(ctx context.Context, tenantID, userID int64, req *Cr
 		RETURNING id, tenant_id, name, COALESCE(description,''), status,
 		          COALESCE(code_platform,''), COALESCE(code_repo_url,''),
 		          default_branch, COALESCE(ai_model,''),
-		          risk_threshold, auto_merge, created_by, created_at, updated_at`,
+		          risk_threshold, auto_merge, tech_stack, created_by, created_at, updated_at`,
 		tenantID, req.Name, req.Description, req.CodePlatform, req.CodeRepoURL,
 		branch, req.AIModel, riskThreshold, autoMerge, userID,
 	).Scan(
 		&p.ID, &p.TenantID, &p.Name, &p.Description, &p.Status,
 		&p.CodePlatform, &p.CodeRepoURL, &p.DefaultBranch, &p.AIModel,
-		&p.RiskThreshold, &p.AutoMerge, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
+		&p.RiskThreshold, &p.AutoMerge, &p.TechStack, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
 	)
 	return &p, err
 }
@@ -85,7 +85,7 @@ func (r *Repository) List(ctx context.Context, tenantID, userID int64, q *ListPr
 		SELECT p.id, p.tenant_id, p.name, COALESCE(p.description,''), p.status,
 		       COALESCE(p.code_platform,''), COALESCE(p.code_repo_url,''),
 		       p.default_branch, COALESCE(p.ai_model,''),
-		       p.risk_threshold, p.auto_merge, p.created_by, p.created_at, p.updated_at,
+		       p.risk_threshold, p.auto_merge, p.tech_stack, p.created_by, p.created_at, p.updated_at,
 		       EXISTS (SELECT 1 FROM engine.project_stars ps WHERE ps.project_id = p.id AND ps.user_id = $%d) AS starred
 		FROM engine.projects p
 		%s
@@ -104,7 +104,7 @@ func (r *Repository) List(ctx context.Context, tenantID, userID int64, q *ListPr
 		if err := rows.Scan(
 			&p.ID, &p.TenantID, &p.Name, &p.Description, &p.Status,
 			&p.CodePlatform, &p.CodeRepoURL, &p.DefaultBranch, &p.AIModel,
-			&p.RiskThreshold, &p.AutoMerge, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
+			&p.RiskThreshold, &p.AutoMerge, &p.TechStack, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
 			&p.Starred,
 		); err != nil {
 			return nil, 0, err
@@ -120,7 +120,7 @@ func (r *Repository) GetByID(ctx context.Context, id, tenantID, userID int64) (*
 		SELECT p.id, p.tenant_id, p.name, COALESCE(p.description,''), p.status,
 		       COALESCE(p.code_platform,''), COALESCE(p.code_repo_url,''),
 		       p.default_branch, COALESCE(p.ai_model,''),
-		       p.risk_threshold, p.auto_merge, p.created_by, p.created_at, p.updated_at,
+		       p.risk_threshold, p.auto_merge, p.tech_stack, p.created_by, p.created_at, p.updated_at,
 		       EXISTS (SELECT 1 FROM engine.project_stars ps WHERE ps.project_id = p.id AND ps.user_id = $3) AS starred
 		FROM engine.projects p
 		WHERE p.id = $1 AND p.tenant_id = $2 AND p.status != 'ARCHIVED'`,
@@ -128,7 +128,7 @@ func (r *Repository) GetByID(ctx context.Context, id, tenantID, userID int64) (*
 	).Scan(
 		&p.ID, &p.TenantID, &p.Name, &p.Description, &p.Status,
 		&p.CodePlatform, &p.CodeRepoURL, &p.DefaultBranch, &p.AIModel,
-		&p.RiskThreshold, &p.AutoMerge, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
+		&p.RiskThreshold, &p.AutoMerge, &p.TechStack, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
 		&p.Starred,
 	)
 	return &p, err
@@ -154,6 +154,17 @@ func (r *Repository) Update(ctx context.Context, id, tenantID int64, req *Update
 		&p.RiskThreshold, &p.AutoMerge, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
 	)
 	return &p, err
+}
+
+func (r *Repository) UpdateTechStack(ctx context.Context, projectID int64, techStack string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE engine.projects SET tech_stack = $2::jsonb, updated_at = NOW() WHERE id = $1`,
+		projectID, techStack,
+	)
+	if err != nil {
+		return fmt.Errorf("update tech stack: %w", err)
+	}
+	return nil
 }
 
 func (r *Repository) Archive(ctx context.Context, id, tenantID int64) error {

@@ -1,6 +1,9 @@
 package project
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type Project struct {
 	ID            int64      `json:"id"`
@@ -14,10 +17,11 @@ type Project struct {
 	AIModel       string     `json:"aiModel"`
 	RiskThreshold int        `json:"riskThreshold"`
 	AutoMerge     bool       `json:"autoMerge"`
-	CreatedBy     int64      `json:"createdBy"`
-	CreatedAt     time.Time  `json:"createdAt"`
-	UpdatedAt     time.Time  `json:"updatedAt"`
-	Starred       bool       `json:"starred"`
+	TechStack     json.RawMessage `json:"techStack,omitempty" db:"tech_stack"`
+	CreatedBy     int64           `json:"createdBy"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
+	Starred       bool            `json:"starred"`
 }
 
 type CreateProjectRequest struct {

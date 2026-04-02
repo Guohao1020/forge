@@ -329,6 +329,36 @@ func (c *Client) GetFileContent(ctx context.Context, owner, repo, path, ref stri
 	return content, nil
 }
 
+// GetRepoLanguages returns language breakdown (bytes per language).
+func (c *Client) GetRepoLanguages(ctx context.Context, owner, repo string) (map[string]int, error) {
+	languages, resp, err := c.client.Repositories.ListLanguages(ctx, owner, repo)
+	if resp != nil {
+		c.logRateLimit(resp)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list languages: %w", err)
+	}
+	return languages, nil
+}
+
+// GetTree returns repository file tree (used for tech stack detection).
+func (c *Client) GetTree(ctx context.Context, owner, repo, ref string) ([]string, error) {
+	tree, resp, err := c.client.Git.GetTree(ctx, owner, repo, ref, true)
+	if resp != nil {
+		c.logRateLimit(resp)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get tree: %w", err)
+	}
+	paths := make([]string, 0, len(tree.Entries))
+	for _, e := range tree.Entries {
+		if e.Path != nil {
+			paths = append(paths, *e.Path)
+		}
+	}
+	return paths, nil
+}
+
 func repoFromGitHub(r *ghlib.Repository) Repository {
 	return Repository{
 		ID:            r.GetID(),

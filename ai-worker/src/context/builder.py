@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 
@@ -15,7 +16,7 @@ TOKEN_BUDGET = 180_000  # 200k max - 20k output reserve
 class ProjectContext:
     project_name: str = ""
     project_description: str = ""
-    tech_stack: str = ""
+    tech_stack: dict = field(default_factory=dict)
     coding_standards: list[str] = field(default_factory=list)
     review_rules: list[dict] = field(default_factory=list)
     prompt_template_system: str = ""
@@ -39,7 +40,7 @@ class ProjectContext:
             if self.project_description:
                 parts.append(f"Description: {self.project_description}")
             if self.tech_stack:
-                parts.append(f"Tech Stack: {self.tech_stack}")
+                parts.append(f"## Tech Stack Constraints\n{json.dumps(self.tech_stack, indent=2)}")
         return "\n\n".join(parts)
 
 
@@ -67,7 +68,7 @@ class ContextBuilder:
                 data = resp.json().get("data", {})
                 ctx.project_name = data.get("name", "")
                 ctx.project_description = data.get("description", "")
-                ctx.tech_stack = data.get("techStack", "")
+                ctx.tech_stack = data.get("techStack") or {}
         except Exception as e:
             logger.warning(f"Failed to fetch project {project_id}: {e}")
 

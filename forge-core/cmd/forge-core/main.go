@@ -55,7 +55,7 @@ func main() {
 
 	// Project module
 	projectRepo := project.NewRepository(db)
-	projectService := project.NewService(projectRepo)
+	projectService := project.NewService(projectRepo, authService)
 	projectHandler := project.NewHandler(projectService)
 
 	// Task module — SSEHub must be created before Temporal worker
