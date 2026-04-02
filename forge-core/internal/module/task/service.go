@@ -72,6 +72,17 @@ func (s *Service) GetTask(ctx context.Context, taskID int64) (*TaskResponse, err
 	return &TaskResponse{Task: *t, Steps: steps}, nil
 }
 
+func (s *Service) ListTaskNodes(ctx context.Context, taskID int64) (*TaskNodeListResponse, error) {
+	nodes, err := s.repo.GetNodesByTaskID(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("list task nodes: %w", err)
+	}
+	if nodes == nil {
+		nodes = []TaskNode{}
+	}
+	return &TaskNodeListResponse{Nodes: nodes}, nil
+}
+
 func (s *Service) ListTasks(ctx context.Context, projectID int64, status string, page, pageSize int) (*TaskListResponse, error) {
 	if page < 1 {
 		page = 1

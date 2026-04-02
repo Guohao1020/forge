@@ -1,6 +1,9 @@
 package task
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Task status constants
 const (
@@ -103,6 +106,27 @@ type TaskResponse struct {
 type TaskListResponse struct {
 	Tasks []Task `json:"tasks"`
 	Total int64  `json:"total"`
+}
+
+// TaskNode represents a sub-task in the DAG decomposition
+type TaskNode struct {
+	ID             int64           `json:"id"`
+	TaskID         int64           `json:"taskId"`
+	NodeOrder      int             `json:"nodeOrder"`
+	Title          string          `json:"title"`
+	Description    *string         `json:"description,omitempty"`
+	NodeType       string          `json:"nodeType"`
+	Status         string          `json:"status"`
+	DependsOn      json.RawMessage `json:"dependsOn"`
+	Files          json.RawMessage `json:"files"`
+	EstimateHours  *float64        `json:"estimateHours,omitempty"`
+	RequirementRef *string         `json:"requirementRef,omitempty"`
+	CreatedAt      time.Time       `json:"createdAt"`
+	UpdatedAt      time.Time       `json:"updatedAt"`
+}
+
+type TaskNodeListResponse struct {
+	Nodes []TaskNode `json:"nodes"`
 }
 
 type TaskProgressEvent struct {

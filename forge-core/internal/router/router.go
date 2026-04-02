@@ -78,6 +78,7 @@ func Setup(deps *Deps) *gin.Engine {
 				protected.POST("/projects/:id/tasks", deps.TaskHandler.CreateTask)
 				protected.GET("/projects/:id/tasks", deps.TaskHandler.ListTasks)
 				protected.GET("/projects/:id/tasks/:taskId", deps.TaskHandler.GetTask)
+				protected.GET("/projects/:id/tasks/:taskId/nodes", deps.TaskHandler.ListTaskNodes)
 			}
 
 			// Conversations

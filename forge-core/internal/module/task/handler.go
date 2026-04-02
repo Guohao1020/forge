@@ -62,6 +62,22 @@ func (h *Handler) ListTasks(c *gin.Context) {
 	response.OK(c, result)
 }
 
+// GET /api/projects/:id/tasks/:taskId/nodes
+func (h *Handler) ListTaskNodes(c *gin.Context) {
+	taskID, err := strconv.ParseInt(c.Param("taskId"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "无效的任务ID")
+		return
+	}
+
+	result, err := h.service.ListTaskNodes(c.Request.Context(), taskID)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, "获取任务节点失败")
+		return
+	}
+	response.OK(c, result)
+}
+
 // GET /api/projects/:id/tasks/:taskId
 func (h *Handler) GetTask(c *gin.Context) {
 	taskID, err := strconv.ParseInt(c.Param("taskId"), 10, 64)

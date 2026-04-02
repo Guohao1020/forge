@@ -193,6 +193,62 @@ func (r *Repository) GetStepsByTaskID(ctx context.Context, taskID int64) ([]Task
 	return steps, nil
 }
 
+// Task node operations
+
+func (r *Repository) CreateNodes(ctx context.Context, taskID int64, nodes []TaskNode) error {
+	for _, n := range nodes {
+		_, err := r.db.Exec(ctx,
+			`INSERT INTO engine.task_nodes (task_id, node_order, title, description, node_type, status, depends_on, files, estimate_hours, requirement_ref)
+			 VALUES ($1, $2, $3, $4, $5, 'PENDING', $6, $7, $8, $9)`,
+			taskID, n.NodeOrder, n.Title, n.Description, n.NodeType, n.DependsOn, n.Files, n.EstimateHours, n.RequirementRef,
+		)
+		if err != nil {
+			return fmt.Errorf("create node %d: %w", n.NodeOrder, err)
+		}
+	}
+	return nil
+}
+
+func (r *Repository) GetNodesByTaskID(ctx context.Context, taskID int64) ([]TaskNode, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT id, task_id, node_order, title, description, node_type, status,
+		        depends_on, files, estimate_hours, requirement_ref, created_at, updated_at
+		 FROM engine.task_nodes WHERE task_id = $1 ORDER BY node_order`,
+		taskID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get nodes: %w", err)
+	}
+	defer rows.Close()
+
+	var nodes []TaskNode
+	for rows.Next() {
+		var n TaskNode
+		if err := rows.Scan(&n.ID, &n.TaskID, &n.NodeOrder, &n.Title, &n.Description, &n.NodeType, &n.Status,
+			&n.DependsOn, &n.Files, &n.EstimateHours, &n.RequirementRef, &n.CreatedAt, &n.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan node: %w", err)
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, nil
+}
+
+func (r *Repository) UpdateNodeStatus(ctx context.Context, nodeID int64, status string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE engine.task_nodes SET status = $1, updated_at = NOW() WHERE id = $2`,
+		status, nodeID,
+	)
+	return err
+}
+
+func (r *Repository) DeleteNodesByTaskID(ctx context.Context, taskID int64) error {
+	_, err := r.db.Exec(ctx,
+		`DELETE FROM engine.task_nodes WHERE task_id = $1`,
+		taskID,
+	)
+	return err
+}
+
 func (r *Repository) UpdateStepStatus(ctx context.Context, taskID int64, stepType, status string) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE engine.task_steps
