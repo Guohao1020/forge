@@ -24,6 +24,7 @@ class AnalyzeOutput:
     model: str
     provider: str
     latency_ms: int
+    risks: List[Dict[str, str]] = field(default_factory=list)
 
 @activity.defn(name="analyze_requirement")
 async def analyze_requirement_activity(input: AnalyzeInput) -> AnalyzeOutput:
@@ -39,6 +40,7 @@ async def analyze_requirement_activity(input: AnalyzeInput) -> AnalyzeOutput:
         agent = AnalystAgent(router)
         result = await agent.run(input.requirement, ctx)
         status = result.structured.get("status", "clarify")
+        risks = result.structured.get("risks", [])
         return AnalyzeOutput(
             status=status,
             content=result.content,
@@ -47,6 +49,7 @@ async def analyze_requirement_activity(input: AnalyzeInput) -> AnalyzeOutput:
             model=result.model,
             provider=result.provider,
             latency_ms=result.latency_ms,
+            risks=risks,
         )
     finally:
         await builder.close()

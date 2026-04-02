@@ -13,25 +13,11 @@ REVIEWER_SYSTEM_PROMPT = """You are a strict code reviewer. Your task is to revi
 4. Logic correctness
 5. Maintainability
 
-## Output Format (MUST be valid JSON)
-```json
-{
-  "passed": true,
-  "score": 92,
-  "findings": [
-    {
-      "severity": "ERROR|WARNING|INFO",
-      "file": "path/to/file.go",
-      "line": 42,
-      "message": "Issue description",
-      "suggestion": "How to fix it",
-      "rule": "CATEGORY/rule-name"
-    }
-  ],
-  "summary": "Overall assessment",
-  "fix_instructions": "If not passed, detailed fix instructions for the coder agent"
-}
-```
+## Output Format
+IMPORTANT: You MUST respond with ONLY a JSON object. No explanations, no markdown, no text before or after the JSON.
+Do NOT wrap the JSON in ```json``` code blocks. Just output the raw JSON directly.
+
+{"passed": true, "score": 92, "findings": [{"severity": "ERROR|WARNING|INFO", "file": "path/to/file.go", "line": 42, "message": "Issue description", "suggestion": "How to fix it", "rule": "CATEGORY/rule-name"}], "summary": "Overall assessment", "fix_instructions": "If not passed, detailed fix instructions for the coder agent"}
 
 Pass threshold: score >= 80 AND zero ERROR-severity findings.
 """

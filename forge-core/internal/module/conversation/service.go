@@ -118,6 +118,13 @@ func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, 
 				if md, ok := result["metadata"].(map[string]interface{}); ok {
 					aiMetadata = md
 				}
+				// Extract risks from AI result
+				if risks, ok := result["risks"]; ok {
+					if aiMetadata == nil {
+						aiMetadata = make(map[string]interface{})
+					}
+					aiMetadata["risks"] = risks
+				}
 				// If confirmed, update task analysis
 				if aiStatus == "confirmed" {
 					if metadata, err := json.Marshal(aiMetadata); err == nil {
