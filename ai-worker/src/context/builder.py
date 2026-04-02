@@ -22,6 +22,7 @@ class ProjectContext:
     prompt_template_system: str = ""
     prompt_template_user: str = ""
     conversation_history: list[dict] = field(default_factory=list)
+    project_profiles: dict = field(default_factory=dict)  # key -> JSONB value
 
     def to_system_prompt(self) -> str:
         """Assemble full system prompt from all layers."""
@@ -41,6 +42,29 @@ class ProjectContext:
                 parts.append(f"Description: {self.project_description}")
             if self.tech_stack:
                 parts.append(f"## Tech Stack Constraints\n{json.dumps(self.tech_stack, indent=2)}")
+        # Layer 4: Project profiles (AI memory)
+        if self.project_profiles:
+            profile_labels = {
+                "api_catalog": "API 接口清单",
+                "db_schema": "数据库结构",
+                "module_graph": "模块依赖图",
+                "architecture": "技术架构",
+                "business_rules": "业务规则",
+                "coding_habits": "编码习惯",
+                "quality_trends": "质量趋势",
+            }
+            profile_parts = []
+            for key, value in self.project_profiles.items():
+                label = profile_labels.get(key, key)
+                value_str = json.dumps(value, ensure_ascii=False, indent=2)
+                # Truncate individual profile if too large (keep under 10k chars)
+                if len(value_str) > 10_000:
+                    value_str = value_str[:10_000] + "\n... (truncated)"
+                profile_parts.append(f"### {label}\n{value_str}")
+            if profile_parts:
+                parts.append(
+                    "## 项目画像（AI 记忆）\n" + "\n\n".join(profile_parts)
+                )
         return "\n\n".join(parts)
 
 
@@ -105,6 +129,20 @@ class ContextBuilder:
                     ctx.prompt_template_user = template.get("userTemplate", "")
         except Exception as e:
             logger.warning(f"Failed to fetch prompt template for {purpose}: {e}")
+
+        # Fetch project profiles (AI memory) — GET /api/projects/{project_id}/profiles
+        try:
+            resp = await self._client.get(f"/api/projects/{project_id}/profiles")
+            if resp.status_code == 200:
+                data = resp.json().get("data", {})
+                profiles_list = data.get("profiles", [])
+                for p in profiles_list:
+                    key = p.get("profileKey", "")
+                    value = p.get("profileValue", {})
+                    if key and value:
+                        ctx.project_profiles[key] = value
+        except Exception as e:
+            logger.warning(f"Failed to fetch project profiles for {project_id}: {e}")
 
         return ctx
 

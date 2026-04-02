@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { FileTree } from "./file-tree";
-import { CodeViewer } from "./code-viewer";
+import { ShikiCodeViewer } from "./shiki-code-viewer";
 import { GitCommit } from "lucide-react";
 
 interface GeneratedFile {
@@ -53,7 +53,7 @@ export function CodePreviewPanel({
         </div>
 
         {/* Code viewer */}
-        <CodeViewer
+        <ShikiCodeViewer
           content={selectedFile?.content || ""}
           language={selectedFile?.language}
           fileName={selectedFile?.path}

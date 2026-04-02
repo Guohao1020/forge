@@ -45,6 +45,14 @@ interface TestWritingOutput {
   coverage_targets?: string[];
 }
 
+interface TestStepOutput {
+  status: string;
+  mock?: boolean;
+  framework?: string;
+  total?: number;
+  passed?: number;
+}
+
 function tryParseOutput<T>(step: TaskStep): T | null {
   if (!step.output) return null;
   try {
@@ -200,9 +208,85 @@ export function TaskWorkspace({ selectedStep, steps, requirement, streamingToken
     return <EmptyState />;
   }
 
-  // TEST / DEPLOY / other future steps
-  if (step_type === "TEST" || step_type === "DEPLOY") {
-    if (status === "RUNNING") return <RunningState message="执行中..." />;
+  // TEST step
+  if (step_type === "TEST") {
+    if (status === "RUNNING") return <RunningState message="正在执行测试..." />;
+    if (status === "COMPLETED") {
+      const output = tryParseOutput<TestStepOutput>(selectedStep);
+      if (output) {
+        return (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-white/10 bg-card p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <FlaskConical className="h-5 w-5 text-primary" />
+                <h3 className="text-sm font-medium">测试执行结果</h3>
+                {output.status === "PASSED" ? (
+                  <span className="inline-flex items-center rounded-md bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                    通过
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center rounded-md bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-400">
+                    失败
+                  </span>
+                )}
+                {output.mock && (
+                  <span className="inline-flex items-center rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400">
+                    Mock
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {output.total !== undefined && (
+                  <div className="rounded-lg bg-white/[0.03] p-3">
+                    <p className="text-xs text-white/40 mb-1">总用例</p>
+                    <p className="text-lg font-semibold">{output.total}</p>
+                  </div>
+                )}
+                {output.passed !== undefined && (
+                  <div className="rounded-lg bg-white/[0.03] p-3">
+                    <p className="text-xs text-white/40 mb-1">通过</p>
+                    <p className="text-lg font-semibold text-emerald-400">{output.passed}</p>
+                  </div>
+                )}
+                {output.framework && (
+                  <div className="rounded-lg bg-white/[0.03] p-3">
+                    <p className="text-xs text-white/40 mb-1">框架</p>
+                    <p className="text-lg font-semibold">{output.framework}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      }
+    }
+    if (status === "PENDING") return <EmptyState />;
+    return <EmptyState />;
+  }
+
+  // DEPLOY / other future steps
+  if (step_type === "DEPLOY") {
+    if (status === "RUNNING") return <RunningState message="部署中..." />;
+    if (status === "COMPLETED") {
+      const output = tryParseOutput<{ branch_name?: string; pr_number?: number; pr_url?: string; skipped?: boolean }>(selectedStep);
+      if (output && !output.skipped) {
+        return (
+          <div className="rounded-xl border border-white/10 bg-card p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <Rocket className="h-5 w-5 text-emerald-400" />
+              <h3 className="text-sm font-medium">部署完成</h3>
+            </div>
+            <div className="space-y-2 text-sm text-white/60">
+              {output.branch_name && <p>分支: <span className="text-white/80 font-mono">{output.branch_name}</span></p>}
+              {output.pr_url && (
+                <p>PR: <a href={output.pr_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">#{output.pr_number}</a></p>
+              )}
+            </div>
+          </div>
+        );
+      }
+    }
+    if (status === "PENDING") return <EmptyState />;
     return <ComingSoonState />;
   }
 

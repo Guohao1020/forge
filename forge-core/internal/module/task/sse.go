@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // SSEHub manages SSE connections for task progress streaming.
@@ -71,10 +73,11 @@ func (h *SSEHub) unsubscribe(taskID int64, ch chan []byte) {
 // SSEHandler handles SSE streaming HTTP requests.
 type SSEHandler struct {
 	hub *SSEHub
+	rdb *goredis.Client // Redis client for code streaming subscription
 }
 
-func NewSSEHandler(hub *SSEHub) *SSEHandler {
-	return &SSEHandler{hub: hub}
+func NewSSEHandler(hub *SSEHub, rdb *goredis.Client) *SSEHandler {
+	return &SSEHandler{hub: hub, rdb: rdb}
 }
 
 // GET /api/stream/tasks/:taskId
@@ -93,9 +96,24 @@ func (h *SSEHandler) Stream(c *gin.Context) {
 	ch := h.hub.subscribe(taskID)
 	defer h.hub.unsubscribe(taskID, ch)
 
-	ctx := c.Request.Context()
+	reqCtx := c.Request.Context()
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+
+	// Subscribe to Redis code-streaming channel (if Redis available)
+	var redisCh <-chan *goredis.Message
+	if h.rdb != nil {
+		subCtx, cancelSub := context.WithCancel(reqCtx)
+		defer cancelSub()
+		channel := fmt.Sprintf("code:stream:%d", taskID)
+		sub := h.rdb.Subscribe(subCtx, channel)
+		redisCh = sub.Channel()
+		defer func() {
+			if err := sub.Close(); err != nil {
+				slog.Debug("redis sub close", "error", err)
+			}
+		}()
+	}
 
 	// Send initial connection event
 	fmt.Fprintf(c.Writer, "data: {\"type\":\"connected\",\"task_id\":%d}\n\n", taskID)
@@ -103,16 +121,31 @@ func (h *SSEHandler) Stream(c *gin.Context) {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-reqCtx.Done():
+			slog.Debug("sse client disconnected", "task_id", taskID)
 			return
 		case data := <-ch:
 			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
 			c.Writer.Flush()
+		case msg, ok := <-redisCh:
+			if !ok {
+				redisCh = nil // channel closed, stop selecting
+				continue
+			}
+			// Forward as a code_token SSE event
+			evt := TaskProgressEvent{
+				Type:   "code_token",
+				TaskID: taskID,
+				Data:   msg.Payload,
+			}
+			evtData, err := json.Marshal(evt)
+			if err == nil {
+				fmt.Fprintf(c.Writer, "data: %s\n\n", evtData)
+				c.Writer.Flush()
+			}
 		case <-ticker.C:
 			fmt.Fprint(c.Writer, ": keepalive\n\n")
 			c.Writer.Flush()
 		}
 	}
-
-	slog.Debug("sse client disconnected", "task_id", taskID)
 }

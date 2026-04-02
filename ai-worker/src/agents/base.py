@@ -57,24 +57,32 @@ class BaseAgent:
         )
 
     def _parse_json(self, text: str) -> dict:
+        text = text.strip()
         # Try direct parse
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
-        # Try markdown code block
-        match = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
-        if match:
+        # Try markdown code block (various formats)
+        for pattern in [
+            r"```(?:json)?\s*\n(.*?)\n\s*```",
+            r"```(?:json)?\s*\n?(.*?)\n?\s*```",
+        ]:
+            match = re.search(pattern, text, re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group(1).strip())
+                except json.JSONDecodeError:
+                    pass
+        # Try to find balanced {...} block (greedy from first { to last })
+        first_brace = text.find("{")
+        last_brace = text.rfind("}")
+        if first_brace != -1 and last_brace > first_brace:
+            candidate = text[first_brace : last_brace + 1]
             try:
-                return json.loads(match.group(1))
-            except json.JSONDecodeError:
-                pass
-        # Try first {...} block
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
+                return json.loads(candidate)
             except json.JSONDecodeError:
                 pass
         logger.warning("Failed to parse JSON from agent response")
+        logger.debug("Raw response (first 300 chars): %s", text[:300])
         return {}

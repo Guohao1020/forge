@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     dashscope_api_key: str = ""
     deepseek_api_key: str = ""
 
+    # Redis (for streaming code output)
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_password: str = "forge_redis_2026"
+
     # Forge Core API
     forge_api_url: str = "http://localhost:8080"
     forge_api_token: str = ""

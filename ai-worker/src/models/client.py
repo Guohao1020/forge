@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import anthropic
 import openai
@@ -135,3 +135,47 @@ PROVIDER_CALLERS = {
     "dashscope": call_dashscope,
     "deepseek": call_deepseek,
 }
+
+
+# --- Streaming support ---
+
+_OPENAI_BASE_URLS = {
+    "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "deepseek": "https://api.deepseek.com",
+}
+
+
+async def stream_llm(
+    api_key: str,
+    model: str,
+    provider: str,
+    system: str,
+    messages: list[dict[str, Any]],
+    max_tokens: int = MAX_TOKENS,
+) -> AsyncGenerator[str, None]:
+    """Stream LLM response tokens. Yields text chunks as they arrive."""
+    if provider == "anthropic":
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+        async with client.messages.stream(
+            model=model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=messages,
+        ) as stream:
+            async for text in stream.text_stream:
+                yield text
+    elif provider in ("openai", "dashscope", "deepseek"):
+        base_url = _OPENAI_BASE_URLS.get(provider)
+        kwargs: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        client = openai.AsyncOpenAI(**kwargs)
+        msgs = [{"role": "system", "content": system}] + messages
+        stream = await client.chat.completions.create(
+            model=model, messages=msgs, max_tokens=max_tokens, stream=True
+        )
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+    else:
+        raise ValueError(f"Unknown provider for streaming: {provider}")

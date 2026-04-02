@@ -105,3 +105,26 @@ export async function getTaskNodes(projectId: number, taskId: number): Promise<T
   );
   return res.nodes || [];
 }
+
+// Test Results
+export interface TestResult {
+  id: number;
+  taskId: number;
+  layer: string;
+  framework: string;
+  totalCases: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  coveragePct: number;
+  durationMs: number;
+  status: string;
+  createdAt: string;
+}
+
+export async function getTestResults(projectId: string | number, taskId: string | number): Promise<TestResult[]> {
+  const res = await api.get<{ results: TestResult[] }>(
+    `/projects/${projectId}/tasks/${taskId}/test-results`
+  );
+  return res.results || [];
+}

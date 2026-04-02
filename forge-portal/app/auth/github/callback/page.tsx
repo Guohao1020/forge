@@ -27,6 +27,7 @@ function CallbackContent() {
 
   useEffect(() => {
     const code = searchParams.get("code");
+    const state = searchParams.get("state");
 
     if (!code) {
       setStatus("error");
@@ -34,7 +35,9 @@ function CallbackContent() {
       return;
     }
 
-    api.get(`/auth/github/callback?code=${encodeURIComponent(code)}`)
+    const params = new URLSearchParams({ code });
+    if (state) params.set("state", state);
+    api.get(`/auth/github/callback?${params.toString()}`)
       .then(() => {
         setStatus("success");
         setMessage("GitHub 连接成功！正在跳转...");
