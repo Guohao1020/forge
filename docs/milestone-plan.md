@@ -1,11 +1,12 @@
 # Forge Platform — 里程碑计划
 
-> **版本**: 4.1
+> **版本**: 4.2
 > **日期**: 2026-04-02
 > **前置文档**: [PRD.md](PRD.md) | [technical-design.md](technical-design.md)
 > **架构变更**: v3.0 采用垂直切片(Slice)替代水平分层(Milestone)，每个切片前后端一起交付
 > **v4.0 变更**: Phase 2 重构为 7 阶段 AI 开发流水线（P1~P7），对应切片 S8~S14
 > **v4.1 变更**: 新增 S15 代码浏览与分支管理、S16 项目画像与 AI 记忆、S17 云端预览环境
+> **v4.2 变更**: 新增 SaaS 基础设施架构（K8s 集群拓扑、GitHub App、任务容器、多租户隔离），标注基础设施前置依赖
 
 ---
 
@@ -107,6 +108,9 @@ Phase 1 全部完成后，用户可以在浏览器中完成以下完整流程：
 ### 全局视图
 
 ```
+                    Infra（基础设施）
+                    K8s 集群 + GitHub App + 任务容器 + 多租户隔离
+                         │
 S8 → S9 → S10 → S11 → S12 → S13 → S14
 需求    任务   测试    代码    自动化   制品    K8s
 澄清    拆分   先行    生成    测试     管理    部署
@@ -116,6 +120,8 @@ S15          S16          S17
 代码浏览      项目画像      云端预览
 分支管理      AI 记忆       环境管理
 （可与 S8~S14 并行开发，依赖 S3 GitHub 接入）
+
+注: S12/S13/S14/S17 依赖 Infra 基础设施就绪（K8s Job 执行环境）
 ```
 
 ### 切片详情
@@ -126,12 +132,12 @@ S15          S16          S17
 | S9 | 任务拆分增强 | P2 | 需求自动拆分为 DAG 任务图 + 双向追溯 + 工时估算 + 依赖可视化 | ~8 | S8 |
 | S10 | 测试先行体系 | P3 | AI 根据需求生成测试用例（先于代码）+ 原生框架单测 + Python E2E 测试 | ~8 | S9 |
 | S11 | 代码生成增强 | P4 | 按语言约束生成代码 + Lint 集成 + Dockerfile 生成 + 实时预览 | ~8 | S10 |
-| S12 | 自动化测试执行 | P5 | 顺序执行四层测试（单测→集成→E2E→安全）+ 覆盖率门禁 + 阻断式质量门 | ~7 | S11 |
-| S13 | 制品管理 | P6 | Docker 构建 + OSS 推送 + 版本管理 + 制品清单 | ~6 | S12 |
-| S14 | K8s 部署 | P7 | 资源清单生成 + ACK 自动部署 + 环境管理 + 部署状态追踪 | ~8 | S13 |
+| S12 | 自动化测试执行 | P5 | 顺序执行四层测试（单测→集成→E2E→安全）+ 覆盖率门禁 + 阻断式质量门 | ~7 | S11, **Infra** |
+| S13 | 制品管理 | P6 | Docker 构建 + OSS 推送 + 版本管理 + 制品清单 | ~6 | S12, **Infra** |
+| S14 | K8s 部署 | P7 | 资源清单生成 + ACK 自动部署 + 环境管理 + 部署状态追踪 | ~8 | S13, **Infra** |
 | S15 | 代码浏览与分支管理 | — | 仓库文件树 + 语法高亮 + 分支切换 + PR 查看 | ~8 | S3 |
 | S16 | 项目画像与 AI 记忆 | — | 全量画像生成 + 结构化存储 + 向量化索引 + 增量更新 | ~10 | S3, S6 |
-| S17 | 云端预览环境 | — | AI 项目检测 + Dockerfile 生成 + PR 级预览环境 + 自动回收 | ~6 | S3, S14 |
+| S17 | 云端预览环境 | — | AI 项目检测 + Dockerfile 生成 + PR 级预览环境 + 自动回收 | ~6 | S3, S14, **Infra** |
 
 **预估总计**: ~51 个 Task（S8~S14）+ ~24 个 Task（S15~S17）= ~75 个 Task
 
@@ -150,6 +156,12 @@ S3（GitHub 接入）
  ├→ S15（代码浏览与分支管理）← 需要 S3 的 GitHub OAuth + API
  ├→ S16（项目画像与 AI 记忆）← 需要 S3 的仓库访问 + S6 的 AI 分析能力
  └→ S17（云端预览环境）← 需要 S3 的代码访问 + S14 的 K8s 部署能力
+
+Infra（SaaS 基础设施）← 可与 S8~S11 并行搭建
+ ├→ S12（自动化测试执行）← 测试在 K8s Job 容器中运行
+ ├→ S13（制品管理）← Docker 构建/推送需要 K8s Job + ACR
+ ├→ S14（K8s 部署）← 需要 tenant-{id}-{env} namespace + ResourceQuota
+ └→ S17（云端预览环境）← 需要 K8s 集群 + Ingress + 预览 namespace
 ```
 
 ### 各切片详细说明
@@ -265,6 +277,26 @@ PR 级别自动创建临时云端预览环境：
 - Web 工作台预览环境状态 + 日志查看
 - Phase 3 增强：多服务编排预览 + 自定义域名 + HPA 自动扩缩容
 
+#### Infra: SaaS 基础设施（前置依赖，可与 S8~S11 并行）
+
+> 详细设计见 [infra-architecture-design.md](plans/infra-architecture-design.md)
+
+K8s 集群搭建和 GitHub App 注册，是 S12（测试执行）、S13（制品管理）、S14（K8s 部署）、S17（云端预览）的前置条件：
+
+- **ACK 集群初始化**: 单集群多 namespace 拓扑（forge-system / forge-jobs / tenant-{id}-{env}）
+- **K8s Job 任务容器**: forge-task-runner 镜像构建，Job 模板（CPU/内存限制、TTL、超时）
+- **GitHub App 注册**: 创建 Forge GitHub App，配置权限（Contents R/W, PR R/W, Webhooks R/W）
+- **GitHub App Token 管理**: JWT 签名 → Installation Token 获取 → Redis 缓存 → 自动刷新
+- **多租户 namespace 自动化**: 租户首次部署时自动创建 namespace + ResourceQuota + NetworkPolicy
+- **ACR 镜像仓库**: 阿里云容器镜像服务配置，用于存储构建的 Docker 镜像
+- **Ingress 路由**: 预览环境通配符域名 `*.preview.forge.example.com` 配置
+
+实施分四阶段:
+1. **阶段 1（当前）**: GitHub API 模式，AI 生成代码通过 API 推送，无需 K8s Job
+2. **阶段 2**: K8s Job 任务容器，接入 ACK，测试/构建在容器中执行
+3. **阶段 3**: 完整部署流水线，用户代码部署到 K8s，多环境管理
+4. **阶段 4**: GitHub App 替代纯 OAuth，支持企业仓库，Webhook 事件驱动
+
 ### 每个切片的技术栈递增
 
 | 切片 | 新增技术组件 |
@@ -279,6 +311,7 @@ PR 级别自动创建临时云端预览环境：
 | S15 | Shiki（语法高亮）, go-github 文件/分支 API 扩展 |
 | S16 | pgvector（向量索引）, OpenAI Embeddings API, AST 解析库 |
 | S17 | Docker buildx, kubernetes client-go（Namespace 管理）, cert-manager |
+| Infra | ACK 集群, GitHub App（JWT + Installation Token）, K8s Job, ResourceQuota, NetworkPolicy, ACR |
 
 ### Phase 2 验收标准
 
@@ -362,4 +395,4 @@ Phase 2 全部完成后，用户可以在浏览器中完成以下完整流程：
 
 ---
 
-*文档版本: 4.1 | 最后更新: 2026-04-02 | 架构: Go + Python + Temporal + Next.js + code-server*
+*文档版本: 4.2 | 最后更新: 2026-04-02 | 架构: Go + Python + Temporal + Next.js + code-server*
