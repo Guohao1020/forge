@@ -40,7 +40,7 @@ func (c *Client) Close() {
 }
 
 // StartTaskWorkflow implements task.WorkflowStarter interface.
-func (c *Client) StartTaskWorkflow(ctx context.Context, taskID, tenantID, projectID int64) (string, string, error) {
+func (c *Client) StartTaskWorkflow(ctx context.Context, taskID, tenantID, projectID, createdBy int64) (string, string, error) {
 	workflowID := fmt.Sprintf("task-%d", taskID)
 
 	options := client.StartWorkflowOptions{
@@ -52,6 +52,7 @@ func (c *Client) StartTaskWorkflow(ctx context.Context, taskID, tenantID, projec
 		TaskID:    taskID,
 		TenantID:  tenantID,
 		ProjectID: projectID,
+		CreatedBy: createdBy,
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("start task workflow: %w", err)

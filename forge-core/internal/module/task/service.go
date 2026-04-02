@@ -8,7 +8,7 @@ import (
 
 // WorkflowStarter abstracts Temporal client for starting task workflows.
 type WorkflowStarter interface {
-	StartTaskWorkflow(ctx context.Context, taskID, tenantID, projectID int64) (workflowID string, runID string, err error)
+	StartTaskWorkflow(ctx context.Context, taskID, tenantID, projectID, createdBy int64) (workflowID string, runID string, err error)
 }
 
 type Service struct {
@@ -49,7 +49,7 @@ func (s *Service) CreateTask(ctx context.Context, tenantID, projectID, userID in
 	}
 
 	if s.workflowStarter != nil {
-		workflowID, runID, err := s.workflowStarter.StartTaskWorkflow(ctx, t.ID, tenantID, projectID)
+		workflowID, runID, err := s.workflowStarter.StartTaskWorkflow(ctx, t.ID, tenantID, projectID, userID)
 		if err != nil {
 			slog.Error("failed to start workflow", "task_id", t.ID, "error", err)
 		} else {

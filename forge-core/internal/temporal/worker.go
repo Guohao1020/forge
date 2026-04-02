@@ -15,7 +15,7 @@ import (
 )
 
 // StartWorker creates and starts a Temporal worker in a goroutine.
-func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub) (worker.Worker, error) {
+func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken activity.AuthTokenProvider, projectProv activity.ProjectProvider, taskPR activity.TaskPRUpdater) (worker.Worker, error) {
 	w := worker.New(c, TaskQueueName, worker.Options{})
 
 	w.RegisterWorkflowWithOptions(wf.TaskWorkflow, workflow.RegisterOptions{
@@ -40,6 +40,18 @@ func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub) (worker.Wo
 	})
 	w.RegisterActivityWithOptions(activities.SaveStepOutput, sdkactivity.RegisterOptions{
 		Name: "SaveStepOutput",
+	})
+
+	// DevOps activities (GitHub operations)
+	devops := activity.NewDevOpsActivities(db, authToken, projectProv, taskPR, sse)
+	w.RegisterActivityWithOptions(devops.PushToGitHub, sdkactivity.RegisterOptions{
+		Name: "PushToGitHub",
+	})
+	w.RegisterActivityWithOptions(devops.CreatePullRequest, sdkactivity.RegisterOptions{
+		Name: "CreatePullRequest",
+	})
+	w.RegisterActivityWithOptions(devops.SavePRInfo, sdkactivity.RegisterOptions{
+		Name: "SavePRInfo",
 	})
 
 	if err := w.Start(); err != nil {

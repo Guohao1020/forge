@@ -15,6 +15,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/specs"
 	"github.com/shulex/forge/forge-core/internal/module/task"
 	forgetemporal "github.com/shulex/forge/forge-core/internal/temporal"
+	"github.com/shulex/forge/forge-core/internal/temporal/activity"
 	"github.com/shulex/forge/forge-core/internal/pkg/database"
 	forgeRedis "github.com/shulex/forge/forge-core/internal/pkg/redis"
 	"github.com/shulex/forge/forge-core/internal/router"
@@ -69,7 +70,9 @@ func main() {
 		defer temporalClient.Close()
 		workflowStarter = temporalClient
 
-		_, err := forgetemporal.StartWorker(temporalClient.Inner(), db, sseHub)
+		taskRepoForWorker := task.NewRepository(db)
+		_, err := forgetemporal.StartWorker(temporalClient.Inner(), db, sseHub,
+			authService, activity.NewProjectRepoAdapter(projectRepo), taskRepoForWorker)
 		if err != nil {
 			slog.Error("failed to start temporal worker", "error", err)
 		}

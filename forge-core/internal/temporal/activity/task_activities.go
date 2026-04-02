@@ -16,6 +16,7 @@ type TaskWorkflowInput struct {
 	TaskID      int64  `json:"task_id"`
 	TenantID    int64  `json:"tenant_id"`
 	ProjectID   int64  `json:"project_id"`
+	CreatedBy   int64  `json:"created_by"`
 	Requirement string `json:"requirement"`
 }
 

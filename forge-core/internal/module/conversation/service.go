@@ -172,6 +172,7 @@ func (s *Service) ConfirmPlan(ctx context.Context, taskID, tenantID int64) error
 		TaskID:      taskID,
 		TenantID:    tenantID,
 		ProjectID:   t.ProjectID,
+		CreatedBy:   t.CreatedBy,
 		Requirement: t.Requirement,
 	})
 	if err != nil {

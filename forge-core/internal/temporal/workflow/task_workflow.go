@@ -138,7 +138,104 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 
 	_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "REVIEW", reviewResult).Get(ctx, nil)
 
-	// ---- Step 4: Complete ----
+	// ---- Step 4: Deploy (Push to GitHub) ----
+	// This step is best-effort: if GitHub is not connected, we skip gracefully.
+	err = workflow.ExecuteActivity(localCtx, "ExecuteStep", activity.StepInput{
+		TaskID: input.TaskID, StepType: "DEPLOY", TaskStatus: "DEPLOYING", Duration: 0,
+	}).Get(ctx, nil)
+	if err != nil {
+		logger.Error("deploy step DB update failed", "error", err)
+		// Non-fatal: still complete the task
+	} else {
+		deployErr := func() error {
+			// Extract files from generateResult
+			var files []map[string]interface{}
+			if rawFiles, ok := generateResult["files"]; ok {
+				if arr, ok := rawFiles.([]interface{}); ok {
+					for _, f := range arr {
+						if m, ok := f.(map[string]interface{}); ok {
+							files = append(files, m)
+						}
+					}
+				}
+			}
+
+			if len(files) == 0 {
+				logger.Warn("no files to push, skipping deploy", "task_id", input.TaskID)
+				return nil
+			}
+
+			commitMsg := ""
+			if cm, ok := generateResult["commit_message"].(string); ok {
+				commitMsg = cm
+			}
+
+			// Push to GitHub
+			var pushResult activity.PushToGitHubOutput
+			err = workflow.ExecuteActivity(localCtx, "PushToGitHub", activity.PushToGitHubInput{
+				TaskID:        input.TaskID,
+				TenantID:      input.TenantID,
+				ProjectID:     input.ProjectID,
+				CreatedBy:     input.CreatedBy,
+				Files:         generateResult["files"],
+				CommitMessage: commitMsg,
+			}).Get(ctx, &pushResult)
+			if err != nil {
+				return err
+			}
+
+			// Create PR
+			prTitle := ""
+			if t, ok := planResult["title"].(string); ok {
+				prTitle = t
+			}
+
+			var prResult activity.CreatePROutput
+			err = workflow.ExecuteActivity(localCtx, "CreatePullRequest", activity.CreatePRInput{
+				TaskID:    input.TaskID,
+				TenantID:  input.TenantID,
+				ProjectID: input.ProjectID,
+				CreatedBy: input.CreatedBy,
+				Branch:    pushResult.BranchName,
+				Title:     prTitle,
+			}).Get(ctx, &prResult)
+			if err != nil {
+				return err
+			}
+
+			// Save PR info
+			reviewScore := 0
+			if s, ok := reviewResult["score"].(float64); ok {
+				reviewScore = int(s)
+			}
+
+			_ = workflow.ExecuteActivity(localCtx, "SavePRInfo", activity.SavePRInfoInput{
+				TaskID:      input.TaskID,
+				PRNumber:    prResult.PRNumber,
+				PRURL:       prResult.PRURL,
+				ReviewScore: reviewScore,
+			}).Get(ctx, nil)
+
+			_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "DEPLOY", map[string]interface{}{
+				"branch_name": pushResult.BranchName,
+				"pr_number":   prResult.PRNumber,
+				"pr_url":      prResult.PRURL,
+			}).Get(ctx, nil)
+
+			return nil
+		}()
+
+		if deployErr != nil {
+			logger.Warn("deploy step failed (non-fatal)", "task_id", input.TaskID, "error", deployErr)
+			// Save deploy step as skipped so frontend knows
+			_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "DEPLOY", map[string]interface{}{
+				"skipped": true,
+				"error":   deployErr.Error(),
+			}).Get(ctx, nil)
+		}
+	}
+
+	// ---- Step 5: Complete ----
 	err = workflow.ExecuteActivity(localCtx, "CompleteTask", input.TaskID).Get(ctx, nil)
 	if err != nil {
 		logger.Error("failed to complete task", "error", err)
