@@ -71,7 +71,29 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 		_ = workflow.ExecuteActivity(localCtx, "SaveTaskNodes", input.TaskID, taskNodes).Get(ctx, nil)
 	}
 
-	// ---- Step 2: Generate ----
+	// ---- Step 2: Test Writing (non-blocking) ----
+	var testResult map[string]interface{}
+	err = workflow.ExecuteActivity(localCtx, "ExecuteStep", activity.StepInput{
+		TaskID: input.TaskID, StepType: "TEST_WRITING", TaskStatus: "TEST_WRITING", Duration: 0,
+	}).Get(ctx, nil)
+	if err != nil {
+		logger.Warn("test writing step DB update failed, continuing", "error", err)
+	} else {
+		err = workflow.ExecuteActivity(aiCtx, "generate_test_cases", map[string]interface{}{
+			"task_id":             input.TaskID,
+			"tenant_id":           input.TenantID,
+			"project_id":          input.ProjectID,
+			"plan":                planResult,
+			"requirement_summary": input.Requirement,
+		}).Get(ctx, &testResult)
+		if err != nil {
+			logger.Warn("AI test writing failed, continuing without tests", "error", err)
+			testResult = nil
+		}
+		_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "TEST_WRITING", testResult).Get(ctx, nil)
+	}
+
+	// ---- Step 3: Generate ----
 	err = workflow.ExecuteActivity(localCtx, "ExecuteStep", activity.StepInput{
 		TaskID: input.TaskID, StepType: "GENERATE", TaskStatus: "GENERATING", Duration: 0,
 	}).Get(ctx, nil)
@@ -87,6 +109,7 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 		"project_id":          input.ProjectID,
 		"requirement_summary": input.Requirement,
 		"plan":                planResult,
+		"test_cases":          testResult,
 	}).Get(ctx, &generateResult)
 	if err != nil {
 		logger.Error("AI generate failed", "error", err)
@@ -96,7 +119,7 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 
 	_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "GENERATE", generateResult).Get(ctx, nil)
 
-	// ---- Step 3: Review loop (max 3 attempts) ----
+	// ---- Step 4: Review loop (max 3 attempts) ----
 	err = workflow.ExecuteActivity(localCtx, "ExecuteStep", activity.StepInput{
 		TaskID: input.TaskID, StepType: "REVIEW", TaskStatus: "REVIEWING", Duration: 0,
 	}).Get(ctx, nil)
@@ -149,7 +172,7 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 
 	_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "REVIEW", reviewResult).Get(ctx, nil)
 
-	// ---- Step 4: Deploy (Push to GitHub) ----
+	// ---- Step 5: Deploy (Push to GitHub) ----
 	// This step is best-effort: if GitHub is not connected, we skip gracefully.
 	err = workflow.ExecuteActivity(localCtx, "ExecuteStep", activity.StepInput{
 		TaskID: input.TaskID, StepType: "DEPLOY", TaskStatus: "DEPLOYING", Duration: 0,
@@ -246,7 +269,7 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 		}
 	}
 
-	// ---- Step 5: Complete ----
+	// ---- Step 6: Complete ----
 	err = workflow.ExecuteActivity(localCtx, "CompleteTask", input.TaskID).Get(ctx, nil)
 	if err != nil {
 		logger.Error("failed to complete task", "error", err)

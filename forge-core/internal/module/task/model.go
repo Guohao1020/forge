@@ -7,15 +7,16 @@ import (
 
 // Task status constants
 const (
-	StatusSubmitted  = "SUBMITTED"
-	StatusAnalyzing  = "ANALYZING"
-	StatusPlanning   = "PLANNING"
-	StatusGenerating = "GENERATING"
-	StatusReviewing  = "REVIEWING"
-	StatusTesting    = "TESTING"
-	StatusDeploying  = "DEPLOYING"
-	StatusCompleted  = "COMPLETED"
-	StatusFailed     = "FAILED"
+	StatusSubmitted    = "SUBMITTED"
+	StatusAnalyzing    = "ANALYZING"
+	StatusPlanning     = "PLANNING"
+	StatusTestWriting  = "TEST_WRITING"
+	StatusGenerating   = "GENERATING"
+	StatusReviewing    = "REVIEWING"
+	StatusTesting      = "TESTING"
+	StatusDeploying    = "DEPLOYING"
+	StatusCompleted    = "COMPLETED"
+	StatusFailed       = "FAILED"
 )
 
 // Step status constants
@@ -29,12 +30,13 @@ const (
 
 // Step type constants
 const (
-	StepTypeAnalyze  = "ANALYZE"
-	StepTypePlan     = "PLAN"
-	StepTypeGenerate = "GENERATE"
-	StepTypeReview   = "REVIEW"
-	StepTypeTest     = "TEST"
-	StepTypeDeploy   = "DEPLOY"
+	StepTypeAnalyze      = "ANALYZE"
+	StepTypePlan         = "PLAN"
+	StepTypeTestWriting  = "TEST_WRITING"
+	StepTypeGenerate     = "GENERATE"
+	StepTypeReview       = "REVIEW"
+	StepTypeTest         = "TEST"
+	StepTypeDeploy       = "DEPLOY"
 )
 
 const SourceWeb = "WEB"
@@ -46,6 +48,7 @@ var AllSteps = []struct {
 }{
 	{"需求分析", StepTypeAnalyze},
 	{"方案规划", StepTypePlan},
+	{"测试设计", StepTypeTestWriting},
 	{"代码生成", StepTypeGenerate},
 	{"代码审查", StepTypeReview},
 	{"自动化测试", StepTypeTest},
