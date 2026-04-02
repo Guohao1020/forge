@@ -95,13 +95,10 @@ func (s *Service) DetectTechStack(ctx context.Context, projectID, tenantID, user
 		return nil // No repo to scan
 	}
 
-	// Parse owner/repo from URL — format: https://github.com/owner/repo
-	parts := strings.Split(strings.TrimSuffix(project.CodeRepoURL, ".git"), "/")
-	if len(parts) < 2 {
+	owner, repo := parseOwnerRepo(project.CodeRepoURL)
+	if owner == "" || repo == "" {
 		return fmt.Errorf("invalid repo URL: %s", project.CodeRepoURL)
 	}
-	owner := parts[len(parts)-2]
-	repo := parts[len(parts)-1]
 
 	// Get GitHub token
 	token, err := s.authSvc.GetGitHubToken(ctx, userID)
@@ -201,4 +198,89 @@ func (s *Service) ImportFromGitHub(ctx context.Context, tenantID, userID int64, 
 	}
 
 	return resp, nil
+}
+
+// ---------------------------------------------------------------------------
+// Code browsing
+// ---------------------------------------------------------------------------
+
+// getGitHubClient resolves project + authenticated GitHub client.
+func (s *Service) getGitHubClient(ctx context.Context, projectID, tenantID, userID int64) (*Project, *ghAdapter.Client, error) {
+	p, err := s.repo.GetByID(ctx, projectID, tenantID, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if p.CodeRepoURL == "" {
+		return nil, nil, fmt.Errorf("project has no repo URL")
+	}
+	token, err := s.authSvc.GetGitHubToken(ctx, userID)
+	if err != nil || token == "" {
+		return nil, nil, fmt.Errorf("no GitHub token available")
+	}
+	return p, ghAdapter.NewClient(token), nil
+}
+
+// parseOwnerRepo extracts owner and repo from a GitHub URL.
+func parseOwnerRepo(rawURL string) (string, string) {
+	parts := strings.Split(strings.TrimSuffix(rawURL, ".git"), "/")
+	if len(parts) < 2 {
+		return "", ""
+	}
+	return parts[len(parts)-2], parts[len(parts)-1]
+}
+
+// GetCodeTree returns the file tree for a given ref (branch/tag/SHA).
+func (s *Service) GetCodeTree(ctx context.Context, projectID, tenantID, userID int64, ref string) ([]string, error) {
+	p, ghClient, err := s.getGitHubClient(ctx, projectID, tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
+	owner, repo := parseOwnerRepo(p.CodeRepoURL)
+	if ref == "" {
+		ref = p.DefaultBranch
+	}
+	return ghClient.GetTree(ctx, owner, repo, ref)
+}
+
+// GetCodeFile returns file content at a specific path and ref.
+func (s *Service) GetCodeFile(ctx context.Context, projectID, tenantID, userID int64, path, ref string) (string, error) {
+	p, ghClient, err := s.getGitHubClient(ctx, projectID, tenantID, userID)
+	if err != nil {
+		return "", err
+	}
+	owner, repo := parseOwnerRepo(p.CodeRepoURL)
+	if ref == "" {
+		ref = p.DefaultBranch
+	}
+	return ghClient.GetFileContent(ctx, owner, repo, path, ref)
+}
+
+// ListBranches returns all branches for the project's repo.
+func (s *Service) ListBranches(ctx context.Context, projectID, tenantID, userID int64) ([]ghAdapter.Branch, error) {
+	p, ghClient, err := s.getGitHubClient(ctx, projectID, tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
+	owner, repo := parseOwnerRepo(p.CodeRepoURL)
+	return ghClient.ListBranches(ctx, owner, repo)
+}
+
+// ListPRs returns pull requests for the project's repo.
+func (s *Service) ListPRs(ctx context.Context, projectID, tenantID, userID int64, state string) ([]ghAdapter.PullRequestSummary, error) {
+	p, ghClient, err := s.getGitHubClient(ctx, projectID, tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
+	owner, repo := parseOwnerRepo(p.CodeRepoURL)
+	return ghClient.ListPRs(ctx, owner, repo, state)
+}
+
+// GetPRDetail returns the changed files for a pull request.
+func (s *Service) GetPRDetail(ctx context.Context, projectID, tenantID, userID int64, prNumber int) ([]ghAdapter.PRFile, error) {
+	p, ghClient, err := s.getGitHubClient(ctx, projectID, tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
+	owner, repo := parseOwnerRepo(p.CodeRepoURL)
+	return ghClient.GetPRFiles(ctx, owner, repo, prNumber)
 }

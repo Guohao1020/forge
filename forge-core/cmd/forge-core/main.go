@@ -11,6 +11,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/pipeline"
+	"github.com/shulex/forge/forge-core/internal/module/profile"
 	"github.com/shulex/forge/forge-core/internal/module/project"
 	"github.com/shulex/forge/forge-core/internal/module/specs"
 	"github.com/shulex/forge/forge-core/internal/module/task"
@@ -96,6 +97,11 @@ func main() {
 	pipelineSvc := pipeline.NewService(pipelineRepo)
 	pipelineHandler := pipeline.NewHandler(pipelineSvc)
 
+	// Profile module
+	profileRepo := profile.NewRepository(db)
+	profileSvc := profile.NewService(profileRepo)
+	profileHandler := profile.NewHandler(profileSvc)
+
 	// Specs module
 	specsRepo := specs.NewRepository(db)
 	specsService := specs.NewService(specsRepo, rdb)
@@ -110,6 +116,7 @@ func main() {
 		ConversationHandler: convHandler,
 		SpecsHandler:        specsHandler,
 		PipelineHandler:     pipelineHandler,
+		ProfileHandler:      profileHandler,
 	})
 
 	slog.Info("forge-core starting", "port", cfg.ServerPort)

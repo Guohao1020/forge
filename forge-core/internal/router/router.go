@@ -6,6 +6,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/pipeline"
+	"github.com/shulex/forge/forge-core/internal/module/profile"
 	"github.com/shulex/forge/forge-core/internal/module/project"
 	"github.com/shulex/forge/forge-core/internal/module/specs"
 	"github.com/shulex/forge/forge-core/internal/module/task"
@@ -20,6 +21,7 @@ type Deps struct {
 	ConversationHandler *conversation.Handler
 	SpecsHandler        *specs.Handler
 	PipelineHandler     *pipeline.Handler
+	ProfileHandler      *profile.Handler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -64,6 +66,13 @@ func Setup(deps *Deps) *gin.Engine {
 			protected.POST("/projects/:id/star", deps.ProjectHandler.Star)
 			protected.DELETE("/projects/:id/star", deps.ProjectHandler.Unstar)
 
+			// Code browsing
+			protected.GET("/projects/:id/code/tree", deps.ProjectHandler.GetCodeTree)
+			protected.GET("/projects/:id/code/file", deps.ProjectHandler.GetCodeFile)
+			protected.GET("/projects/:id/code/branches", deps.ProjectHandler.ListBranches)
+			protected.GET("/projects/:id/code/prs", deps.ProjectHandler.ListPRs)
+			protected.GET("/projects/:id/code/prs/:prNumber", deps.ProjectHandler.GetPRDetail)
+
 			// Tasks
 			if deps.TaskHandler != nil {
 				protected.POST("/projects/:id/tasks", deps.TaskHandler.CreateTask)
@@ -87,6 +96,13 @@ func Setup(deps *Deps) *gin.Engine {
 			if deps.PipelineHandler != nil {
 				protected.GET("/projects/:id/environments", deps.PipelineHandler.ListEnvironments)
 				protected.GET("/projects/:id/environments/:envId", deps.PipelineHandler.GetEnvironment)
+			}
+
+			// Profile
+			if deps.ProfileHandler != nil {
+				protected.GET("/projects/:id/profiles", deps.ProfileHandler.ListProfiles)
+				protected.GET("/projects/:id/profiles/:key", deps.ProfileHandler.GetProfile)
+				protected.POST("/projects/:id/profiles/scan", deps.ProfileHandler.TriggerScan)
 			}
 
 			// Specs Center

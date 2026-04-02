@@ -146,3 +146,105 @@ func (h *Handler) Unstar(c *gin.Context) {
 	}
 	response.OK(c, nil)
 }
+
+// ---------------------------------------------------------------------------
+// Code browsing handlers
+// ---------------------------------------------------------------------------
+
+// GetCodeTree returns the repository file tree.
+// GET /api/projects/:id/code/tree?ref=main
+func (h *Handler) GetCodeTree(c *gin.Context) {
+	userID, tenantID := userCtx(c)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	ref := c.DefaultQuery("ref", "")
+	tree, err := h.svc.GetCodeTree(c.Request.Context(), id, tenantID, userID, ref)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, "获取文件树失败: "+err.Error())
+		return
+	}
+	response.OK(c, gin.H{"files": tree, "ref": ref})
+}
+
+// GetCodeFile returns file content at a given path and ref.
+// GET /api/projects/:id/code/file?path=src/main.go&ref=main
+func (h *Handler) GetCodeFile(c *gin.Context) {
+	userID, tenantID := userCtx(c)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	path := c.Query("path")
+	ref := c.DefaultQuery("ref", "")
+	if path == "" {
+		response.Fail(c, http.StatusBadRequest, "path 参数必填")
+		return
+	}
+	content, err := h.svc.GetCodeFile(c.Request.Context(), id, tenantID, userID, path, ref)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, "获取文件内容失败: "+err.Error())
+		return
+	}
+	response.OK(c, gin.H{"path": path, "content": content, "ref": ref})
+}
+
+// ListBranches returns all branches for the project's repo.
+// GET /api/projects/:id/code/branches
+func (h *Handler) ListBranches(c *gin.Context) {
+	userID, tenantID := userCtx(c)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	branches, err := h.svc.ListBranches(c.Request.Context(), id, tenantID, userID)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, "获取分支列表失败: "+err.Error())
+		return
+	}
+	response.OK(c, gin.H{"branches": branches})
+}
+
+// ListPRs returns pull requests for the project's repo.
+// GET /api/projects/:id/code/prs?state=open
+func (h *Handler) ListPRs(c *gin.Context) {
+	userID, tenantID := userCtx(c)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	state := c.DefaultQuery("state", "open")
+	prs, err := h.svc.ListPRs(c.Request.Context(), id, tenantID, userID, state)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, "获取 PR 列表失败: "+err.Error())
+		return
+	}
+	response.OK(c, gin.H{"prs": prs})
+}
+
+// GetPRDetail returns changed files for a specific pull request.
+// GET /api/projects/:id/code/prs/:prNumber
+func (h *Handler) GetPRDetail(c *gin.Context) {
+	userID, tenantID := userCtx(c)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	prNumber, err := strconv.Atoi(c.Param("prNumber"))
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid PR number")
+		return
+	}
+	files, err := h.svc.GetPRDetail(c.Request.Context(), id, tenantID, userID, prNumber)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, "获取 PR 详情失败: "+err.Error())
+		return
+	}
+	response.OK(c, gin.H{"files": files})
+}
