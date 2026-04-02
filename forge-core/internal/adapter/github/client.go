@@ -154,6 +154,181 @@ func (c *Client) logRateLimit(resp *ghlib.Response) {
 	}
 }
 
+// CreateBranch creates a new branch from the given source ref. If the branch
+// already exists (HTTP 422), the call is treated as a success (idempotent).
+func (c *Client) CreateBranch(ctx context.Context, owner, repo, branchName, fromRef string) error {
+	srcRef, resp, err := c.client.Git.GetRef(ctx, owner, repo, "refs/heads/"+fromRef)
+	if err != nil {
+		return fmt.Errorf("get ref %s: %w", fromRef, err)
+	}
+	c.logRateLimit(resp)
+
+	newRef := &ghlib.Reference{
+		Ref:    ghlib.String("refs/heads/" + branchName),
+		Object: &ghlib.GitObject{SHA: srcRef.Object.SHA},
+	}
+
+	_, resp, err = c.client.Git.CreateRef(ctx, owner, repo, newRef)
+	if err != nil {
+		// 422 means the ref already exists — treat as success (idempotent)
+		if resp != nil && resp.StatusCode == http.StatusUnprocessableEntity {
+			slog.Warn("branch already exists, treating as success",
+				"owner", owner, "repo", repo, "branch", branchName)
+			return nil
+		}
+		return fmt.Errorf("create branch %s: %w", branchName, err)
+	}
+	c.logRateLimit(resp)
+
+	return nil
+}
+
+// CommitFiles commits a batch of file changes to a branch using the Git Trees API.
+func (c *Client) CommitFiles(ctx context.Context, owner, repo, branch, message string, files []FileChange) error {
+	// 1. Get branch ref
+	ref, resp, err := c.client.Git.GetRef(ctx, owner, repo, "refs/heads/"+branch)
+	if err != nil {
+		return fmt.Errorf("get branch ref %s: %w", branch, err)
+	}
+	c.logRateLimit(resp)
+
+	parentSHA := ref.Object.GetSHA()
+
+	// 2. Get the commit to find the base tree
+	parentCommit, resp, err := c.client.Git.GetCommit(ctx, owner, repo, parentSHA)
+	if err != nil {
+		return fmt.Errorf("get commit %s: %w", parentSHA, err)
+	}
+	c.logRateLimit(resp)
+
+	baseTreeSHA := parentCommit.Tree.GetSHA()
+
+	// 3. Build tree entries — create blobs for create/update, nil SHA for delete
+	var entries []*ghlib.TreeEntry
+	for _, f := range files {
+		if f.Action == "delete" {
+			entries = append(entries, &ghlib.TreeEntry{
+				Path: ghlib.String(f.Path),
+				Mode: ghlib.String("100644"),
+				Type: ghlib.String("blob"),
+				// Omitting SHA signals deletion from the tree
+			})
+			continue
+		}
+
+		blob, resp, err := c.client.Git.CreateBlob(ctx, owner, repo, &ghlib.Blob{
+			Content:  ghlib.String(f.Content),
+			Encoding: ghlib.String("utf-8"),
+		})
+		if err != nil {
+			return fmt.Errorf("create blob for %s: %w", f.Path, err)
+		}
+		c.logRateLimit(resp)
+
+		entries = append(entries, &ghlib.TreeEntry{
+			Path: ghlib.String(f.Path),
+			Mode: ghlib.String("100644"),
+			Type: ghlib.String("blob"),
+			SHA:  blob.SHA,
+		})
+	}
+
+	// 4. Create new tree
+	tree, resp, err := c.client.Git.CreateTree(ctx, owner, repo, baseTreeSHA, entries)
+	if err != nil {
+		return fmt.Errorf("create tree: %w", err)
+	}
+	c.logRateLimit(resp)
+
+	// 5. Create commit
+	commit, resp, err := c.client.Git.CreateCommit(ctx, owner, repo, &ghlib.Commit{
+		Message: ghlib.String(message),
+		Tree:    tree,
+		Parents: []*ghlib.Commit{{SHA: ghlib.String(parentSHA)}},
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("create commit: %w", err)
+	}
+	c.logRateLimit(resp)
+
+	// 6. Update branch ref to point to new commit
+	ref.Object.SHA = commit.SHA
+	_, resp, err = c.client.Git.UpdateRef(ctx, owner, repo, ref, false)
+	if err != nil {
+		return fmt.Errorf("update ref: %w", err)
+	}
+	c.logRateLimit(resp)
+
+	return nil
+}
+
+// CreatePR creates a pull request and returns its metadata.
+func (c *Client) CreatePR(ctx context.Context, owner, repo, title, body, head, base string) (*PullRequestInfo, error) {
+	pr, resp, err := c.client.PullRequests.Create(ctx, owner, repo, &ghlib.NewPullRequest{
+		Title: ghlib.String(title),
+		Body:  ghlib.String(body),
+		Head:  ghlib.String(head),
+		Base:  ghlib.String(base),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create PR: %w", err)
+	}
+	c.logRateLimit(resp)
+
+	return &PullRequestInfo{
+		Number:  pr.GetNumber(),
+		HTMLURL: pr.GetHTMLURL(),
+		Title:   pr.GetTitle(),
+		State:   pr.GetState(),
+		Head:    pr.GetHead().GetRef(),
+		Base:    pr.GetBase().GetRef(),
+	}, nil
+}
+
+// GetPRFiles returns the list of changed files in a pull request.
+func (c *Client) GetPRFiles(ctx context.Context, owner, repo string, prNumber int) ([]PRFile, error) {
+	files, resp, err := c.client.PullRequests.ListFiles(ctx, owner, repo, prNumber, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list PR files for #%d: %w", prNumber, err)
+	}
+	c.logRateLimit(resp)
+
+	result := make([]PRFile, 0, len(files))
+	for _, f := range files {
+		result = append(result, PRFile{
+			Filename:  f.GetFilename(),
+			Status:    f.GetStatus(),
+			Additions: f.GetAdditions(),
+			Deletions: f.GetDeletions(),
+			Patch:     f.GetPatch(),
+		})
+	}
+
+	return result, nil
+}
+
+// GetFileContent returns the decoded text content of a file at the given ref.
+func (c *Client) GetFileContent(ctx context.Context, owner, repo, path, ref string) (string, error) {
+	fileContent, _, resp, err := c.client.Repositories.GetContents(ctx, owner, repo, path, &ghlib.RepositoryContentGetOptions{
+		Ref: ref,
+	})
+	if err != nil {
+		return "", fmt.Errorf("get file %s@%s: %w", path, ref, err)
+	}
+	c.logRateLimit(resp)
+
+	if fileContent == nil {
+		return "", fmt.Errorf("path %s is a directory, not a file", path)
+	}
+
+	content, err := fileContent.GetContent()
+	if err != nil {
+		return "", fmt.Errorf("decode content for %s: %w", path, err)
+	}
+
+	return content, nil
+}
+
 func repoFromGitHub(r *ghlib.Repository) Repository {
 	return Repository{
 		ID:            r.GetID(),

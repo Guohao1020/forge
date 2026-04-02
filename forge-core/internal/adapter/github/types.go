@@ -36,3 +36,29 @@ type GitHubUser struct {
 	AvatarURL string `json:"avatar_url"`
 	Email     string `json:"email"`
 }
+
+// FileChange represents a file to commit.
+type FileChange struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+	Action  string `json:"action"` // "create" / "update" / "delete"
+}
+
+// PullRequestInfo represents a created PR.
+type PullRequestInfo struct {
+	Number  int    `json:"number"`
+	HTMLURL string `json:"html_url"`
+	Title   string `json:"title"`
+	State   string `json:"state"`
+	Head    string `json:"head"`
+	Base    string `json:"base"`
+}
+
+// PRFile represents a changed file in a PR.
+type PRFile struct {
+	Filename  string `json:"filename"`
+	Status    string `json:"status"` // "added" / "modified" / "removed"
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Patch     string `json:"patch"`
+}
