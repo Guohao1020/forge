@@ -2,7 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { DagTaskList } from "./dag-task-list";
-import { Clock, GitBranch } from "lucide-react";
+import { Clock, Container, GitBranch } from "lucide-react";
 
 interface PlanTask {
   order: number;
@@ -44,12 +44,27 @@ export function PlanOutputCard({ planOutput }: PlanOutputCardProps) {
 
   const isDag = tasks && tasks.length > 0 && hasDagData(tasks);
 
+  const hasDocker = tasks?.some(
+    (t) =>
+      t.type === "CONFIG" && t.files?.some((f) => f.toLowerCase().includes("dockerfile"))
+      || t.files?.some((f) => f.toLowerCase().includes("dockerfile"))
+  ) ?? false;
+
   return (
     <div className="rounded-xl border border-white/10 bg-card p-5 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium">实施方案</h3>
         <div className="flex items-center gap-2">
+          {hasDocker && (
+            <Badge
+              variant="secondary"
+              className="bg-sky-500/10 text-sky-400 border-sky-500/20 flex items-center gap-1"
+            >
+              <Container className="h-3 w-3" />
+              Docker
+            </Badge>
+          )}
           {/* Estimate + parallel stats in header for DAG mode */}
           {isDag && total_estimate_hours != null && (
             <span className="text-[11px] text-white/40 flex items-center gap-1">
