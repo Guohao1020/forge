@@ -65,6 +65,9 @@ type Task struct {
 	FilesChanged  *int       `json:"files_changed,omitempty"`
 	LinesAdded    *int       `json:"lines_added,omitempty"`
 	LinesDeleted  *int       `json:"lines_deleted,omitempty"`
+	PrNumber      *int       `json:"pr_number,omitempty" db:"pr_number"`
+	MrUrl         *string    `json:"mr_url,omitempty" db:"mr_url"`
+	ReviewScore   *int       `json:"review_score,omitempty" db:"review_score"`
 	CreatedBy     int64      `json:"created_by"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`

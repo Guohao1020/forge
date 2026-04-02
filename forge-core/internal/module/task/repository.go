@@ -34,12 +34,14 @@ func (r *Repository) FindByID(ctx context.Context, taskID int64) (*Task, error) 
 		`SELECT id, tenant_id, project_id, title, requirement, source, status,
 		        workflow_id, workflow_run_id, risk_level, risk_score,
 		        branch_name, files_changed, lines_added, lines_deleted,
+		        pr_number, mr_url, review_score,
 		        created_by, created_at, updated_at, completed_at
 		 FROM engine.tasks WHERE id = $1`,
 		taskID,
 	).Scan(&t.ID, &t.TenantID, &t.ProjectID, &t.Title, &t.Requirement, &t.Source, &t.Status,
 		&t.WorkflowID, &t.WorkflowRunID, &t.RiskLevel, &t.RiskScore,
 		&t.BranchName, &t.FilesChanged, &t.LinesAdded, &t.LinesDeleted,
+		&t.PrNumber, &t.MrUrl, &t.ReviewScore,
 		&t.CreatedBy, &t.CreatedAt, &t.UpdatedAt, &t.CompletedAt)
 	if err != nil {
 		return nil, fmt.Errorf("find task: %w", err)
@@ -66,6 +68,7 @@ func (r *Repository) ListByProject(ctx context.Context, projectID int64, status 
 	listSQL := `SELECT id, tenant_id, project_id, title, requirement, source, status,
 	                   workflow_id, workflow_run_id, risk_level, risk_score,
 	                   branch_name, files_changed, lines_added, lines_deleted,
+	                   pr_number, mr_url, review_score,
 	                   created_by, created_at, updated_at, completed_at
 	            FROM engine.tasks WHERE project_id = $1`
 
@@ -94,6 +97,7 @@ func (r *Repository) ListByProject(ctx context.Context, projectID int64, status 
 		if err := rows.Scan(&t.ID, &t.TenantID, &t.ProjectID, &t.Title, &t.Requirement, &t.Source, &t.Status,
 			&t.WorkflowID, &t.WorkflowRunID, &t.RiskLevel, &t.RiskScore,
 			&t.BranchName, &t.FilesChanged, &t.LinesAdded, &t.LinesDeleted,
+			&t.PrNumber, &t.MrUrl, &t.ReviewScore,
 			&t.CreatedBy, &t.CreatedAt, &t.UpdatedAt, &t.CompletedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan task: %w", err)
 		}
@@ -124,6 +128,17 @@ func (r *Repository) UpdateWorkflowIDs(ctx context.Context, taskID int64, workfl
 		workflowID, runID, taskID,
 	)
 	return err
+}
+
+func (r *Repository) UpdatePRInfo(ctx context.Context, taskID int64, prNumber int, mrUrl string, reviewScore int) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE engine.tasks SET pr_number = $2, mr_url = $3, review_score = $4, updated_at = NOW() WHERE id = $1`,
+		taskID, prNumber, mrUrl, reviewScore,
+	)
+	if err != nil {
+		return fmt.Errorf("update PR info: %w", err)
+	}
+	return nil
 }
 
 func (r *Repository) MarkCompleted(ctx context.Context, taskID int64, status string) error {
