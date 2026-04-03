@@ -44,3 +44,4 @@ build/
 .env
 .env.local
 *.env.local
+forge-core/k8s/kubeconfig
