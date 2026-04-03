@@ -20,6 +20,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/testresult"
 	forgetemporal "github.com/shulex/forge/forge-core/internal/temporal"
 	"github.com/shulex/forge/forge-core/internal/temporal/activity"
+	"github.com/shulex/forge/forge-core/internal/workspace"
 	"github.com/shulex/forge/forge-core/internal/pkg/database"
 	forgeRedis "github.com/shulex/forge/forge-core/internal/pkg/redis"
 	"github.com/shulex/forge/forge-core/internal/router"
@@ -65,6 +66,9 @@ func main() {
 	// Task module — SSEHub must be created before Temporal worker
 	sseHub := task.NewSSEHub()
 
+	// Workspace manager (local git clones + per-task worktrees)
+	workspaceMgr := workspace.NewManager(cfg.WorkspaceRoot)
+
 	// Temporal (optional — gracefully skip if unavailable)
 	var workflowStarter task.WorkflowStarter
 	temporalClient, err := forgetemporal.NewClient(ctx, cfg.TemporalAddress)
@@ -76,7 +80,7 @@ func main() {
 
 		taskRepoForWorker := task.NewRepository(db)
 		_, err := forgetemporal.StartWorker(temporalClient.Inner(), db, sseHub,
-			authService, activity.NewProjectRepoAdapter(projectRepo), taskRepoForWorker)
+			authService, activity.NewProjectRepoAdapter(projectRepo), taskRepoForWorker, workspaceMgr)
 		if err != nil {
 			slog.Error("failed to start temporal worker", "error", err)
 		}

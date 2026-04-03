@@ -23,6 +23,9 @@ type Config struct {
 
 	// Encryption
 	EncryptionKey string
+
+	// Workspace
+	WorkspaceRoot string
 }
 
 func Load() *Config {
@@ -41,6 +44,8 @@ func Load() *Config {
 		TemporalAddress: getEnv("TEMPORAL_ADDRESS", "localhost:7233"),
 
 		EncryptionKey: getEnv("ENCRYPTION_KEY", ""),
+
+		WorkspaceRoot: getEnv("FORGE_WORKSPACE_ROOT", "./workspaces"),
 	}
 }
 

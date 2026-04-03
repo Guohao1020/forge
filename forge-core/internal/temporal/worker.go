@@ -12,10 +12,11 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/task"
 	"github.com/shulex/forge/forge-core/internal/temporal/activity"
 	wf "github.com/shulex/forge/forge-core/internal/temporal/workflow"
+	"github.com/shulex/forge/forge-core/internal/workspace"
 )
 
 // StartWorker creates and starts a Temporal worker in a goroutine.
-func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken activity.AuthTokenProvider, projectProv activity.ProjectProvider, taskPR activity.TaskPRUpdater) (worker.Worker, error) {
+func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken activity.AuthTokenProvider, projectProv activity.ProjectProvider, taskPR activity.TaskPRUpdater, ws *workspace.Manager) (worker.Worker, error) {
 	w := worker.New(c, TaskQueueName, worker.Options{})
 
 	w.RegisterWorkflowWithOptions(wf.TaskWorkflow, workflow.RegisterOptions{
@@ -53,7 +54,7 @@ func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken 
 	})
 
 	// DevOps activities (GitHub operations)
-	devops := activity.NewDevOpsActivities(db, authToken, projectProv, taskPR, sse)
+	devops := activity.NewDevOpsActivities(db, authToken, projectProv, taskPR, sse, ws)
 	w.RegisterActivityWithOptions(devops.PushToGitHub, sdkactivity.RegisterOptions{
 		Name: "PushToGitHub",
 	})

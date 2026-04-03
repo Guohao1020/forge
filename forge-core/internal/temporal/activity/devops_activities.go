@@ -11,6 +11,7 @@ import (
 
 	ghAdapter "github.com/shulex/forge/forge-core/internal/adapter/github"
 	"github.com/shulex/forge/forge-core/internal/module/task"
+	"github.com/shulex/forge/forge-core/internal/workspace"
 )
 
 // AuthTokenProvider retrieves the decrypted GitHub access token for a user.
@@ -41,16 +42,18 @@ type DevOpsActivities struct {
 	projectProv ProjectProvider
 	taskPR      TaskPRUpdater
 	sse         *task.SSEHub
+	ws          *workspace.Manager // optional — nil means skip local workspace ops
 }
 
 // NewDevOpsActivities creates a new DevOpsActivities instance.
-func NewDevOpsActivities(db *pgxpool.Pool, auth AuthTokenProvider, proj ProjectProvider, taskPR TaskPRUpdater, sse *task.SSEHub) *DevOpsActivities {
+func NewDevOpsActivities(db *pgxpool.Pool, auth AuthTokenProvider, proj ProjectProvider, taskPR TaskPRUpdater, sse *task.SSEHub, ws *workspace.Manager) *DevOpsActivities {
 	return &DevOpsActivities{
 		db:          db,
 		authToken:   auth,
 		projectProv: proj,
 		taskPR:      taskPR,
 		sse:         sse,
+		ws:          ws,
 	}
 }
 
@@ -115,6 +118,28 @@ func (a *DevOpsActivities) PushToGitHub(ctx context.Context, input PushToGitHubI
 	owner, repo, err := parseRepoURL(proj.CodeRepoURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse repo url: %w", err)
+	}
+
+	// Sync to local workspace (optional — graceful if git CLI unavailable)
+	if a.ws != nil {
+		if _, err := a.ws.EnsureClone(ctx, input.TenantID, input.ProjectID, proj.CodeRepoURL, token, proj.DefaultBranch); err != nil {
+			slog.Warn("workspace: clone failed, skipping local copy", "task_id", input.TaskID, "error", err)
+		} else {
+			branchForWorktree := fmt.Sprintf("ai/%d-code", input.TaskID)
+			taskDir, wtErr := a.ws.CreateWorktree(ctx, input.TenantID, input.ProjectID, input.TaskID, branchForWorktree)
+			if wtErr != nil {
+				slog.Warn("workspace: worktree creation failed", "task_id", input.TaskID, "error", wtErr)
+			} else {
+				// Write files to local worktree
+				wsFiles := make([]workspace.FileToWrite, 0, len(files))
+				for _, f := range files {
+					wsFiles = append(wsFiles, workspace.FileToWrite{Path: f.Path, Content: f.Content})
+				}
+				if wfErr := a.ws.WriteFiles(taskDir, wsFiles); wfErr != nil {
+					slog.Warn("workspace: write files failed", "task_id", input.TaskID, "error", wfErr)
+				}
+			}
+		}
 	}
 
 	gh := ghAdapter.NewClient(token)
