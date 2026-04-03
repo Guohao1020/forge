@@ -240,18 +240,26 @@ func parseOwnerRepo(rawURL string) (string, string) {
 
 // GetCodeTree returns the file tree for a given ref (branch/tag/SHA).
 // Tries local workspace first (fast), falls back to GitHub API.
-// Always git-pulls before reading to ensure consistency with remote.
+// Git pull runs async in background — returns cached files immediately.
 func (s *Service) GetCodeTree(ctx context.Context, projectID, tenantID, userID int64, ref string) ([]string, error) {
 	// Try local workspace first (default branch only)
 	if s.ws != nil && (ref == "" || ref == "main" || ref == "master") {
 		dir := s.ws.ProjectDir(tenantID, projectID)
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			// git pull to sync with remote
-			pullCmd := exec.CommandContext(ctx, "git", "-C", dir, "pull", "--ff-only")
-			pullCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-			if out, err := pullCmd.CombinedOutput(); err != nil {
-				slog.Warn("git pull failed, using cached local files", "dir", dir, "error", err, "output", string(out))
-			}
+			// Async git pull — don't block the request
+			go func() {
+				pullCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				pullCmd := exec.CommandContext(pullCtx, "git", "-C", dir, "pull", "--ff-only")
+				pullCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+				if out, err := pullCmd.CombinedOutput(); err != nil {
+					slog.Debug("background git pull failed", "dir", dir, "error", err, "output", string(out))
+				} else {
+					slog.Debug("background git pull succeeded", "dir", dir)
+				}
+			}()
+
+			// Return cached local files immediately
 			if files, err := listLocalFiles(dir); err == nil && len(files) > 0 {
 				slog.Debug("code tree from local workspace", "project_id", projectID, "files", len(files))
 				return files, nil
