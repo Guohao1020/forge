@@ -9,6 +9,7 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	"github.com/shulex/forge/forge-core/internal/k8s"
 	"github.com/shulex/forge/forge-core/internal/module/task"
 	"github.com/shulex/forge/forge-core/internal/temporal/activity"
 	wf "github.com/shulex/forge/forge-core/internal/temporal/workflow"
@@ -16,7 +17,7 @@ import (
 )
 
 // StartWorker creates and starts a Temporal worker in a goroutine.
-func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken activity.AuthTokenProvider, projectProv activity.ProjectProvider, taskPR activity.TaskPRUpdater, ws *workspace.Manager) (worker.Worker, error) {
+func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken activity.AuthTokenProvider, projectProv activity.ProjectProvider, taskPR activity.TaskPRUpdater, ws *workspace.Manager, k8sClient *k8s.Client) (worker.Worker, error) {
 	w := worker.New(c, TaskQueueName, worker.Options{})
 
 	w.RegisterWorkflowWithOptions(wf.TaskWorkflow, workflow.RegisterOptions{
@@ -26,7 +27,7 @@ func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken 
 		Name: "AnalyzeRequirementWorkflow",
 	})
 
-	activities := activity.NewTaskActivities(db, sse)
+	activities := activity.NewTaskActivities(db, sse, k8sClient)
 	w.RegisterActivityWithOptions(activities.ExecuteStep, sdkactivity.RegisterOptions{
 		Name: "ExecuteStep",
 	})

@@ -61,7 +61,7 @@ func main() {
 			slog.Warn("k8s not available, jobs will use mock mode", "error", err)
 		}
 	}
-	_ = k8sClient // TODO: pass to activities/services that need it
+	// k8sClient may be nil — activities fall back to mock mode
 
 	// Auth module
 	authRepo := auth.NewRepository(db)
@@ -91,7 +91,7 @@ func main() {
 
 		taskRepoForWorker := task.NewRepository(db)
 		_, err := forgetemporal.StartWorker(temporalClient.Inner(), db, sseHub,
-			authService, activity.NewProjectRepoAdapter(projectRepo), taskRepoForWorker, workspaceMgr)
+			authService, activity.NewProjectRepoAdapter(projectRepo), taskRepoForWorker, workspaceMgr, k8sClient)
 		if err != nil {
 			slog.Error("failed to start temporal worker", "error", err)
 		}
