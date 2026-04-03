@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -239,13 +240,22 @@ func parseOwnerRepo(rawURL string) (string, string) {
 
 // GetCodeTree returns the file tree for a given ref (branch/tag/SHA).
 // Tries local workspace first (fast), falls back to GitHub API.
+// Always git-pulls before reading to ensure consistency with remote.
 func (s *Service) GetCodeTree(ctx context.Context, projectID, tenantID, userID int64, ref string) ([]string, error) {
 	// Try local workspace first (default branch only)
 	if s.ws != nil && (ref == "" || ref == "main" || ref == "master") {
 		dir := s.ws.ProjectDir(tenantID, projectID)
-		if files, err := listLocalFiles(dir); err == nil && len(files) > 0 {
-			slog.Debug("code tree from local workspace", "project_id", projectID, "files", len(files))
-			return files, nil
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			// git pull to sync with remote
+			pullCmd := exec.CommandContext(ctx, "git", "-C", dir, "pull", "--ff-only")
+			pullCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+			if out, err := pullCmd.CombinedOutput(); err != nil {
+				slog.Warn("git pull failed, using cached local files", "dir", dir, "error", err, "output", string(out))
+			}
+			if files, err := listLocalFiles(dir); err == nil && len(files) > 0 {
+				slog.Debug("code tree from local workspace", "project_id", projectID, "files", len(files))
+				return files, nil
+			}
 		}
 	}
 
