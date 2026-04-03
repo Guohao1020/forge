@@ -34,6 +34,14 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 		},
 	})
 
+	// Mark ANALYZE as completed since analysis was done during conversation
+	_ = workflow.ExecuteActivity(localCtx, "ExecuteStep", activity.StepInput{
+		TaskID: input.TaskID, StepType: "ANALYZE", TaskStatus: "ANALYZING", Duration: 0,
+	}).Get(ctx, nil)
+	_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "ANALYZE", map[string]interface{}{
+		"status": "completed_during_conversation",
+	}).Get(ctx, nil)
+
 	// ---- Step 1: Plan ----
 	err := workflow.ExecuteActivity(localCtx, "ExecuteStep", activity.StepInput{
 		TaskID: input.TaskID, StepType: "PLAN", TaskStatus: "PLANNING", Duration: 0,

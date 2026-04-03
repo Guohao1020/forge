@@ -156,14 +156,14 @@ export default function TaskDetailPage() {
                 {STATUS_LABELS[task.status] || task.status}
               </Badge>
               <span className="text-[10px] text-muted-foreground">#{task.id}</span>
-              {task.reviewScore != null && (
-                <span className={`text-[10px] font-mono ${task.reviewScore >= 90 ? "text-emerald-400" : task.reviewScore >= 70 ? "text-yellow-400" : "text-red-400"}`}>
-                  评分 {task.reviewScore}
+              {task.review_score != null && (
+                <span className={`text-[10px] font-mono ${task.review_score >= 90 ? "text-emerald-400" : task.review_score >= 70 ? "text-yellow-400" : "text-red-400"}`}>
+                  评分 {task.review_score}
                 </span>
               )}
-              {task.mrUrl && (
+              {task.mr_url && (
                 <a
-                  href={task.mrUrl}
+                  href={task.mr_url}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 transition-colors"

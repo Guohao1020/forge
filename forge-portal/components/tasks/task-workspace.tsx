@@ -25,10 +25,10 @@ interface PlanOutput {
 
 interface GenerateOutput {
   files: { path: string; content: string; action: string; language?: string }[];
-  commitMessage?: string;
-  filesChanged?: number;
-  linesAdded?: number;
-  linesDeleted?: number;
+  commit_message?: string;
+  files_changed?: number;
+  lines_added?: number;
+  lines_deleted?: number;
 }
 
 interface ReviewOutput {
@@ -184,10 +184,10 @@ export function TaskWorkspace({ selectedStep, steps, requirement, streamingToken
             <h3 className="text-sm font-medium mb-3">生成代码预览</h3>
             <CodePreviewPanel
               files={output.files}
-              commitMessage={output.commitMessage}
-              filesChanged={output.filesChanged}
-              linesAdded={output.linesAdded}
-              linesDeleted={output.linesDeleted}
+              commitMessage={output.commit_message}
+              filesChanged={output.files_changed}
+              linesAdded={output.lines_added}
+              linesDeleted={output.lines_deleted}
             />
           </div>
         );
@@ -264,11 +264,11 @@ export function TaskWorkspace({ selectedStep, steps, requirement, streamingToken
     return <EmptyState />;
   }
 
-  // DEPLOY / other future steps
+  // DEPLOY step
   if (step_type === "DEPLOY") {
-    if (status === "RUNNING") return <RunningState message="部署中..." />;
+    if (status === "RUNNING") return <RunningState message="正在推送代码到 GitHub..." />;
     if (status === "COMPLETED") {
-      const output = tryParseOutput<{ branch_name?: string; pr_number?: number; pr_url?: string; skipped?: boolean }>(selectedStep);
+      const output = tryParseOutput<{ branch_name?: string; pr_number?: number; pr_url?: string; preview_url?: string; skipped?: boolean; error?: string }>(selectedStep);
       if (output && !output.skipped) {
         return (
           <div className="rounded-xl border border-white/10 bg-card p-5">
@@ -281,13 +281,27 @@ export function TaskWorkspace({ selectedStep, steps, requirement, streamingToken
               {output.pr_url && (
                 <p>PR: <a href={output.pr_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">#{output.pr_number}</a></p>
               )}
+              {output.preview_url && (
+                <p>预览: <a href={output.preview_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{output.preview_url}</a></p>
+              )}
             </div>
+          </div>
+        );
+      }
+      if (output?.skipped) {
+        return (
+          <div className="rounded-xl border border-white/10 bg-card p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <Rocket className="h-5 w-5 text-white/30" />
+              <h3 className="text-sm font-medium text-white/50">部署已跳过</h3>
+            </div>
+            {output.error && <p className="text-sm text-white/40">{output.error}</p>}
           </div>
         );
       }
     }
     if (status === "PENDING") return <EmptyState />;
-    return <ComingSoonState />;
+    return <EmptyState />;
   }
 
   return <EmptyState />;

@@ -122,7 +122,7 @@ export default function ChangesPage() {
       setGenerateOutput(genOut);
       setReviewOutput(revOut);
       setPlanOutput(planOut);
-      setMrUrl(completedTasks[0].mrUrl);
+      setMrUrl(completedTasks[0].mr_url);
     } catch (err) {
       console.error("Failed to fetch changes:", err);
       setGenerateOutput(null);

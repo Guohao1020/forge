@@ -14,9 +14,9 @@ export interface Task {
   created_at: string;
   updated_at: string;
   completed_at?: string;
-  prNumber?: number;
-  mrUrl?: string;
-  reviewScore?: number;
+  pr_number?: number;
+  mr_url?: string;
+  review_score?: number;
 }
 
 export interface TaskStep {
