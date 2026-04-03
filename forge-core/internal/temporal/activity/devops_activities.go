@@ -266,8 +266,8 @@ func toFileChanges(raw interface{}) ([]ghAdapter.FileChange, error) {
 //
 // Examples:
 //
-//	feature/20260403/1/1/health-check-svc
-//	fix/20260403/1/1/fix-login-bug
+//	feature/20260403/1/1/12-health-check
+//	fix/20260403/1/1/15-fix-login-bug
 func generateBranchName(taskID int64, tenantID int64, userID int64, title string) string {
 	date := time.Now().Format("20060102")
 	slug := toSlug(title)
@@ -287,7 +287,7 @@ func generateBranchName(taskID int64, tenantID int64, userID int64, title string
 		prefix = "fix"
 	}
 
-	return fmt.Sprintf("%s/%s/%d/%d/%s", prefix, date, tenantID, userID, slug)
+	return fmt.Sprintf("%s/%s/%d/%d/%d-%s", prefix, date, tenantID, userID, taskID, slug)
 }
 
 // toSlug converts a string to a URL/branch-safe kebab-case slug.
