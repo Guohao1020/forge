@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/shulex/forge/forge-core/internal/config"
+	"github.com/shulex/forge/forge-core/internal/k8s"
 	"go.temporal.io/sdk/client"
 
 	"github.com/shulex/forge/forge-core/internal/module/artifact"
@@ -51,6 +52,16 @@ func main() {
 		slog.Error("failed to run migrations", "error", err)
 		os.Exit(1)
 	}
+
+	// K8s client (optional — gracefully skip if unavailable)
+	var k8sClient *k8s.Client
+	if cfg.KubeconfigPath != "" {
+		k8sClient, err = k8s.NewClient(cfg.KubeconfigPath)
+		if err != nil {
+			slog.Warn("k8s not available, jobs will use mock mode", "error", err)
+		}
+	}
+	_ = k8sClient // TODO: pass to activities/services that need it
 
 	// Auth module
 	authRepo := auth.NewRepository(db)

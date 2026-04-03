@@ -24,6 +24,9 @@ type Config struct {
 	// Encryption
 	EncryptionKey string
 
+	// Kubernetes
+	KubeconfigPath string
+
 	// Workspace
 	WorkspaceRoot string
 }
@@ -44,6 +47,8 @@ func Load() *Config {
 		TemporalAddress: getEnv("TEMPORAL_ADDRESS", "localhost:7233"),
 
 		EncryptionKey: getEnv("ENCRYPTION_KEY", ""),
+
+		KubeconfigPath: getEnv("KUBECONFIG_PATH", "k8s/kubeconfig"),
 
 		WorkspaceRoot: getEnv("FORGE_WORKSPACE_ROOT", "./workspaces"),
 	}
