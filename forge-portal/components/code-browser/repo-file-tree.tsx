@@ -50,6 +50,28 @@ function getFileIcon(name: string) {
 function buildTree(files: string[]): TreeNode[] {
   const root: TreeNode[] = [];
 
+  // Pre-compute which paths are directories:
+  // A path is a directory if any other path starts with it + "/"
+  const pathSet = new Set(files);
+  const dirSet = new Set<string>();
+  for (const filePath of files) {
+    const parts = filePath.split("/");
+    let prefix = "";
+    for (let i = 0; i < parts.length - 1; i++) {
+      prefix = prefix ? `${prefix}/${parts[i]}` : parts[i];
+      dirSet.add(prefix);
+    }
+  }
+  // Also check: if a path exists in pathSet AND is a prefix of another path, it's a dir
+  for (const filePath of files) {
+    for (const other of files) {
+      if (other !== filePath && other.startsWith(filePath + "/")) {
+        dirSet.add(filePath);
+        break;
+      }
+    }
+  }
+
   for (const filePath of files) {
     const parts = filePath.split("/");
     let current = root;
@@ -59,16 +81,20 @@ function buildTree(files: string[]): TreeNode[] {
       const part = parts[i];
       pathSoFar = pathSoFar ? `${pathSoFar}/${part}` : part;
       const isLast = i === parts.length - 1;
+      const isDir = !isLast || dirSet.has(pathSoFar);
 
       let node = current.find((n) => n.name === part);
       if (!node) {
         node = {
           name: part,
           fullPath: pathSoFar,
-          isDir: !isLast,
+          isDir,
           children: [],
         };
         current.push(node);
+      } else if (isDir && !node.isDir) {
+        // Upgrade to directory if we discover it's a prefix
+        node.isDir = true;
       }
       current = node.children;
     }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { Code2, Loader2, GitPullRequest, AlertCircle } from "lucide-react";
+import { Code2, Loader2, GitBranch, AlertCircle, FileCode } from "lucide-react";
 import { getCodeTree, getCodeFile, listBranches } from "@/lib/code";
 import type { Branch } from "@/lib/code";
 import { BranchSelector } from "@/components/code-browser/branch-selector";
@@ -150,6 +150,16 @@ export default function CodeBrowserPage() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left: file tree */}
         <div className="w-[260px] shrink-0 border-r border-white/10 overflow-y-auto bg-white/[0.01]">
+          {/* 仓库信息栏 */}
+          {!treeLoading && files.length > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10 text-xs text-white/40">
+              <GitBranch className="h-3 w-3 text-[#8B5CF6]" />
+              <span className="font-mono text-white/60">{currentBranch}</span>
+              <span className="mx-1">·</span>
+              <FileCode className="h-3 w-3" />
+              <span>{files.length} 个文件</span>
+            </div>
+          )}
           {treeLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-5 w-5 animate-spin text-white/20" />

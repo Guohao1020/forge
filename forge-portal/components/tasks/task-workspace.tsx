@@ -5,7 +5,7 @@ import { CodePreviewPanel } from "@/components/code-preview/code-preview-panel";
 import { ShikiCodeViewer } from "@/components/code-preview/shiki-code-viewer";
 import { PlanOutputCard } from "./plan-output-card";
 import { ReviewReportCard } from "./review-report-card";
-import { Loader2, FileText, Rocket, FlaskConical } from "lucide-react";
+import { Loader2, FileText, Rocket, FlaskConical, MessageSquareCheck } from "lucide-react";
 import { StreamingCodeView } from "./streaming-code-view";
 
 interface TaskWorkspaceProps {
@@ -106,11 +106,24 @@ export function TaskWorkspace({ selectedStep, steps, requirement, streamingToken
           <p className="text-sm text-white/70 whitespace-pre-wrap">{requirement}</p>
         </div>
         {status === "RUNNING" && <RunningState message="AI 正在分析需求..." />}
-        {status === "COMPLETED" && analysisOutput?.summary && (
-          <div className="rounded-xl border border-white/10 bg-card p-5">
-            <h3 className="text-sm font-medium mb-2">分析摘要</h3>
-            <p className="text-sm text-white/60 whitespace-pre-wrap">{analysisOutput.summary}</p>
-          </div>
+        {status === "COMPLETED" && (
+          <>
+            {analysisOutput?.summary && (
+              <div className="rounded-xl border border-white/10 bg-card p-5">
+                <h3 className="text-sm font-medium mb-2">分析摘要</h3>
+                <p className="text-sm text-white/60 whitespace-pre-wrap">{analysisOutput.summary}</p>
+              </div>
+            )}
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5">
+              <div className="flex items-center gap-2 mb-2">
+                <MessageSquareCheck className="h-4 w-4 text-emerald-400" />
+                <h3 className="text-sm font-medium text-emerald-400">需求确认</h3>
+              </div>
+              <p className="text-sm text-white/50">
+                需求已通过对话确认，AI 已理解并准备执行后续步骤。
+              </p>
+            </div>
+          </>
         )}
       </div>
     );
