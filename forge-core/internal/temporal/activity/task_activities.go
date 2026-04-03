@@ -20,6 +20,7 @@ type TaskWorkflowInput struct {
 	ProjectID   int64  `json:"project_id"`
 	CreatedBy   int64  `json:"created_by"`
 	Requirement string `json:"requirement"`
+	Title       string `json:"title"`
 }
 
 type TaskActivities struct {
@@ -170,10 +171,24 @@ func (a *TaskActivities) SaveTaskNodes(ctx context.Context, taskID int64, nodes 
 	return nil
 }
 
+// RunTestsOutput contains the results of test execution for the step output.
+type RunTestsOutput struct {
+	Status      string `json:"status"`
+	Mock        bool   `json:"mock"`
+	Framework   string `json:"framework"`
+	Total       int    `json:"total"`
+	Passed      int    `json:"passed"`
+	Failed      int    `json:"failed"`
+	CoveragePct float64 `json:"coverage_pct"`
+	DurationMs  int    `json:"duration_ms"`
+	K8sJob      string `json:"k8s_job,omitempty"`
+	Logs        string `json:"logs,omitempty"`
+}
+
 // RunTests executes test cases and saves results to the database.
 // When a K8s client is available, it creates a real K8s Job to run tests.
 // Otherwise it falls back to mock results.
-func (a *TaskActivities) RunTests(ctx context.Context, taskID int64, testCases map[string]interface{}) error {
+func (a *TaskActivities) RunTests(ctx context.Context, taskID int64, testCases map[string]interface{}) (*RunTestsOutput, error) {
 	framework := "unknown"
 	if f, ok := testCases["framework"].(string); ok {
 		framework = f
@@ -188,7 +203,6 @@ func (a *TaskActivities) RunTests(ctx context.Context, taskID int64, testCases m
 		total = int(tc)
 	}
 
-	usedK8s := false
 	if a.k8s != nil {
 		jobName := fmt.Sprintf("test-%d-%d", taskID, time.Now().Unix())
 		err := a.k8s.CreateJob(ctx, jobName, "golang:1.22-alpine",
@@ -231,7 +245,6 @@ func (a *TaskActivities) RunTests(ctx context.Context, taskID int64, testCases m
 			}
 
 			if jobStatus == "SUCCEEDED" {
-				usedK8s = true
 				logs, logErr := a.k8s.GetJobLogs(ctx, jobName)
 				if logErr != nil {
 					slog.Warn("failed to get k8s job logs", "job", jobName, "error", logErr)
@@ -245,8 +258,35 @@ func (a *TaskActivities) RunTests(ctx context.Context, taskID int64, testCases m
 					 VALUES ($1, 'UNIT', $2, $3, $3, 0, 0, 0, 0, $4::jsonb, 'PASSED')`,
 					taskID, framework, total, string(reportJSON))
 				if dbErr != nil {
-					return fmt.Errorf("insert k8s test results: %w", dbErr)
+					return nil, fmt.Errorf("insert k8s test results: %w", dbErr)
 				}
+
+				if a.sse != nil {
+					a.sse.Broadcast(taskID, task.TaskProgressEvent{
+						Type:       "step_progress",
+						TaskID:     taskID,
+						Status:     "TESTING",
+						StepType:   "TEST",
+						StepStatus: "COMPLETED",
+						Data: map[string]interface{}{
+							"total":  total,
+							"passed": total,
+							"failed": 0,
+							"k8s":    true,
+						},
+					})
+				}
+
+				slog.Info("test results saved (k8s)", "task_id", taskID, "total", total, "framework", framework, "job", jobName)
+				return &RunTestsOutput{
+					Status:    "PASSED",
+					Mock:      false,
+					Framework: framework,
+					Total:     total,
+					Passed:    total,
+					K8sJob:    jobName,
+					Logs:      logs,
+				}, nil
 			} else if jobStatus == "FAILED" {
 				slog.Warn("k8s test job failed", "job", jobName, "status", jobStatus)
 				// Fall through to mock
@@ -254,19 +294,17 @@ func (a *TaskActivities) RunTests(ctx context.Context, taskID int64, testCases m
 		}
 	}
 
-	if !usedK8s {
-		// Mock/default results (used when k8s unavailable or job creation fails)
-		slog.Info("running tests (mock mode)", "task_id", taskID)
-		coveragePct := 85.0
-		durationMs := 3200 + (total * 400)
+	// Mock/default results (used when k8s unavailable or job creation fails)
+	slog.Info("running tests (mock mode)", "task_id", taskID)
+	coveragePct := 85.0
+	durationMs := 3200 + (total * 400)
 
-		_, err := a.db.Exec(ctx,
-			`INSERT INTO engine.test_results (task_id, layer, framework, total_cases, passed, failed, skipped, coverage_pct, duration_ms, report, status)
-			 VALUES ($1, 'UNIT', $2, $3, $3, 0, 0, $4, $5, '{"mock": true, "message": "Mock test execution - all tests passed"}'::jsonb, 'PASSED')`,
-			taskID, framework, total, coveragePct, durationMs)
-		if err != nil {
-			return fmt.Errorf("insert mock test results: %w", err)
-		}
+	_, err := a.db.Exec(ctx,
+		`INSERT INTO engine.test_results (task_id, layer, framework, total_cases, passed, failed, skipped, coverage_pct, duration_ms, report, status)
+		 VALUES ($1, 'UNIT', $2, $3, $3, 0, 0, $4, $5, '{"mock": true, "message": "Mock test execution - all tests passed"}'::jsonb, 'PASSED')`,
+		taskID, framework, total, coveragePct, durationMs)
+	if err != nil {
+		return nil, fmt.Errorf("insert mock test results: %w", err)
 	}
 
 	if a.sse != nil {
@@ -280,13 +318,21 @@ func (a *TaskActivities) RunTests(ctx context.Context, taskID int64, testCases m
 				"total":  total,
 				"passed": total,
 				"failed": 0,
-				"k8s":    usedK8s,
+				"k8s":    false,
 			},
 		})
 	}
 
-	slog.Info("test results saved", "task_id", taskID, "total", total, "framework", framework, "k8s", usedK8s)
-	return nil
+	slog.Info("test results saved (mock)", "task_id", taskID, "total", total, "framework", framework)
+	return &RunTestsOutput{
+		Status:      "PASSED",
+		Mock:        true,
+		Framework:   framework,
+		Total:       total,
+		Passed:      total,
+		CoveragePct: coveragePct,
+		DurationMs:  durationMs,
+	}, nil
 }
 
 // SaveStepOutput saves the output of a workflow step.

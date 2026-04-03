@@ -181,6 +181,7 @@ func (s *Service) ConfirmPlan(ctx context.Context, taskID, tenantID int64) error
 		ProjectID:   t.ProjectID,
 		CreatedBy:   t.CreatedBy,
 		Requirement: t.Requirement,
+		Title:       derefStr(t.Title),
 	})
 	if err != nil {
 		return fmt.Errorf("start generation workflow: %w", err)
@@ -219,4 +220,12 @@ func (s *Service) GetHistory(ctx context.Context, taskID int64) ([]*Conversation
 		convs = []*Conversation{}
 	}
 	return convs, nil
+}
+
+// derefStr safely dereferences a *string, returning "" if nil.
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

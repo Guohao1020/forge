@@ -64,6 +64,7 @@ type PushToGitHubInput struct {
 	TenantID      int64       `json:"tenant_id"`
 	ProjectID     int64       `json:"project_id"`
 	CreatedBy     int64       `json:"created_by"`
+	Title         string      `json:"title"`
 	Files         interface{} `json:"files"` // []FileChange or []map[string]interface{} from Temporal
 	CommitMessage string      `json:"commit_message"`
 }
@@ -120,13 +121,14 @@ func (a *DevOpsActivities) PushToGitHub(ctx context.Context, input PushToGitHubI
 		return nil, fmt.Errorf("parse repo url: %w", err)
 	}
 
+	branchName := generateBranchName(input.TaskID, input.Title)
+
 	// Sync to local workspace (optional — graceful if git CLI unavailable)
 	if a.ws != nil {
 		if _, err := a.ws.EnsureClone(ctx, input.TenantID, input.ProjectID, proj.CodeRepoURL, token, proj.DefaultBranch); err != nil {
 			slog.Warn("workspace: clone failed, skipping local copy", "task_id", input.TaskID, "error", err)
 		} else {
-			branchForWorktree := fmt.Sprintf("ai/%d-code", input.TaskID)
-			taskDir, wtErr := a.ws.CreateWorktree(ctx, input.TenantID, input.ProjectID, input.TaskID, branchForWorktree)
+			taskDir, wtErr := a.ws.CreateWorktree(ctx, input.TenantID, input.ProjectID, input.TaskID, branchName)
 			if wtErr != nil {
 				slog.Warn("workspace: worktree creation failed", "task_id", input.TaskID, "error", wtErr)
 			} else {
@@ -143,7 +145,6 @@ func (a *DevOpsActivities) PushToGitHub(ctx context.Context, input PushToGitHubI
 	}
 
 	gh := ghAdapter.NewClient(token)
-	branchName := fmt.Sprintf("ai/%d-code", input.TaskID)
 
 	// Create branch from default branch
 	if err := gh.CreateBranch(ctx, owner, repo, branchName, proj.DefaultBranch); err != nil {
@@ -252,6 +253,52 @@ func toFileChanges(raw interface{}) ([]ghAdapter.FileChange, error) {
 		return nil, fmt.Errorf("unmarshal files: %w", err)
 	}
 	return files, nil
+}
+
+// generateBranchName builds a descriptive branch name from task ID and title.
+// Branch naming rule:
+//
+//	ai/{taskId}-{slug}
+//	slug = first 30 chars of task title, kebab-case, ASCII only
+//
+// Examples:
+//
+//	ai/12-health-check-service
+//	ai/15-add-user-authentication
+//	ai/20-fix-payment-bug
+func generateBranchName(taskID int64, title string) string {
+	slug := toSlug(title)
+	if slug == "" {
+		slug = "feature"
+	}
+	if len(slug) > 30 {
+		slug = slug[:30]
+	}
+	// Remove trailing dash
+	slug = strings.TrimRight(slug, "-")
+	return fmt.Sprintf("ai/%d-%s", taskID, slug)
+}
+
+// toSlug converts a string to a URL/branch-safe kebab-case slug.
+// Keeps only a-z, 0-9, replaces spaces/underscores/dashes with single dashes,
+// and drops Chinese and other non-ASCII characters.
+func toSlug(s string) string {
+	s = strings.ToLower(s)
+	var buf strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			buf.WriteRune(r)
+		} else if r == ' ' || r == '_' || r == '-' {
+			buf.WriteByte('-')
+		}
+		// Skip Chinese and other chars
+	}
+	result := buf.String()
+	// Collapse multiple dashes
+	for strings.Contains(result, "--") {
+		result = strings.ReplaceAll(result, "--", "-")
+	}
+	return strings.Trim(result, "-")
 }
 
 // parseRepoURL extracts owner and repo from a GitHub URL.

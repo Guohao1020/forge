@@ -192,24 +192,27 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 		if testInput == nil {
 			testInput = map[string]interface{}{}
 		}
-		testErr := workflow.ExecuteActivity(localCtx, "RunTests", input.TaskID, testInput).Get(ctx, nil)
+		var runTestsOutput activity.RunTestsOutput
+		testErr := workflow.ExecuteActivity(localCtx, "RunTests", input.TaskID, testInput).Get(ctx, &runTestsOutput)
 		if testErr != nil {
 			logger.Warn("test execution failed (non-blocking)", "error", testErr)
 		}
 
 		testStepOutput := map[string]interface{}{
-			"status":    "PASSED",
-			"mock":      true,
-			"framework": "mock",
+			"status":       runTestsOutput.Status,
+			"mock":         runTestsOutput.Mock,
+			"framework":    runTestsOutput.Framework,
+			"total":        runTestsOutput.Total,
+			"passed":       runTestsOutput.Passed,
+			"failed":       runTestsOutput.Failed,
+			"coverage_pct": runTestsOutput.CoveragePct,
+			"duration_ms":  runTestsOutput.DurationMs,
 		}
-		if testInput != nil {
-			if f, ok := testInput["framework"].(string); ok {
-				testStepOutput["framework"] = f
-			}
-			if tc, ok := testInput["test_count"].(float64); ok {
-				testStepOutput["total"] = int(tc)
-				testStepOutput["passed"] = int(tc)
-			}
+		if runTestsOutput.K8sJob != "" {
+			testStepOutput["k8s_job"] = runTestsOutput.K8sJob
+		}
+		if runTestsOutput.Logs != "" {
+			testStepOutput["logs"] = runTestsOutput.Logs
 		}
 		_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "TEST", testStepOutput).Get(ctx, nil)
 	}
@@ -246,6 +249,12 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 				commitMsg = cm
 			}
 
+			// Determine branch title: prefer plan title, fall back to workflow input title
+			branchTitle := input.Title
+			if t, ok := planResult["title"].(string); ok && t != "" {
+				branchTitle = t
+			}
+
 			// Push to GitHub
 			var pushResult activity.PushToGitHubOutput
 			err = workflow.ExecuteActivity(localCtx, "PushToGitHub", activity.PushToGitHubInput{
@@ -253,6 +262,7 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 				TenantID:      input.TenantID,
 				ProjectID:     input.ProjectID,
 				CreatedBy:     input.CreatedBy,
+				Title:         branchTitle,
 				Files:         generateResult["files"],
 				CommitMessage: commitMsg,
 			}).Get(ctx, &pushResult)
