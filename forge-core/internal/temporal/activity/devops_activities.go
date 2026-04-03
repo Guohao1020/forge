@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -121,7 +122,7 @@ func (a *DevOpsActivities) PushToGitHub(ctx context.Context, input PushToGitHubI
 		return nil, fmt.Errorf("parse repo url: %w", err)
 	}
 
-	branchName := generateBranchName(input.TaskID, input.Title)
+	branchName := generateBranchName(input.TaskID, input.TenantID, input.CreatedBy, input.Title)
 
 	// Sync to local workspace (optional — graceful if git CLI unavailable)
 	if a.ws != nil {
@@ -255,28 +256,38 @@ func toFileChanges(raw interface{}) ([]ghAdapter.FileChange, error) {
 	return files, nil
 }
 
-// generateBranchName builds a descriptive branch name from task ID and title.
-// Branch naming rule:
+// generateBranchName builds a branch name following the convention:
 //
-//	ai/{taskId}-{slug}
-//	slug = first 30 chars of task title, kebab-case, ASCII only
+//	feature/{YYYYMMDD}/{tenantId}/{userId}/{slug}   — 新功能
+//	fix/{YYYYMMDD}/{tenantId}/{userId}/{slug}       — 修复
+//	release/{version}                                — 发布
+//
+// slug = task title, max 15 chars, kebab-case ASCII
 //
 // Examples:
 //
-//	ai/12-health-check-service
-//	ai/15-add-user-authentication
-//	ai/20-fix-payment-bug
-func generateBranchName(taskID int64, title string) string {
+//	feature/20260403/1/1/health-check-svc
+//	fix/20260403/1/1/fix-login-bug
+func generateBranchName(taskID int64, tenantID int64, userID int64, title string) string {
+	date := time.Now().Format("20060102")
 	slug := toSlug(title)
 	if slug == "" {
 		slug = "feature"
 	}
-	if len(slug) > 30 {
-		slug = slug[:30]
+	if len(slug) > 15 {
+		slug = slug[:15]
 	}
-	// Remove trailing dash
 	slug = strings.TrimRight(slug, "-")
-	return fmt.Sprintf("ai/%d-%s", taskID, slug)
+
+	// Detect fix/bug keywords
+	prefix := "feature"
+	lower := strings.ToLower(title)
+	if strings.Contains(lower, "fix") || strings.Contains(lower, "bug") ||
+		strings.Contains(lower, "修复") || strings.Contains(lower, "修改") {
+		prefix = "fix"
+	}
+
+	return fmt.Sprintf("%s/%s/%d/%d/%s", prefix, date, tenantID, userID, slug)
 }
 
 // toSlug converts a string to a URL/branch-safe kebab-case slug.
