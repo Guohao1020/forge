@@ -29,6 +29,14 @@ type Config struct {
 
 	// Workspace
 	WorkspaceRoot string
+
+	// ACR (Alibaba Cloud Container Registry)
+	ACRRegistry string // e.g., registry.cn-hangzhou.aliyuncs.com/forge
+	ACRUsername string
+	ACRPassword string
+
+	// K8s Node IP (for NodePort preview URLs)
+	K8sNodeIP string
 }
 
 func Load() *Config {
@@ -51,6 +59,12 @@ func Load() *Config {
 		KubeconfigPath: getEnv("KUBECONFIG_PATH", "k8s/kubeconfig"),
 
 		WorkspaceRoot: getEnv("FORGE_WORKSPACE_ROOT", "./workspaces"),
+
+		ACRRegistry: getEnv("ACR_REGISTRY", ""),
+		ACRUsername: getEnv("ACR_USERNAME", ""),
+		ACRPassword: getEnv("ACR_PASSWORD", ""),
+
+		K8sNodeIP: getEnv("K8S_NODE_IP", "47.97.49.242"),
 	}
 }
 

@@ -56,6 +56,23 @@ func (r *Repository) ListByProject(ctx context.Context, projectID int64) ([]Prev
 	return envs, rows.Err()
 }
 
+func (r *Repository) GetByID(ctx context.Context, id int64) (*PreviewEnvironment, error) {
+	var e PreviewEnvironment
+	err := r.db.QueryRow(ctx, `
+		SELECT id, tenant_id, project_id, task_id, branch_name, pr_number,
+		       preview_url, status, namespace, expires_at, created_at, updated_at
+		FROM pipeline.preview_environments
+		WHERE id = $1`, id,
+	).Scan(
+		&e.ID, &e.TenantID, &e.ProjectID, &e.TaskID, &e.BranchName, &e.PRNumber,
+		&e.PreviewURL, &e.Status, &e.Namespace, &e.ExpiresAt, &e.CreatedAt, &e.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
 func (r *Repository) GetByTaskID(ctx context.Context, taskID int64) (*PreviewEnvironment, error) {
 	var e PreviewEnvironment
 	err := r.db.QueryRow(ctx, `

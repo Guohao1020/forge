@@ -112,7 +112,7 @@ func main() {
 
 	// Pipeline module
 	pipelineRepo := pipeline.NewRepository(db)
-	pipelineSvc := pipeline.NewService(pipelineRepo)
+	pipelineSvc := pipeline.NewService(pipelineRepo, k8sClient)
 	pipelineHandler := pipeline.NewHandler(pipelineSvc)
 
 	// Profile module
@@ -127,7 +127,7 @@ func main() {
 
 	// Preview module
 	previewRepo := preview.NewRepository(db)
-	previewSvc := preview.NewService(previewRepo)
+	previewSvc := preview.NewService(previewRepo, k8sClient, cfg.K8sNodeIP)
 	previewHandler := preview.NewHandler(previewSvc)
 
 	// Artifact module

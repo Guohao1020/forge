@@ -102,3 +102,13 @@ func (r *Repository) CreateDeployRecord(ctx context.Context, d *DeployRecord) er
 		d.Status, d.DeployedBy, d.StartedAt, d.CompletedAt,
 	).Scan(&d.ID, &d.CreatedAt)
 }
+
+func (r *Repository) UpdateDeployRecord(ctx context.Context, d *DeployRecord) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE pipeline.deploy_records
+		SET status = $2, completed_at = $3, error_message = $4
+		WHERE id = $1`,
+		d.ID, d.Status, d.CompletedAt, d.ErrorMessage,
+	)
+	return err
+}

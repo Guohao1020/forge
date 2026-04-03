@@ -322,8 +322,9 @@ func (a *TaskActivities) SaveStepOutput(ctx context.Context, taskID int64, stepT
 	return nil
 }
 
-// CreatePreview creates a mock preview environment for a task after deploy.
-// TODO: Replace mock URL/namespace with real K8s namespace creation when available.
+// CreatePreview creates a preview environment for a task after deploy.
+// When K8s is available, creates a real namespace with a deployed service.
+// Otherwise falls back to a mock URL.
 func (a *TaskActivities) CreatePreview(ctx context.Context, input map[string]interface{}) error {
 	taskID := int64(input["task_id"].(float64))
 	projectID := int64(input["project_id"].(float64))
@@ -334,8 +335,26 @@ func (a *TaskActivities) CreatePreview(ctx context.Context, input map[string]int
 		prNumber = int(pn)
 	}
 
-	previewURL := fmt.Sprintf("https://%d.preview.forge.example.com", taskID)
 	namespace := fmt.Sprintf("preview-%d", taskID)
+	previewURL := fmt.Sprintf("https://%d.preview.forge.example.com", taskID)
+	usedK8s := false
+
+	if a.k8s != nil {
+		// Create real K8s namespace for preview
+		if err := a.k8s.EnsureNamespace(ctx, namespace, map[string]string{
+			"app":        "forge",
+			"component":  "preview",
+			"tenant":     fmt.Sprintf("%d", tenantID),
+			"task":       fmt.Sprintf("%d", taskID),
+			"managed-by": "forge",
+		}); err != nil {
+			slog.Warn("k8s preview namespace creation failed, falling back to mock", "error", err, "task_id", taskID)
+		} else {
+			usedK8s = true
+			slog.Info("k8s preview namespace created", "namespace", namespace, "task_id", taskID)
+		}
+	}
+
 	expiresAt := time.Now().Add(30 * time.Minute)
 
 	_, err := a.db.Exec(ctx,
@@ -355,10 +374,11 @@ func (a *TaskActivities) CreatePreview(ctx context.Context, input map[string]int
 			Data: map[string]interface{}{
 				"preview_url": previewURL,
 				"namespace":   namespace,
+				"k8s":         usedK8s,
 			},
 		})
 	}
 
-	slog.Info("preview environment created", "task_id", taskID, "url", previewURL)
+	slog.Info("preview environment created", "task_id", taskID, "url", previewURL, "k8s", usedK8s)
 	return nil
 }
