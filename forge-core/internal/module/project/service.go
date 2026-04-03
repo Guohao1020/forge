@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -23,11 +24,18 @@ type AuthTokenProvider interface {
 type Service struct {
 	repo    *Repository
 	authSvc AuthTokenProvider
+	ws      WorkspaceProvider // optional, for local file browsing
 }
 
-func NewService(repo *Repository, authSvc AuthTokenProvider) *Service {
-	return &Service{repo: repo, authSvc: authSvc}
+// WorkspaceProvider reads files from local workspace (clone).
+type WorkspaceProvider interface {
+	ProjectDir(tenantID, projectID int64) string
 }
+
+func NewService(repo *Repository, authSvc AuthTokenProvider, ws WorkspaceProvider) *Service {
+	return &Service{repo: repo, authSvc: authSvc, ws: ws}
+}
+
 
 func (s *Service) Create(ctx context.Context, tenantID, userID int64, req *CreateProjectRequest) (*Project, error) {
 	req.Name = strings.TrimSpace(req.Name)
@@ -230,7 +238,18 @@ func parseOwnerRepo(rawURL string) (string, string) {
 }
 
 // GetCodeTree returns the file tree for a given ref (branch/tag/SHA).
+// Tries local workspace first (fast), falls back to GitHub API.
 func (s *Service) GetCodeTree(ctx context.Context, projectID, tenantID, userID int64, ref string) ([]string, error) {
+	// Try local workspace first (default branch only)
+	if s.ws != nil && (ref == "" || ref == "main" || ref == "master") {
+		dir := s.ws.ProjectDir(tenantID, projectID)
+		if files, err := listLocalFiles(dir); err == nil && len(files) > 0 {
+			slog.Debug("code tree from local workspace", "project_id", projectID, "files", len(files))
+			return files, nil
+		}
+	}
+
+	// Fallback to GitHub API
 	p, ghClient, err := s.getGitHubClient(ctx, projectID, tenantID, userID)
 	if err != nil {
 		return nil, err
@@ -243,7 +262,19 @@ func (s *Service) GetCodeTree(ctx context.Context, projectID, tenantID, userID i
 }
 
 // GetCodeFile returns file content at a specific path and ref.
+// Tries local workspace first (fast), falls back to GitHub API.
 func (s *Service) GetCodeFile(ctx context.Context, projectID, tenantID, userID int64, path, ref string) (string, error) {
+	// Try local workspace first (default branch only)
+	if s.ws != nil && (ref == "" || ref == "main" || ref == "master") {
+		dir := s.ws.ProjectDir(tenantID, projectID)
+		fullPath := filepath.Join(dir, path)
+		if data, err := os.ReadFile(fullPath); err == nil {
+			slog.Debug("code file from local workspace", "path", path)
+			return string(data), nil
+		}
+	}
+
+	// Fallback to GitHub API
 	p, ghClient, err := s.getGitHubClient(ctx, projectID, tenantID, userID)
 	if err != nil {
 		return "", err
@@ -253,6 +284,30 @@ func (s *Service) GetCodeFile(ctx context.Context, projectID, tenantID, userID i
 		ref = p.DefaultBranch
 	}
 	return ghClient.GetFileContent(ctx, owner, repo, path, ref)
+}
+
+// listLocalFiles walks a directory and returns relative file paths.
+func listLocalFiles(dir string) ([]string, error) {
+	if _, err := os.Stat(dir); err != nil {
+		return nil, err
+	}
+	var files []string
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		// Skip .git directory
+		if info.IsDir() && info.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		rel, _ := filepath.Rel(dir, path)
+		if rel != "." && rel != "" {
+			// Use forward slashes for consistency
+			files = append(files, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	return files, err
 }
 
 // ListBranches returns all branches for the project's repo.

@@ -69,16 +69,16 @@ func main() {
 		cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.GitHubRedirectURI, cfg.EncryptionKey)
 	authHandler := auth.NewHandler(authService)
 
+	// Workspace manager (local git clones + per-task worktrees)
+	workspaceMgr := workspace.NewManager(cfg.WorkspaceRoot)
+
 	// Project module
 	projectRepo := project.NewRepository(db)
-	projectService := project.NewService(projectRepo, authService)
+	projectService := project.NewService(projectRepo, authService, workspaceMgr)
 	projectHandler := project.NewHandler(projectService)
 
 	// Task module — SSEHub must be created before Temporal worker
 	sseHub := task.NewSSEHub()
-
-	// Workspace manager (local git clones + per-task worktrees)
-	workspaceMgr := workspace.NewManager(cfg.WorkspaceRoot)
 
 	// Temporal (optional — gracefully skip if unavailable)
 	var workflowStarter task.WorkflowStarter
