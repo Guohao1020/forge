@@ -1,10 +1,11 @@
-# Forge Platform — 技术设计文档 v2.2
+# Forge Platform — 技术设计文档 v3.0
 
-> **版本**: 2.2
-> **日期**: 2026-04-02
+> **版本**: 3.0
+> **日期**: 2026-04-05
 > **作者**: Harvey + Claude
 > **前置文档**: [PRD.md](PRD.md) | [Product Design](product-design.md) | [Milestone Plan](milestone-plan.md)
 > **架构变更**: 从 Java 微服务架构全面重构为 Go + Python + Temporal 架构
+> **v3.0 变更**: §3.4 上下文工程重写为 ContextCache + Context Tools + Agent Loop（Harness Engineering）；§3.5 并发冲突处理重写为 VersionOrchestrator + 3 层检测；关联 harness-engineering-design.md
 
 ---
 
@@ -503,53 +504,71 @@ Phase C: 集成验证 (Integration Verification)
 
 ### 3.4 上下文工程 (Context Engineering)
 
+> 详细设计见 [harness-engineering-design.md](plans/harness-engineering-design.md)
+
+**三层架构（learn-claude-code Harness Engineering 范式）**:
+
+```
+L1: ContextCache (Redis)
+    - 同一项目的多个 Activity 共享缓存（TTL 10min）
+    - 首次 MISS → 并行获取 4 个 API (asyncio.gather) → SET
+    - 后续 HIT → 零 HTTP 开销
+
+L2: Context Tools (Agent 按需查询)
+    - 编码规范始终在 system prompt 中（核心约束，不延迟加载）
+    - 项目画像通过 5 个工具按需查询:
+      query_api_catalog / query_db_schema / query_business_rules
+      query_module_graph / read_project_file
+    - Agent Loop: 最多 5 轮工具调用，含超时、去重、token 预算
+
+L3: Token 预算
+    - 总预算 180K tokens（200K - 20K 输出保留）
+    - 工具调用循环在 80% 预算时自动终止
+    - 单个画像维度截断 10K 字符
+```
+
 ```python
-class ContextBuilder:
-    """为 AI 调用构建最优上下文"""
+# ContextCache — 工作流级缓存
+cache = ContextCache()
+ctx = await cache.get_or_build(project_id, purpose)  # Redis MISS → 并行获取 → SET
 
-    def build_context(self, task, project, purpose):
-        context = []
-
-        # 1. 静态上下文 (规范中心)
-        context += self.load_coding_standards(project)
-        context += self.load_prompt_template(purpose)
-        context += self.load_review_rules(project)
-
-        # 2. 动态上下文 (适配器获取)
-        context += self.load_project_profile(project)
-        context += self.load_relevant_code(project, task)
-        context += self.load_db_schema(project)
-        context += self.load_api_contracts(project)
-
-        # 3. 运行时上下文 (可观测性数据, Phase 3)
-        context += self.load_runtime_metrics(project)
-
-        # 4. Token 预算优化
-        context = self.optimize_context(context, token_budget)
-
-        return context
-
-    def optimize_context(self, context, budget):
-        """Token 预算内最大化上下文价值"""
-        # 优先级: 编码规范 > 相关代码 > DB Schema > API 合约 > 运行时指标
-        # 大项目: RAG 检索相关代码片段, 而非全量加载
-        # 长任务: 历史对话结构化摘要, 避免 context window 爆炸
+# Agent Loop — 多轮工具调用
+result = await agent.run(user_input, ctx, tools=CONTEXT_TOOLS, tool_executor=executor)
+# Agent 在推理过程中主动查询: query_db_schema("users") → 返回表结构 → 继续生成
 ```
 
 ### 3.5 并发冲突处理
+
+> 详细设计见 [harness-engineering-design.md](plans/harness-engineering-design.md) §5
+
+**VersionOrchestrator（Temporal 工作流）驱动的 3 层冲突检测**:
 
 ```
 原则:
 ├── AI 永远不强制覆盖人工代码
 ├── 冲突时优先保留人工变更
+├── 同版本多需求并行开发，自动检测冲突
 └── 自动解决失败 → 标记 CONFLICT → 通知人工
 
-流程:
-1. AI 工作在独立分支 (ai/{task_id})
-2. 生成完成后尝试 rebase 到目标分支
-3. 无冲突 → 创建 MR
-4. 有冲突 → 尝试自动解决 (最多 1 次)
-5. 自动解决失败 → 标记冲突 → 通知技术负责人
+3 层检测:
+L1 规划期（启发式，成本最低）:
+    PlannerAgent 输出 touched_files → 与同版本其他任务比对
+    文件级交集 → BLOCKED | 包级交集 → WARNING
+
+L2 生成期（精确）:
+    代码生成后 git merge-tree 模拟 → 暂停 + 通知
+
+L3 合并期（精确）:
+    PR 合并前 GitHub API 冲突检查 → AI rebase (1次) → 失败通知人
+
+版本协调:
+1. PM 创建版本 (v1.2) → 在版本下创建多个任务
+2. VersionOrchestrator 检测文件冲突 → 阻塞或放行
+3. 无冲突任务并行执行，有冲突任务排队
+4. 先完成先合并 → 后续任务自动 rebase
+5. 所有任务完成 → 版本状态 TESTING → 发布打 tag
+
+分支命名: feature/{date}/{tenantId}/{userId}/{taskId}-{slug}
 ```
 
 ### 3.6 数据库迁移安全
