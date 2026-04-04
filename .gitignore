@@ -46,3 +46,5 @@ build/
 *.env.local
 forge-core/k8s/kubeconfig
 forge-core/.env.k8s
+forge-core/workspaces/
+workspaces/
