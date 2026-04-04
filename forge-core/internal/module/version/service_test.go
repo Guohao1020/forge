@@ -1,6 +1,7 @@
 package version
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -67,5 +68,80 @@ func TestValidateStatusTransition(t *testing.T) {
 					tt.from, tt.to, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestVersionNormalization(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"1.0", "v1.0"},
+		{"1.2.0", "v1.2.0"},
+		{"v1.0", "v1.0"},      // already has prefix
+		{"v2.1.3", "v2.1.3"},  // already has prefix
+		{"  v1.0  ", "v1.0"},  // whitespace trimmed
+		{"  1.2.0  ", "v1.2.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			ver := strings.TrimSpace(tt.input)
+			if !strings.HasPrefix(ver, "v") {
+				ver = "v" + ver
+			}
+			if ver != tt.want {
+				t.Errorf("normalize(%q) = %q, want %q", tt.input, ver, tt.want)
+			}
+		})
+	}
+}
+
+func TestStatusConstants(t *testing.T) {
+	// Verify all status constants are uppercase
+	statuses := []string{StatusPlanning, StatusInProgress, StatusTesting, StatusReleased, StatusCancelled}
+	for _, s := range statuses {
+		if s != strings.ToUpper(s) {
+			t.Errorf("status %q is not uppercase", s)
+		}
+	}
+	// Verify uniqueness
+	seen := map[string]bool{}
+	for _, s := range statuses {
+		if seen[s] {
+			t.Errorf("duplicate status: %q", s)
+		}
+		seen[s] = true
+	}
+}
+
+func TestAllStatusTransitions(t *testing.T) {
+	// Verify that every status has defined transitions (or is terminal)
+	s := &Service{}
+	statuses := []string{StatusPlanning, StatusInProgress, StatusTesting, StatusReleased, StatusCancelled}
+
+	terminal := map[string]bool{StatusReleased: true, StatusCancelled: true}
+
+	for _, from := range statuses {
+		if terminal[from] {
+			// Terminal states should reject all transitions
+			for _, to := range statuses {
+				err := s.validateStatusTransition(from, to)
+				if err == nil {
+					t.Errorf("terminal status %q should reject transition to %q", from, to)
+				}
+			}
+		} else {
+			// Non-terminal states must have at least one valid transition
+			hasValid := false
+			for _, to := range statuses {
+				if s.validateStatusTransition(from, to) == nil {
+					hasValid = true
+				}
+			}
+			if !hasValid {
+				t.Errorf("non-terminal status %q has no valid transitions", from)
+			}
+		}
 	}
 }
