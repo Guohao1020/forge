@@ -1,5 +1,9 @@
 forge-core
 forge-core.exe
+forge-core.exe~
 cmd/genhash/genhash
 cmd/genhash/genhash.exe
+workspaces/
 .git
+*.md
+.env*
