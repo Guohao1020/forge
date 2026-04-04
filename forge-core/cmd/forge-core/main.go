@@ -10,6 +10,7 @@ import (
 	"go.temporal.io/sdk/client"
 
 	"github.com/shulex/forge/forge-core/internal/module/artifact"
+	"github.com/shulex/forge/forge-core/internal/module/cost"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/pipeline"
@@ -147,6 +148,10 @@ func main() {
 	versionSvc := version.NewService(versionRepo)
 	versionHandler := version.NewHandler(versionSvc)
 
+	// Cost module
+	costSvc := cost.NewService(db)
+	costHandler := cost.NewHandler(costSvc)
+
 	// Specs module
 	specsRepo := specs.NewRepository(db)
 	specsService := specs.NewService(specsRepo, rdb)
@@ -166,6 +171,7 @@ func main() {
 		TestResultHandler:   testResultHandler,
 		ArtifactHandler:     artifactHandler,
 		VersionHandler:      versionHandler,
+		CostHandler:         costHandler,
 	})
 
 	slog.Info("forge-core starting", "port", cfg.ServerPort)

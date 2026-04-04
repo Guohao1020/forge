@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/shulex/forge/forge-core/internal/middleware"
 	"github.com/shulex/forge/forge-core/internal/module/artifact"
+	"github.com/shulex/forge/forge-core/internal/module/cost"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/pipeline"
@@ -30,6 +31,7 @@ type Deps struct {
 	TestResultHandler   *testresult.Handler
 	ArtifactHandler     *artifact.Handler
 	VersionHandler      *version.Handler
+	CostHandler         *cost.Handler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -198,6 +200,13 @@ func Setup(deps *Deps) *gin.Engine {
 					// Effective specs (resolved inheritance)
 					specsGroup.GET("/effective/:projectId", deps.SpecsHandler.GetEffectiveSpecs)
 				}
+			}
+
+			// Cost Control
+			if deps.CostHandler != nil {
+				protected.GET("/admin/costs", deps.CostHandler.GetMonthlyCosts)
+				protected.GET("/admin/budget", deps.CostHandler.GetBudgetStatus)
+				protected.GET("/projects/:id/costs", deps.CostHandler.GetProjectCosts)
 			}
 		}
 	}
