@@ -1,0 +1,76 @@
+# Forge Platform — Build & Development Commands
+#
+# Usage:
+#   make dev        Start local dev environment
+#   make test       Run all tests
+#   make build      Build all services
+#   make docker     Build all Docker images
+#   make deploy     Deploy full stack via docker-compose
+
+.PHONY: dev dev-stop test build docker deploy clean
+
+# === Development ===
+
+dev:
+	bash scripts/dev-start.sh
+
+dev-stop:
+	bash scripts/dev-stop.sh
+
+# === Testing ===
+
+test: test-go test-python test-ts
+
+test-go:
+	cd forge-core && go test ./internal/module/version/... ./internal/temporal/workflow/... -count=1
+	cd forge-core && go test ./internal/module/project/... -run TestDetect -count=1
+
+test-python:
+	cd ai-worker && python -m pytest tests/ --tb=short -q
+
+test-ts:
+	cd forge-portal && npx tsc --noEmit --pretty false
+
+test-api:
+	bash scripts/test-api.sh
+
+# === Build ===
+
+build: build-core build-portal
+
+build-core:
+	cd forge-core && go build -o forge-core ./cmd/forge-core
+
+build-portal:
+	cd forge-portal && npm run build
+
+# === Docker ===
+
+docker:
+	docker build -t forge-core:latest ./forge-core
+	docker build -t forge-ai-worker:latest ./ai-worker
+	docker build -t forge-portal:latest ./forge-portal
+	docker build -t forge-task-runner:latest ./docker/task-runner
+
+# === Deploy ===
+
+deploy:
+	docker compose -f docker-compose.prod.yml up -d --build
+
+deploy-down:
+	docker compose -f docker-compose.prod.yml down
+
+# === Infrastructure Only ===
+
+infra:
+	docker compose -f docker-compose.dev.yml up -d postgres redis temporal
+
+infra-down:
+	docker compose -f docker-compose.dev.yml down
+
+# === Clean ===
+
+clean:
+	rm -f forge-core/forge-core forge-core/forge-core.exe
+	rm -rf forge-portal/.next forge-portal/out
+	find ai-worker -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
