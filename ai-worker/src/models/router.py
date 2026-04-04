@@ -185,12 +185,17 @@ class ModelRouter:
         messages: list[dict[str, Any]],
         purpose: Purpose = Purpose.GENERATE,
         task_id: int = 0,
+        channel_prefix: str = "code",
     ) -> LLMResponse:
         """Stream a chat request, publishing chunks to Redis when task_id is set.
 
         Falls back through the model chain just like ``chat()``.  Each text
-        chunk is published to ``code:stream:{task_id}`` so the Go SSE handler
-        can forward it to the browser in real time.
+        chunk is published to ``{channel_prefix}:stream:{task_id}`` so the
+        Go SSE handler can forward it to the browser in real time.
+
+        Args:
+            channel_prefix: Redis channel prefix. "code" for code generation,
+                          "analyze" for requirement analysis thinking.
         """
         import redis.asyncio as aioredis
         from src.config import settings as _settings
@@ -199,7 +204,7 @@ class ModelRouter:
         errors: list[str] = []
 
         redis_client = None
-        channel = f"code:stream:{task_id}" if task_id else None
+        channel = f"{channel_prefix}:stream:{task_id}" if task_id else None
         if task_id:
             try:
                 redis_client = aioredis.from_url(

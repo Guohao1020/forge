@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from temporalio import activity
 from src.agents.analyst import AnalystAgent
 from src.context.cache import ContextCache
-from src.models.router import ModelRouter
+from src.models.router import ModelRouter, Purpose
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +258,31 @@ async def analyze_requirement_activity(input: AnalyzeInput) -> AnalyzeOutput:
 
         router = ModelRouter()
         agent = AnalystAgent(router)
-        result = await agent.run(input.requirement, ctx)
+
+        # Try streaming mode first — publishes thinking tokens to Redis for live UI
+        try:
+            system_prompt = agent._build_system_prompt(ctx)
+            messages = agent._build_messages(input.requirement, ctx)
+            llm_result = await router.chat_stream(
+                system=system_prompt,
+                messages=messages,
+                purpose=Purpose.ANALYZE,
+                task_id=input.task_id,
+                channel_prefix="analyze",
+            )
+            structured = agent._parse_json(llm_result.content)
+            from src.agents.base import AgentResult
+            result = AgentResult(
+                content=llm_result.content,
+                structured=structured,
+                tokens_used=llm_result.input_tokens + llm_result.output_tokens,
+                model=llm_result.model,
+                provider=llm_result.provider,
+                latency_ms=llm_result.latency_ms,
+            )
+        except Exception as e:
+            logger.warning(f"Streaming analysis failed, falling back to sync: {e}")
+            result = await agent.run(input.requirement, ctx)
 
         # Publish "thinking complete" event
         await _publish_thinking(input.task_id, '{"event":"thinking_end"}')
