@@ -11,6 +11,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/artifact"
 	"github.com/shulex/forge/forge-core/internal/module/cost"
 	"github.com/shulex/forge/forge-core/internal/module/entropy"
+	"github.com/shulex/forge/forge-core/internal/module/search"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/pipeline"
@@ -44,6 +45,7 @@ type Deps struct {
 	VersionHandler      *version.Handler
 	CostHandler         *cost.Handler
 	EntropyHandler      *entropy.Handler
+	SearchHandler       *search.Handler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -115,6 +117,11 @@ func Setup(deps *Deps) *gin.Engine {
 			protected.POST("/auth/logout", deps.AuthHandler.Logout)
 			protected.GET("/auth/me", deps.AuthHandler.Me)
 			protected.PUT("/auth/password", deps.AuthHandler.ChangePassword)
+
+			// Global search
+			if deps.SearchHandler != nil {
+				protected.GET("/search", deps.SearchHandler.Search)
+			}
 
 			// GitHub OAuth
 			protected.GET("/auth/github/authorize", deps.AuthHandler.GitHubAuthorize)
