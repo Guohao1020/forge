@@ -149,11 +149,23 @@
 | GET | `/api/admin/budget` | Yes | PLATFORM_ADMIN | Budget status |
 | GET | `/api/projects/:id/costs` | Yes | PROJECT_ADMIN+ | Project cost breakdown |
 
+## Entropy Management (Code Quality)
+
+| Method | Path | Auth | RBAC | Description |
+|--------|------|------|------|-------------|
+| GET | `/api/projects/:id/entropy/latest` | Yes | Any | Latest scan result |
+| GET | `/api/projects/:id/entropy/scans` | Yes | Any | Scan history |
+| GET | `/api/projects/:id/entropy/trends` | Yes | Any | Quality trend data |
+| GET | `/api/projects/:id/entropy/config` | Yes | Any | Scan configuration |
+| PUT | `/api/projects/:id/entropy/config` | Yes | PROJECT_ADMIN+ | Update scan config |
+| POST | `/api/projects/:id/entropy/scan` | Yes | Any | Trigger manual scan |
+
 ## System (No Auth)
 
 | Method | Path | Auth | RBAC | Description |
 |--------|------|------|------|-------------|
 | GET | `/health` | No | — | Health check |
 | GET | `/metrics` | No | — | Prometheus metrics |
+| GET | `/api/admin/metrics` | No | — | JSON metrics snapshot |
 
-**Total: ~70 endpoints across 14 resource groups**
+**Total: ~79 endpoints across 16 resource groups**

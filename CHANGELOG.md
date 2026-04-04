@@ -2,6 +2,15 @@
 
 All notable changes to the Forge platform are documented here.
 
+## [0.3.1] — Phase 3 Extended Modules
+
+### Added
+- **Observability Stack**: Grafana + Prometheus + Loki in docker-compose. 3 pre-built dashboards (Platform Health, AI Performance, Task Pipeline). Enhanced metrics: AI call tracking, task event counters, pipeline stage duration, SSE connection gauge.
+- **Entropy Management**: `EntropyScanWorkflow` (6-step Temporal workflow). Code quality scoring (0-100), issue categorization (naming/dead_code/error_handling/complexity/style). 6 API endpoints. Migration 019. Frontend quality section on project settings.
+- **forge-bot**: New IM service skeleton — DingTalk webhook receiver, HMAC signature verification, 6 card templates (welcome, clarification, plan summary, task completed, progress, error). forge-core API client. Docker image.
+- **User Management**: Create users, assign roles, inline role change dropdown. `/settings/users` page.
+- Enhanced Prometheus metrics: per-path breakdown, AI tokens by model, task status counters, SSE active gauge.
+
 ## [0.3.0] — Phase 3 Core Modules
 
 ### Added

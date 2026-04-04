@@ -1,79 +1,63 @@
-# Session Handoff — 2026-04-05
+# Session Handoff — 2026-04-05 (Session 2)
 
 > Read this file at the start of the next session.
 
-## What Was Done
+## What Was Done (This Session)
 
-74 commits delivering Phase 2 Harness Engineering + P0 Streaming + Phase 3 prototypes.
+5 commits delivering Phase 3 Extended Modules on top of the existing 89-commit base.
 
-### Code Delivered
-- **Harness Foundation**: ContextCache (Redis), Agent Loop (5-round tools), ModelRouter tools, parallel context fetch
-- **Context Tools**: 5 tools (api_catalog, db_schema, business_rules, module_graph, read_project_file) + ContextToolExecutor
-- **Version Management**: project_versions table, CRUD API, VersionOrchestrator (Temporal), 3-layer conflict detection, frontend pages
-- **DAG Visualization**: PlannerAgent touched_files, DagVisualization component, plan-review toggle
-- **Project Detection**: DetectProjectType (15+ signatures → 6 types), branch strategy auto-config
-- **AI Recommendations**: RecommendationCard with pros/cons/risk/context-aware reasoning
-- **P0 Streaming**: LLM chat_stream → Redis analyze:stream → Go SSE → StreamingThinking component
-- **Phase 3 Prototypes**: Constraint Engine (lint_activities.go), Cost Control (cost/ module)
+### New Modules
+- **Observability Stack**: Prometheus + Grafana + Loki docker-compose with auto-provisioned datasources and 3 dashboards
+- **Entropy Management**: Full Temporal workflow for scheduled code quality scans with 6 API endpoints
+- **forge-bot**: New Go service for DingTalk IM integration with 6 card templates
+- **Frontend Quality Dashboard**: Code quality section on project settings with scan trigger
 
-### Infrastructure Delivered
-- 3 Docker images (core 121MB, worker 365MB, portal 302MB)
-- docker-compose.prod.yml (full 7-service stack)
-- GitHub Actions CI + Codeup pipeline
-- 11 pre-commit hooks (including ESLint)
-- Makefile, 5 dev scripts, .editorconfig
-- pgvector extension enabled
-
-### Quality
-- 252 tests (117 Go + 120 Python + 11 API + 4 lint) + 7 benchmarks
-- Python coverage: 58%
-- Go vet: 0 warnings
-- ESLint: 0 errors in new files
-- TypeScript strict mode: 0 errors
-
-### Runtime Verified
-- 6-round AI conversation (understanding → scenario → constraints → confirmed)
-- Full pipeline: plan → test → generate → **lint** → review → test → deploy → GitHub PR #4
-- ContextCache: MISS → SET → HIT verified
-- Streaming: LLM stream at 4.3s latency
-- Version API: create/list/detail/release all working
-- Browser: multi-round conversation with option buttons verified via screenshots
+### Infrastructure
+- Enhanced metrics.go: AI call tracking, task event counters, SSE gauge, pipeline stage duration
+- SSE handler wired to middleware for active connection tracking
+- docker-compose.dev.yml: 4 new services (prometheus:9090, loki:3100, grafana:3001, forge-bot:8085)
+- Migration 019: entropy_scans + entropy_configs tables
 
 ## Current State
 
 ```
-Services running: PostgreSQL+pgvector, Redis, Temporal, forge-core
-Services stopped: AI Worker, forge-portal (start with make dev)
-Git: 84 commits pushed to origin/main
+Services: PostgreSQL+pgvector, Redis, Temporal
+          + Prometheus, Loki, Grafana (new)
+          + forge-bot (new, needs DingTalk credentials)
+Git: 94 commits pushed to origin/main
 Tags: v0.1.0, v0.2.0, v0.3.0
-Working tree: clean
-Users: admin (PLATFORM_ADMIN), dev1 (DEVELOPER)
+API: ~79 endpoints across 16 resource groups
 ```
 
-## Phase 3 — COMPLETE (5 modules)
+## Phase 3 — Status
 
-| Module | Status | Verified |
+| Module | Status | Endpoint |
 |--------|--------|----------|
-| **Metrics** | LIVE | `/metrics` (Prometheus) + `/api/admin/metrics` (JSON) |
-| **Cost Control** | LIVE | `/admin/costs` + `/admin/budget` + `/projects/:id/costs` |
-| **Constraint Engine** | LIVE | RunLint in pipeline between GENERATE and REVIEW |
-| **RBAC** | ENFORCED | 5-level hierarchy, JWT roles, 403 on unauthorized |
-| **User Management** | LIVE | `/admin/users` create/list/role-assign |
+| Metrics | LIVE | `/metrics` + `/api/admin/metrics` |
+| Cost Control | LIVE | 3 admin endpoints |
+| Constraint Engine | LIVE | RunLint in pipeline |
+| RBAC | ENFORCED | 5-level hierarchy |
+| User Management | LIVE | `/admin/users` + `/settings/users` UI |
+| Observability | READY | Grafana:3001 (admin/forge_grafana_2026) |
+| Entropy Management | READY | 6 endpoints, workflow registered |
+| forge-bot | SKELETON | Needs DingTalk admin credentials |
 
-## Next Session Priorities
+## Next Priorities
 
-Read `docs/plans/phase3-technical-spike.md` for remaining Phase 3 modules.
-
-1. **IM Bot** (~5 days): New forge-bot service — DingTalk webhook + card templates. Needs DingTalk admin setup.
-2. **Grafana Dashboards** (~2 days): Prometheus data already collecting. Create 3 dashboards (platform health, AI performance, task pipeline).
-3. **Entropy Management** (~5 days): Scheduled scans for code quality degradation + auto-fix PRs.
-4. **Frontend for RBAC**: User management page in forge-portal (list users, invite, role assign).
+1. **DingTalk Setup**: Configure DINGTALK_TOKEN, DINGTALK_SECRET, DINGTALK_WEBHOOK env vars for forge-bot
+2. **Entropy AI Scan**: Wire RunEntropyAIScan to real AI worker (currently placeholder)
+3. **Auto-Fix PR**: Implement CreateAutoFixPR activity (currently placeholder)
+4. **Canary Deployment**: Requires ACK K8s cluster access
+5. **v0.3.1 Tag**: After DingTalk credentials are configured and tested
 
 ## Quick Start
 
 ```bash
-make dev          # Start all services
-make test         # Run 264 tests
-make deploy       # Docker production deployment
-curl localhost:8080/metrics  # Prometheus metrics (live now)
+docker compose -f docker-compose.dev.yml up -d  # Start infra + observability
+cd forge-core && go run ./cmd/forge-core         # API server
+cd forge-portal && npm run dev                   # Frontend
+cd forge-bot && go run ./cmd/forge-bot           # IM bot
+
+# Grafana: http://localhost:3001 (admin / forge_grafana_2026)
+# Prometheus: http://localhost:9090
 ```
