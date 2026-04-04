@@ -130,10 +130,16 @@ func (r *Repository) UpdateWorkflowIDs(ctx context.Context, taskID int64, workfl
 	return err
 }
 
-func (r *Repository) UpdatePRInfo(ctx context.Context, taskID int64, prNumber int, mrUrl string, reviewScore int) error {
+func (r *Repository) UpdatePRInfo(ctx context.Context, taskID int64, prNumber int, mrUrl string, reviewScore int,
+	branchName string, filesChanged, linesAdded, linesDeleted int) error {
 	_, err := r.db.Exec(ctx,
-		`UPDATE engine.tasks SET pr_number = $2, mr_url = $3, review_score = $4, updated_at = NOW() WHERE id = $1`,
+		`UPDATE engine.tasks
+		 SET pr_number = $2, mr_url = $3, review_score = $4,
+		     branch_name = $5, files_changed = $6, lines_added = $7, lines_deleted = $8,
+		     updated_at = NOW()
+		 WHERE id = $1`,
 		taskID, prNumber, mrUrl, reviewScore,
+		branchName, filesChanged, linesAdded, linesDeleted,
 	)
 	if err != nil {
 		return fmt.Errorf("update PR info: %w", err)

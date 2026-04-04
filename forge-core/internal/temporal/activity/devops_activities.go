@@ -33,7 +33,8 @@ type ProjectInfo struct {
 
 // TaskPRUpdater updates PR metadata on a task.
 type TaskPRUpdater interface {
-	UpdatePRInfo(ctx context.Context, taskID int64, prNumber int, mrUrl string, reviewScore int) error
+	UpdatePRInfo(ctx context.Context, taskID int64, prNumber int, mrUrl string, reviewScore int,
+		branchName string, filesChanged, linesAdded, linesDeleted int) error
 }
 
 // DevOpsActivities handles GitHub operations (branch, commit, PR).
@@ -89,10 +90,14 @@ type CreatePROutput struct {
 }
 
 type SavePRInfoInput struct {
-	TaskID      int64  `json:"task_id"`
-	PRNumber    int    `json:"pr_number"`
-	PRURL       string `json:"pr_url"`
-	ReviewScore int    `json:"review_score"`
+	TaskID       int64  `json:"task_id"`
+	PRNumber     int    `json:"pr_number"`
+	PRURL        string `json:"pr_url"`
+	ReviewScore  int    `json:"review_score"`
+	BranchName   string `json:"branch_name"`
+	FilesChanged int    `json:"files_changed"`
+	LinesAdded   int    `json:"lines_added"`
+	LinesDeleted int    `json:"lines_deleted"`
 }
 
 // --- Activities ---
@@ -231,8 +236,15 @@ func (a *DevOpsActivities) CreatePullRequest(ctx context.Context, input CreatePR
 
 // SavePRInfo persists PR metadata on the task record.
 func (a *DevOpsActivities) SavePRInfo(ctx context.Context, input SavePRInfoInput) error {
-	slog.Info("SavePRInfo", "task_id", input.TaskID, "pr_number", input.PRNumber, "pr_url", input.PRURL)
-	return a.taskPR.UpdatePRInfo(ctx, input.TaskID, input.PRNumber, input.PRURL, input.ReviewScore)
+	slog.Info("SavePRInfo",
+		"task_id", input.TaskID,
+		"pr_number", input.PRNumber,
+		"branch", input.BranchName,
+		"files", input.FilesChanged,
+		"lines_added", input.LinesAdded,
+	)
+	return a.taskPR.UpdatePRInfo(ctx, input.TaskID, input.PRNumber, input.PRURL, input.ReviewScore,
+		input.BranchName, input.FilesChanged, input.LinesAdded, input.LinesDeleted)
 }
 
 // --- Helpers ---

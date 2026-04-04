@@ -312,11 +312,34 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 				reviewScore = int(s)
 			}
 
+			// Extract file stats from generate result
+			filesChanged := 0
+			linesAdded := 0
+			linesDeleted := 0
+			if fc, ok := generateResult["files_changed"].(float64); ok {
+				filesChanged = int(fc)
+			}
+			if la, ok := generateResult["lines_added"].(float64); ok {
+				linesAdded = int(la)
+			}
+			if ld, ok := generateResult["lines_deleted"].(float64); ok {
+				linesDeleted = int(ld)
+			}
+			if filesChanged == 0 {
+				if files, ok := generateResult["files"].([]interface{}); ok {
+					filesChanged = len(files)
+				}
+			}
+
 			_ = workflow.ExecuteActivity(localCtx, "SavePRInfo", activity.SavePRInfoInput{
-				TaskID:      input.TaskID,
-				PRNumber:    prResult.PRNumber,
-				PRURL:       prResult.PRURL,
-				ReviewScore: reviewScore,
+				TaskID:       input.TaskID,
+				PRNumber:     prResult.PRNumber,
+				PRURL:        prResult.PRURL,
+				ReviewScore:  reviewScore,
+				BranchName:   pushResult.BranchName,
+				FilesChanged: filesChanged,
+				LinesAdded:   linesAdded,
+				LinesDeleted: linesDeleted,
 			}).Get(ctx, nil)
 
 			_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "DEPLOY", map[string]interface{}{
@@ -651,11 +674,34 @@ func TaskExecutionWorkflow(ctx workflow.Context, input activity.TaskWorkflowInpu
 				reviewScore = int(s)
 			}
 
+			// Extract file stats from generate result
+			filesChanged := 0
+			linesAdded := 0
+			linesDeleted := 0
+			if fc, ok := generateResult["files_changed"].(float64); ok {
+				filesChanged = int(fc)
+			}
+			if la, ok := generateResult["lines_added"].(float64); ok {
+				linesAdded = int(la)
+			}
+			if ld, ok := generateResult["lines_deleted"].(float64); ok {
+				linesDeleted = int(ld)
+			}
+			if filesChanged == 0 {
+				if files, ok := generateResult["files"].([]interface{}); ok {
+					filesChanged = len(files)
+				}
+			}
+
 			_ = workflow.ExecuteActivity(localCtx, "SavePRInfo", activity.SavePRInfoInput{
-				TaskID:      input.TaskID,
-				PRNumber:    prResult.PRNumber,
-				PRURL:       prResult.PRURL,
-				ReviewScore: reviewScore,
+				TaskID:       input.TaskID,
+				PRNumber:     prResult.PRNumber,
+				PRURL:        prResult.PRURL,
+				ReviewScore:  reviewScore,
+				BranchName:   pushResult.BranchName,
+				FilesChanged: filesChanged,
+				LinesAdded:   linesAdded,
+				LinesDeleted: linesDeleted,
 			}).Get(ctx, nil)
 
 			_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "DEPLOY", map[string]interface{}{
