@@ -1,0 +1,81 @@
+%% Forge Platform Architecture — Mermaid Diagram
+%% Render: https://mermaid.live or VS Code Mermaid extension
+
+graph TB
+    subgraph Users["Users"]
+        PM["Product Manager<br/>(Web UI)"]
+        TL["Tech Lead<br/>(Web UI)"]
+        Bot["IM Bot<br/>(Phase 3)"]
+    end
+
+    subgraph Frontend["forge-portal (Next.js :3000)"]
+        Login["Login"]
+        Projects["Project Lobby"]
+        Tasks["Task Kanban"]
+        Chat["Chat Panel<br/>+ Options + Recommendations"]
+        Versions["Version Management"]
+        Code["Code Browser"]
+        DAG["DAG Visualization"]
+        Deploy["Deploy Status"]
+    end
+
+    subgraph API["forge-core (Go :8080)"]
+        Auth["Auth Module<br/>JWT + OAuth"]
+        ProjMod["Project Module<br/>+ Type Detection"]
+        TaskMod["Task Module<br/>+ SSE"]
+        ConvMod["Conversation Module"]
+        VerMod["Version Module<br/>+ Conflict Detection"]
+        SpecsMod["Specs Center<br/>Standards + Prompts + Rules"]
+        ProfileMod["Profile Module<br/>+ Scan Trigger"]
+        PipeMod["Pipeline Module<br/>Deploy + Preview"]
+    end
+
+    subgraph Temporal["Temporal Server (:7233)"]
+        TW["TaskWorkflow<br/>PLAN→TEST→GEN→REVIEW→DEPLOY"]
+        VO["VersionOrchestrator<br/>Conflict Detection + Ordering"]
+        PSW["ProfileScanWorkflow"]
+        PLW["PreviewLifecycleWorkflow"]
+    end
+
+    subgraph AIWorker["ai-worker (Python)"]
+        subgraph Harness["Harness Layer"]
+            CC["ContextCache<br/>(Redis)"]
+            CT["Context Tools<br/>5 query tools"]
+            AL["Agent Loop<br/>max 5 rounds"]
+        end
+        subgraph Agents["AI Agents"]
+            Analyst["AnalystAgent<br/>Requirements"]
+            Planner["PlannerAgent<br/>DAG + touched_files"]
+            TestW["TestWriterAgent<br/>Test-First"]
+            Coder["CoderAgent<br/>Code Gen"]
+            Reviewer["ReviewerAgent<br/>Quality Gate"]
+            Profiler["ProfilerAgent<br/>Knowledge Extract"]
+        end
+        Router["ModelRouter<br/>Circuit Breaker"]
+    end
+
+    subgraph LLMs["LLM Providers"]
+        QW["DashScope<br/>qwen3-max/coder"]
+        Claude["Anthropic<br/>Claude Sonnet"]
+        GPT["OpenAI<br/>GPT-4o"]
+        DS["DeepSeek"]
+    end
+
+    subgraph Infra["Infrastructure"]
+        PG["PostgreSQL 16<br/>+ pgvector"]
+        Redis["Redis 7"]
+        GH["GitHub<br/>Repos + PRs"]
+    end
+
+    PM --> Frontend
+    TL --> Frontend
+    Frontend --> API
+    API --> Temporal
+    Temporal --> AIWorker
+    AIWorker --> Router
+    Router --> LLMs
+    API --> Infra
+    AIWorker --> CC
+    CC --> Redis
+    AIWorker --> GH
+    API --> GH

@@ -1,0 +1,75 @@
+%% Forge Harness Engineering Data Flow
+%% Shows how context flows through the system
+
+sequenceDiagram
+    participant U as User (PM)
+    participant FE as Frontend
+    participant API as forge-core
+    participant T as Temporal
+    participant AW as AI Worker
+    participant CC as ContextCache
+    participant LLM as LLM (qwen/claude)
+    participant GH as GitHub
+
+    U->>FE: Describe requirement
+    FE->>API: POST /messages
+    API->>T: AnalyzeRequirementWorkflow
+
+    rect rgb(40, 40, 80)
+        Note over AW,CC: Harness Layer
+        T->>AW: analyze_requirement activity
+        AW->>CC: get_or_build(project_id)
+        CC-->>AW: MISS → fetch 4 APIs parallel
+        CC-->>AW: SET → Redis cache (10min)
+        AW->>LLM: AnalystAgent (no tools)
+        LLM-->>AW: clarify question + options
+    end
+
+    AW-->>API: {status: "clarify", question, options}
+    API-->>FE: SSE push
+    FE-->>U: Show question + option buttons
+
+    Note over U,FE: Multi-round Q&A (3-6 rounds)
+
+    U->>FE: Confirm requirements
+    FE->>API: POST /confirm
+    API->>T: PlanOnlyWorkflow
+
+    rect rgb(40, 40, 80)
+        Note over AW,CC: Harness Layer + Tools
+        T->>AW: plan_task activity
+        AW->>CC: get_or_build → HIT (cached)
+        AW->>LLM: PlannerAgent + tools
+        LLM->>AW: tool_call: query_api_catalog("user")
+        AW-->>LLM: [existing API endpoints]
+        LLM->>AW: tool_call: query_module_graph("auth")
+        AW-->>LLM: [module dependencies]
+        LLM-->>AW: DAG plan + touched_files
+    end
+
+    AW-->>API: {tasks: [...], touched_files: {...}}
+    API-->>FE: Plan review card + DAG viz
+    U->>FE: Approve plan
+
+    FE->>API: POST /approve-plan
+    API->>T: TaskExecutionWorkflow
+
+    rect rgb(40, 80, 40)
+        Note over AW,LLM: Pipeline Execution
+        T->>AW: generate_test_cases
+        AW->>LLM: TestWriterAgent + tools
+        T->>AW: generate_code (streaming)
+        AW->>LLM: CoderAgent + all 5 tools
+        AW-->>FE: SSE code tokens (real-time)
+        T->>AW: review_code
+        AW->>LLM: ReviewerAgent + tools
+    end
+
+    alt Review passed
+        T->>AW: RunTests (K8s Job)
+        T->>GH: PushToGitHub + CreatePR
+        GH-->>API: PR #N created
+        API-->>FE: Task COMPLETED + PR link
+    else Review failed (max 3 attempts)
+        T->>AW: re-generate with fix instructions
+    end
