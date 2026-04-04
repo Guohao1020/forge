@@ -144,6 +144,34 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 
 	_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "GENERATE", generateResult).Get(ctx, nil)
 
+	// ---- Step 3.5: Lint check (non-blocking, feeds into review) ----
+	var lintResult map[string]interface{}
+	if files, ok := generateResult["files"].([]interface{}); ok && len(files) > 0 {
+		// Detect language from first file
+		lang := "unknown"
+		if first, ok := files[0].(map[string]interface{}); ok {
+			if l, ok := first["language"].(string); ok {
+				lang = l
+			}
+		}
+		lintInput := map[string]interface{}{
+			"task_id":  input.TaskID,
+			"language": lang,
+			"files":    files,
+		}
+		err = workflow.ExecuteActivity(localCtx, "RunLint", lintInput).Get(ctx, &lintResult)
+		if err != nil {
+			logger.Warn("Lint check failed (non-blocking)", "error", err)
+			// Lint failure doesn't block the pipeline — review will catch issues
+		} else {
+			logger.Info("Lint completed",
+				"passed", lintResult["passed"],
+				"issues", lintResult["issues"],
+				"linter", lintResult["linter"],
+			)
+		}
+	}
+
 	// ---- Step 4: Review loop (max 3 attempts) ----
 	err = workflow.ExecuteActivity(localCtx, "ExecuteStep", activity.StepInput{
 		TaskID: input.TaskID, StepType: "REVIEW", TaskStatus: "REVIEWING", Duration: 0,
@@ -156,13 +184,17 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 	maxReviewAttempts := 3
 	var reviewResult map[string]interface{}
 	for attempt := 1; attempt <= maxReviewAttempts; attempt++ {
-		err = workflow.ExecuteActivity(aiCtx, "review_code", map[string]interface{}{
+		reviewInput := map[string]interface{}{
 			"task_id":    input.TaskID,
 			"tenant_id":  input.TenantID,
 			"project_id": input.ProjectID,
 			"code":       generateResult,
 			"attempt":    attempt,
-		}).Get(ctx, &reviewResult)
+		}
+		if lintResult != nil {
+			reviewInput["lint_result"] = lintResult
+		}
+		err = workflow.ExecuteActivity(aiCtx, "review_code", reviewInput).Get(ctx, &reviewResult)
 		if err != nil {
 			logger.Error("AI review failed", "attempt", attempt, "error", err)
 			if attempt == maxReviewAttempts {
@@ -516,6 +548,23 @@ func TaskExecutionWorkflow(ctx workflow.Context, input activity.TaskWorkflowInpu
 
 	_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "GENERATE", generateResult).Get(ctx, nil)
 
+	// ---- Lint check (non-blocking, feeds into review) ----
+	var lintResult map[string]interface{}
+	if files, ok := generateResult["files"].([]interface{}); ok && len(files) > 0 {
+		lang := "unknown"
+		if first, ok := files[0].(map[string]interface{}); ok {
+			if l, ok := first["language"].(string); ok {
+				lang = l
+			}
+		}
+		err = workflow.ExecuteActivity(localCtx, "RunLint", map[string]interface{}{
+			"task_id": input.TaskID, "language": lang, "files": files,
+		}).Get(ctx, &lintResult)
+		if err != nil {
+			logger.Warn("Lint check failed (non-blocking)", "error", err)
+		}
+	}
+
 	// ---- Step: Review loop (max 3 attempts) ----
 	err = workflow.ExecuteActivity(localCtx, "ExecuteStep", activity.StepInput{
 		TaskID: input.TaskID, StepType: "REVIEW", TaskStatus: "REVIEWING", Duration: 0,
@@ -528,13 +577,17 @@ func TaskExecutionWorkflow(ctx workflow.Context, input activity.TaskWorkflowInpu
 	maxReviewAttempts := 3
 	var reviewResult map[string]interface{}
 	for attempt := 1; attempt <= maxReviewAttempts; attempt++ {
-		err = workflow.ExecuteActivity(aiCtx, "review_code", map[string]interface{}{
+		reviewInput := map[string]interface{}{
 			"task_id":    input.TaskID,
 			"tenant_id":  input.TenantID,
 			"project_id": input.ProjectID,
 			"code":       generateResult,
 			"attempt":    attempt,
-		}).Get(ctx, &reviewResult)
+		}
+		if lintResult != nil {
+			reviewInput["lint_result"] = lintResult
+		}
+		err = workflow.ExecuteActivity(aiCtx, "review_code", reviewInput).Get(ctx, &reviewResult)
 		if err != nil {
 			logger.Error("AI review failed", "attempt", attempt, "error", err)
 			if attempt == maxReviewAttempts {
