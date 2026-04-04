@@ -77,13 +77,13 @@ func Setup(deps *Deps) *gin.Engine {
 			// GitHub repos
 			protected.GET("/github/repos", deps.AuthHandler.ListGitHubRepos)
 
-			// Projects
-			protected.POST("/projects/import", deps.ProjectHandler.Import)
-			protected.POST("/projects", deps.ProjectHandler.Create)
+			// Projects (read: any auth user, write: DEVELOPER+, admin: PROJECT_ADMIN+)
+			protected.POST("/projects/import", middleware.RequireRole(middleware.RoleDeveloper), deps.ProjectHandler.Import)
+			protected.POST("/projects", middleware.RequireRole(middleware.RoleDeveloper), deps.ProjectHandler.Create)
 			protected.GET("/projects", deps.ProjectHandler.List)
 			protected.GET("/projects/:id", deps.ProjectHandler.GetByID)
-			protected.PUT("/projects/:id", deps.ProjectHandler.Update)
-			protected.DELETE("/projects/:id", deps.ProjectHandler.Archive)
+			protected.PUT("/projects/:id", middleware.RequireRole(middleware.RoleProjectAdmin), deps.ProjectHandler.Update)
+			protected.DELETE("/projects/:id", middleware.RequireRole(middleware.RoleProjectAdmin), deps.ProjectHandler.Archive)
 			protected.POST("/projects/:id/star", deps.ProjectHandler.Star)
 			protected.DELETE("/projects/:id/star", deps.ProjectHandler.Unstar)
 			protected.POST("/projects/:id/sync", deps.ProjectHandler.SyncToRemote)
@@ -202,11 +202,11 @@ func Setup(deps *Deps) *gin.Engine {
 				}
 			}
 
-			// Cost Control
+			// Cost Control (admin-only for tenant costs, project-level for project members)
 			if deps.CostHandler != nil {
-				protected.GET("/admin/costs", deps.CostHandler.GetMonthlyCosts)
-				protected.GET("/admin/budget", deps.CostHandler.GetBudgetStatus)
-				protected.GET("/projects/:id/costs", deps.CostHandler.GetProjectCosts)
+				protected.GET("/admin/costs", middleware.RequireRole(middleware.RolePlatformAdmin), deps.CostHandler.GetMonthlyCosts)
+				protected.GET("/admin/budget", middleware.RequireRole(middleware.RolePlatformAdmin), deps.CostHandler.GetBudgetStatus)
+				protected.GET("/projects/:id/costs", middleware.RequireRole(middleware.RoleProjectAdmin), deps.CostHandler.GetProjectCosts)
 			}
 		}
 	}
