@@ -22,6 +22,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# API URL for server-side rewrites (defaults to localhost for local dev)
+ARG API_URL=http://localhost:8080
+ENV API_URL=${API_URL}
+
 # Next.js standalone output for minimal image
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build

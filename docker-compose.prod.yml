@@ -108,8 +108,13 @@ services:
     restart: unless-stopped
 
   forge-portal:
-    build: ./forge-portal
+    build:
+      context: ./forge-portal
+      args:
+        - API_URL=http://forge-core:8080
     container_name: forge-portal
+    environment:
+      - API_URL=http://forge-core:8080
     ports:
       - "${PORTAL_PORT:-3000}:3000"
     depends_on:
