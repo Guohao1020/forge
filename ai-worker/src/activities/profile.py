@@ -141,20 +141,17 @@ async def _save_profile(
     key: str,
     value: dict,
 ) -> bool:
-    """Save a profile dimension back to forge-core API via upsert."""
+    """Save a profile dimension back to forge-core API via PUT upsert."""
     try:
         resp = await client.put(
             f"/api/projects/{project_id}/profiles/{key}",
-            json={"profileValue": value},
+            json=value,  # Send raw value, handler expects json.RawMessage body
         )
         if resp.status_code in (200, 201):
+            logger.info(f"Profile {key} saved for project {project_id}")
             return True
-        # Fallback: try POST to scan endpoint with results
-        resp = await client.post(
-            f"/api/projects/{project_id}/profiles/scan",
-            json={"key": key, "value": value},
-        )
-        return resp.status_code in (200, 201)
+        logger.warning(f"Profile save failed: {key} status={resp.status_code}")
+        return False
     except Exception as e:
         logger.warning(f"Failed to save profile {key}: {e}")
         return False

@@ -18,7 +18,7 @@ forge-core is running on localhost:8080 (started from local build)
 # Start everything
 make dev
 
-# Run all tests (157 tests: 58 Go + 88 Python + 11 API)
+# Run all tests (190 tests: 76 Go + 103 Python + 11 API)
 make test
 
 # Build Docker images
@@ -33,7 +33,7 @@ make test-api
 
 ## What Was Delivered This Session
 
-**29 commits | 143 files | +25,836 lines | 157 tests (58 Go + 88 Python + 11 API)**
+**35 commits | 145+ files | +26K lines | 190 tests (76 Go + 103 Python + 11 API)**
 
 ### Code
 - Harness Engineering: ContextCache (Redis), Agent Loop (5-round tools), ModelRouter tools support
