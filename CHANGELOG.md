@@ -2,7 +2,16 @@
 
 All notable changes to the Forge platform are documented here.
 
-## [Unreleased] — Phase 2 Harness Engineering
+## [0.3.0] — Phase 3 Core Modules
+
+### Added
+- **Constraint Engine**: `RunLint` Temporal activity runs golangci-lint/eslint/ruff on generated code. Wired into pipeline between GENERATE and REVIEW. Non-blocking (review catches remaining issues).
+- **Cost Control**: Token usage tracking from `model_calls` table. Monthly summary, project breakdown, budget status. 3 API endpoints with RBAC.
+- **RBAC Middleware**: `RequireRole()` with 5-level hierarchy (VIEWER < DEVELOPER < PROJECT_ADMIN < ORG_ADMIN < PLATFORM_ADMIN). Applied to write/admin routes. Backward compatible.
+- **Prometheus Metrics**: `/metrics` endpoint with request count, error count, latency, uptime. `/api/admin/metrics` JSON endpoint. MetricsMiddleware on all routes.
+- 8-stage pipeline: PLAN → TEST_WRITING → GENERATE → **LINT** → REVIEW → TEST → DEPLOY
+
+## [0.2.0] — Phase 2 Harness Engineering
 
 ### Added
 
