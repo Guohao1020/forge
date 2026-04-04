@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.temporal.io/sdk/activity"
@@ -304,5 +303,3 @@ func sanitizeK8sName(name string) string {
 	return string(result)
 }
 
-// ensure time import is used
-var _ = time.Now
