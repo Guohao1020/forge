@@ -302,4 +302,3 @@ func sanitizeK8sName(name string) string {
 	}
 	return string(result)
 }
-
