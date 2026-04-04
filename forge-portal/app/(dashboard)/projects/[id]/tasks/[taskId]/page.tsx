@@ -286,7 +286,7 @@ export default function TaskDetailPage() {
     }
   }, [fetchDetail]);
 
-  const { connected, streamingTokens, isStreaming } = useTaskStream({
+  const { connected, streamingTokens, isStreaming, analyzeThinking, isAnalyzing } = useTaskStream({
     taskId,
     onEvent: handleStreamEvent,
     enabled: !isTerminal,
@@ -448,6 +448,8 @@ export default function TaskDetailPage() {
             isPlanApproving={isPlanApproving}
             latestOptions={latestOptions}
             recommendation={latestRecommendation}
+            analyzeThinking={analyzeThinking}
+            isAnalyzing={isAnalyzing}
           />
         </div>
       ) : (

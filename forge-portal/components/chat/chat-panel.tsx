@@ -10,6 +10,7 @@ import { PlanReviewCard } from "./plan-review-card";
 import { RiskAlert, Risk } from "./risk-alert";
 import { Conversation, PlanConfirmResponse } from "@/lib/conversation";
 import { RecommendationCard } from "./recommendation-card";
+import { StreamingThinking } from "./streaming-thinking";
 
 interface RecommendationData {
   options: Array<{ id: string; title: string; pros: string[]; cons: string[]; risk: "LOW" | "MEDIUM" | "HIGH"; recommended: boolean; reason: string }>;
@@ -43,6 +44,8 @@ interface ChatPanelProps {
   isPlanApproving?: boolean;
   latestOptions?: string[];
   recommendation?: RecommendationData | null;
+  analyzeThinking?: string;
+  isAnalyzing?: boolean;
 }
 
 export function ChatPanel({
@@ -60,6 +63,8 @@ export function ChatPanel({
   isPlanApproving = false,
   latestOptions = [],
   recommendation,
+  analyzeThinking = "",
+  isAnalyzing = false,
 }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -141,7 +146,14 @@ export function ChatPanel({
             isLoading={isPlanApproving}
           />
         )}
-        {isLoading && (
+        {/* AI thinking process (streaming via SSE) */}
+        {analyzeThinking && (
+          <StreamingThinking
+            text={analyzeThinking}
+            isComplete={!isAnalyzing}
+          />
+        )}
+        {isLoading && !isAnalyzing && (
           <div className="flex justify-start mb-4">
             <div className="bg-white/5 rounded-2xl rounded-bl-md px-4 py-3 max-w-[80%]">
               <div className="flex items-center gap-2 text-white/50 text-sm">
