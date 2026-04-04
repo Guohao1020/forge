@@ -229,3 +229,67 @@ func (r *Repository) CreateFromImport(ctx context.Context, tenantID, userID int6
 		DefaultBranch: branch,
 	}, nil
 }
+
+// GetProjectStats returns task and version statistics for a project.
+func (r *Repository) GetProjectStats(ctx context.Context, projectID int64) (*ProjectStats, error) {
+	stats := &ProjectStats{
+		TasksByStatus: make(map[string]int64),
+	}
+
+	// Task counts by status
+	rows, err := r.db.Query(ctx,
+		`SELECT COALESCE(status, 'UNKNOWN'), COUNT(*)
+		 FROM engine.tasks
+		 WHERE project_id = $1
+		 GROUP BY status`,
+		projectID,
+	)
+	if err != nil {
+		return stats, nil // return empty stats on error
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var status string
+		var count int64
+		if err := rows.Scan(&status, &count); err != nil {
+			continue
+		}
+		stats.TasksByStatus[status] = count
+		stats.TotalTasks += count
+		if status == "COMPLETED" {
+			stats.CompletedTasks = count
+		}
+	}
+
+	// Active versions count
+	r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM engine.project_versions
+		 WHERE project_id = $1 AND status IN ('PLANNING', 'IN_PROGRESS', 'TESTING')`,
+		projectID,
+	).Scan(&stats.ActiveVersions)
+
+	// Last activity timestamp
+	var lastActivity string
+	err = r.db.QueryRow(ctx,
+		`SELECT COALESCE(TO_CHAR(MAX(updated_at), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '')
+		 FROM engine.tasks WHERE project_id = $1`,
+		projectID,
+	).Scan(&lastActivity)
+	if err == nil && lastActivity != "" {
+		stats.LastActivity = &lastActivity
+	}
+
+	// Quality score (latest entropy scan)
+	var score int
+	err = r.db.QueryRow(ctx,
+		`SELECT score FROM engine.entropy_scans
+		 WHERE project_id = $1 ORDER BY scanned_at DESC LIMIT 1`,
+		projectID,
+	).Scan(&score)
+	if err == nil {
+		stats.QualityScore = &score
+	}
+
+	return stats, nil
+}

@@ -166,6 +166,22 @@ func (h *Handler) Unstar(c *gin.Context) {
 	response.OK(c, nil)
 }
 
+// GetStats returns task/version/quality statistics for the project.
+// GET /api/projects/:id/stats
+func (h *Handler) GetStats(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	stats, err := h.svc.GetProjectStats(c.Request.Context(), id)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	response.OK(c, stats)
+}
+
 // SyncToRemote creates a GitHub repo for an existing project that has no remote.
 // POST /api/projects/:id/sync
 func (h *Handler) SyncToRemote(c *gin.Context) {

@@ -60,6 +60,16 @@ type ListProjectsResponse struct {
 	Size     int        `json:"size"`
 }
 
+// ProjectStats provides an overview of project activity.
+type ProjectStats struct {
+	TasksByStatus   map[string]int64 `json:"tasksByStatus"`
+	TotalTasks      int64            `json:"totalTasks"`
+	CompletedTasks  int64            `json:"completedTasks"`
+	ActiveVersions  int64            `json:"activeVersions"`
+	LastActivity    *string          `json:"lastActivity,omitempty"` // timestamp
+	QualityScore    *int             `json:"qualityScore,omitempty"`
+}
+
 // ImportRepoItem represents a single GitHub repo to import.
 type ImportRepoItem struct {
 	FullName      string `json:"full_name" binding:"required"`

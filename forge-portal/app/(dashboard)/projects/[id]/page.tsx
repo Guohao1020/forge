@@ -2,11 +2,12 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { Plus } from "lucide-react";
+import { Plus, CheckCircle2, Clock, AlertTriangle, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { KanbanBoard } from "@/components/tasks/kanban-board";
 import { CreateTaskDialog } from "@/components/tasks/create-task-dialog";
 import { listTasks, Task } from "@/lib/tasks";
+import { api } from "@/lib/api";
 
 export default function ProjectTasksPage() {
   const params = useParams();
@@ -14,6 +15,13 @@ export default function ProjectTasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [stats, setStats] = useState<{
+    totalTasks: number;
+    completedTasks: number;
+    tasksByStatus: Record<string, number>;
+    activeVersions: number;
+    qualityScore?: number;
+  } | null>(null);
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -28,10 +36,13 @@ export default function ProjectTasksPage() {
 
   useEffect(() => {
     fetchTasks();
+    api.get<{ totalTasks: number; completedTasks: number; tasksByStatus: Record<string, number>; activeVersions: number; qualityScore?: number }>(`/projects/${projectId}/stats`)
+      .then(setStats)
+      .catch(() => {});
     // Poll every 5 seconds for task status updates
     const interval = setInterval(fetchTasks, 5000);
     return () => clearInterval(interval);
-  }, [fetchTasks]);
+  }, [fetchTasks, projectId]);
 
   return (
     <div>
@@ -46,6 +57,47 @@ export default function ProjectTasksPage() {
           新建任务
         </Button>
       </div>
+
+      {/* Project Stats Bar */}
+      {stats && stats.totalTasks > 0 && (
+        <div className="grid grid-cols-4 gap-3 mb-6">
+          <div className="bg-card border border-border rounded-lg px-4 py-2.5 flex items-center gap-3">
+            <Clock className="h-4 w-4 text-muted-foreground" />
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase">总任务</p>
+              <p className="text-lg font-bold text-foreground">{stats.totalTasks}</p>
+            </div>
+          </div>
+          <div className="bg-card border border-border rounded-lg px-4 py-2.5 flex items-center gap-3">
+            <CheckCircle2 className="h-4 w-4 text-green-400" />
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase">已完成</p>
+              <p className="text-lg font-bold text-green-400">{stats.completedTasks}</p>
+            </div>
+          </div>
+          <div className="bg-card border border-border rounded-lg px-4 py-2.5 flex items-center gap-3">
+            <AlertTriangle className="h-4 w-4 text-yellow-400" />
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase">进行中</p>
+              <p className="text-lg font-bold text-yellow-400">
+                {(stats.tasksByStatus["RUNNING"] || 0) + (stats.tasksByStatus["SUBMITTED"] || 0)}
+              </p>
+            </div>
+          </div>
+          {stats.qualityScore != null && (
+            <div className="bg-card border border-border rounded-lg px-4 py-2.5 flex items-center gap-3">
+              <Shield className="h-4 w-4 text-primary" />
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase">质量分数</p>
+                <p className={`text-lg font-bold ${
+                  stats.qualityScore >= 80 ? "text-green-400" :
+                  stats.qualityScore >= 60 ? "text-yellow-400" : "text-red-400"
+                }`}>{stats.qualityScore}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {loading ? (
         <div className="grid grid-cols-4 gap-4">

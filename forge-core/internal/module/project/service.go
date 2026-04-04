@@ -511,3 +511,7 @@ func (s *Service) GetPRDetail(ctx context.Context, projectID, tenantID, userID i
 	owner, repo := parseOwnerRepo(p.CodeRepoURL)
 	return ghClient.GetPRFiles(ctx, owner, repo, prNumber)
 }
+
+func (s *Service) GetProjectStats(ctx context.Context, projectID int64) (*ProjectStats, error) {
+	return s.repo.GetProjectStats(ctx, projectID)
+}
