@@ -63,6 +63,21 @@ services:
       - temporal
     restart: unless-stopped
 
+  forge-bot:
+    build: ./forge-bot
+    container_name: forge-bot
+    ports:
+      - "8085:8085"
+    environment:
+      - BOT_PORT=8085
+      - FORGE_API_URL=http://host.docker.internal:8080
+      - DINGTALK_TOKEN=${DINGTALK_TOKEN:-}
+      - DINGTALK_SECRET=${DINGTALK_SECRET:-}
+      - DINGTALK_WEBHOOK=${DINGTALK_WEBHOOK:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
   # --- Observability Stack ---
 
   prometheus:
