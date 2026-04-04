@@ -1,6 +1,6 @@
 # Forge API Reference
 
-> Auto-generated from router.go — 88 commits session, 2026-04-05
+> Auto-generated from router.go — 102 commits, 2026-04-05
 
 ## Authentication
 
@@ -8,6 +8,7 @@
 |--------|------|------|------|-------------|
 | POST | `/api/auth/login` | No | — | Login with username/password, returns JWT |
 | POST | `/api/auth/logout` | Yes | — | Invalidate current token |
+| PUT | `/api/auth/password` | Yes | — | Change own password |
 | GET | `/api/auth/me` | Yes | — | Get current user profile + roles |
 
 ## GitHub OAuth
@@ -168,4 +169,16 @@
 | GET | `/metrics` | No | — | Prometheus metrics |
 | GET | `/api/admin/metrics` | No | — | JSON metrics snapshot |
 
-**Total: ~79 endpoints across 16 resource groups**
+**Total: ~80 endpoints across 16 resource groups**
+
+## Middleware Stack
+
+All requests pass through these middleware layers in order:
+1. **Recovery** — panic recovery
+2. **RequestID** — X-Request-ID header injection
+3. **CORS** — Cross-origin resource sharing
+4. **AccessLog** — Structured JSON access logs (for Loki)
+5. **Timeout** — 30s request deadline (excludes SSE)
+6. **Metrics** — Prometheus counters (requests, errors, latency)
+7. **JWTAuth** — Token validation (protected routes only)
+8. **RateLimit** — Token bucket (60 burst, 10/sec per user/IP)
