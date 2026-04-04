@@ -85,7 +85,11 @@ def _select_files_for_dimension(
 
     matched = []
     for entry in file_tree:
-        path = entry.get("path", "")
+        # Handle both dict ({"path": "..."}) and string ("...") entries
+        if isinstance(entry, dict):
+            path = entry.get("path", entry.get("name", ""))
+        else:
+            path = str(entry)
         # Skip non-code files
         if any(
             path.endswith(ext)
