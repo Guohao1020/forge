@@ -91,6 +91,125 @@ func TestHasFileOverlap(t *testing.T) {
 	}
 }
 
+// --- Task State Management Tests ---
+
+func TestDetectConflicts_MultipleBlockers(t *testing.T) {
+	active := map[int64]*taskState{
+		1: {TaskID: 1, Status: "RUNNING", TouchedFiles: []string{"shared/auth.go"}},
+		2: {TaskID: 2, Status: "RUNNING", TouchedFiles: []string{"shared/auth.go", "shared/config.go"}},
+		3: {TaskID: 3, Status: "COMPLETED", TouchedFiles: []string{"shared/auth.go"}}, // completed, should not block
+	}
+	newFiles := []string{"shared/auth.go"}
+
+	blockers := detectConflicts(newFiles, active)
+	if len(blockers) != 2 {
+		t.Errorf("expected 2 blockers (tasks 1 and 2), got %v", blockers)
+	}
+}
+
+func TestDetectConflicts_WaitingTasksAlsoBlock(t *testing.T) {
+	active := map[int64]*taskState{
+		1: {TaskID: 1, Status: "WAITING", TouchedFiles: []string{"user/service.go"}},
+	}
+	newFiles := []string{"user/service.go"}
+
+	blockers := detectConflicts(newFiles, active)
+	if len(blockers) != 1 {
+		t.Errorf("WAITING tasks should also block, got %v", blockers)
+	}
+}
+
+func TestTaskStateLifecycle(t *testing.T) {
+	// Simulate: task added → blocked → unblocked → completed
+	active := make(map[int64]*taskState)
+
+	// Task 1 starts running
+	active[1] = &taskState{TaskID: 1, Status: "RUNNING", TouchedFiles: []string{"a.go"}}
+
+	// Task 2 arrives with conflict
+	blockers := detectConflicts([]string{"a.go"}, active)
+	if len(blockers) != 1 {
+		t.Fatalf("task 2 should be blocked by task 1")
+	}
+	active[2] = &taskState{TaskID: 2, Status: "WAITING", TouchedFiles: []string{"a.go"}, BlockedBy: blockers}
+
+	// Task 1 completes
+	delete(active, 1)
+
+	// Manually unblock (simulating unblockDependents logic)
+	for _, state := range active {
+		if state.Status == "WAITING" {
+			newBlocked := make([]int64, 0)
+			for _, b := range state.BlockedBy {
+				if b != 1 { // remove completed task
+					newBlocked = append(newBlocked, b)
+				}
+			}
+			state.BlockedBy = newBlocked
+			if len(state.BlockedBy) == 0 {
+				state.Status = "RUNNING"
+			}
+		}
+	}
+
+	if active[2].Status != "RUNNING" {
+		t.Errorf("task 2 should be RUNNING after task 1 completes, got %q", active[2].Status)
+	}
+}
+
+func TestMultipleBlockersPartialUnblock(t *testing.T) {
+	active := map[int64]*taskState{
+		1: {TaskID: 1, Status: "RUNNING", TouchedFiles: []string{"a.go"}},
+		2: {TaskID: 2, Status: "RUNNING", TouchedFiles: []string{"b.go"}},
+		3: {TaskID: 3, Status: "WAITING", TouchedFiles: []string{"a.go", "b.go"}, BlockedBy: []int64{1, 2}},
+	}
+
+	// Task 1 completes — task 3 should still be waiting (blocked by 2)
+	delete(active, 1)
+	for _, state := range active {
+		if state.Status == "WAITING" {
+			newBlocked := make([]int64, 0)
+			for _, b := range state.BlockedBy {
+				if b != 1 {
+					newBlocked = append(newBlocked, b)
+				}
+			}
+			state.BlockedBy = newBlocked
+			if len(state.BlockedBy) == 0 {
+				state.Status = "RUNNING"
+			}
+		}
+	}
+
+	if active[3].Status != "WAITING" {
+		t.Errorf("task 3 should still be WAITING (blocked by 2), got %q", active[3].Status)
+	}
+	if len(active[3].BlockedBy) != 1 || active[3].BlockedBy[0] != 2 {
+		t.Errorf("task 3 should be blocked by [2], got %v", active[3].BlockedBy)
+	}
+
+	// Task 2 completes — task 3 should now be running
+	delete(active, 2)
+	for _, state := range active {
+		if state.Status == "WAITING" {
+			newBlocked := make([]int64, 0)
+			for _, b := range state.BlockedBy {
+				if b != 2 {
+					newBlocked = append(newBlocked, b)
+				}
+			}
+			state.BlockedBy = newBlocked
+			if len(state.BlockedBy) == 0 {
+				state.Status = "RUNNING"
+			}
+		}
+	}
+
+	if active[3].Status != "RUNNING" {
+		t.Errorf("task 3 should be RUNNING after both blockers complete, got %q", active[3].Status)
+	}
+}
+
 func TestHasPackageOverlap(t *testing.T) {
 	tests := []struct {
 		a, b []string
