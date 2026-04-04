@@ -95,6 +95,24 @@ RESP=$(curl -s -X POST "$BASE_URL/api/projects/25/detect" -H "$(auth)")
 run_test "POST /detect" "detection_started" "$RESP"
 
 echo ""
+echo "=== User Management ==="
+RESP=$(curl -s "$BASE_URL/api/admin/users" -H "$(auth)")
+run_test "GET /admin/users" "users" "$RESP"
+
+echo ""
+echo "=== Cost & Budget ==="
+RESP=$(curl -s "$BASE_URL/api/admin/costs" -H "$(auth)")
+run_test "GET /admin/costs" "period" "$RESP"
+
+RESP=$(curl -s "$BASE_URL/api/admin/budget" -H "$(auth)")
+run_test "GET /admin/budget" "monthlyBudget" "$RESP"
+
+echo ""
+echo "=== Metrics ==="
+RESP=$(curl -s "$BASE_URL/metrics")
+run_test "GET /metrics (prometheus)" "forge_http_requests_total" "$RESP"
+
+echo ""
 echo "=================================="
 echo "Results: $PASS passed, $FAIL failed"
 echo "=================================="
