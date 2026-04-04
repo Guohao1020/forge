@@ -1,0 +1,52 @@
+# Pre-commit hooks for Forge
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # General
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$'
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # Go
+  - repo: local
+    hooks:
+      - id: go-build
+        name: Go Build
+        entry: bash -c 'cd forge-core && go build ./cmd/forge-core'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+      - id: go-vet
+        name: Go Vet
+        entry: bash -c 'cd forge-core && go vet ./internal/...'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+  # Python
+  - repo: local
+    hooks:
+      - id: python-compile
+        name: Python Compile Check
+        entry: bash -c 'cd ai-worker && find src -name "*.py" -exec python -m py_compile {} \;'
+        language: system
+        files: 'ai-worker/.*\.py$'
+        pass_filenames: false
+
+  # TypeScript
+  - repo: local
+    hooks:
+      - id: ts-check
+        name: TypeScript Check
+        entry: bash -c 'cd forge-portal && npx tsc --noEmit --pretty false 2>&1 | head -5'
+        language: system
+        files: 'forge-portal/.*\.(ts|tsx)$'
+        pass_filenames: false
