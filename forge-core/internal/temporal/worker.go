@@ -90,6 +90,12 @@ func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken 
 		Name: "SaveTouchedFiles",
 	})
 
+	// Lint activities (Phase 3 — Constraint Engine)
+	lintActs := activity.NewLintActivities()
+	w.RegisterActivityWithOptions(lintActs.RunLint, sdkactivity.RegisterOptions{
+		Name: "RunLint",
+	})
+
 	// Build activities (S13 — artifact management)
 	buildActs := activity.NewBuildActivities(db)
 	w.RegisterActivityWithOptions(buildActs.BuildDockerImage, sdkactivity.RegisterOptions{
