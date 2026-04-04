@@ -74,6 +74,7 @@ func Setup(deps *Deps) *gin.Engine {
 			protected.POST("/projects/:id/star", deps.ProjectHandler.Star)
 			protected.DELETE("/projects/:id/star", deps.ProjectHandler.Unstar)
 			protected.POST("/projects/:id/sync", deps.ProjectHandler.SyncToRemote)
+			protected.POST("/projects/:id/detect", deps.ProjectHandler.DetectTechStack)
 
 			// Code browsing
 			protected.GET("/projects/:id/code/tree", deps.ProjectHandler.GetCodeTree)

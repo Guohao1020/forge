@@ -1,6 +1,8 @@
 package project
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -115,6 +117,23 @@ func (h *Handler) Star(c *gin.Context) {
 		return
 	}
 	response.OK(c, nil)
+}
+
+// DetectTechStack triggers tech stack re-detection for a project.
+func (h *Handler) DetectTechStack(c *gin.Context) {
+	userID, tenantID := userCtx(c)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	go func() {
+		bgCtx := context.Background()
+		if err := h.svc.DetectTechStack(bgCtx, id, tenantID, userID); err != nil {
+			slog.Warn("manual tech stack detection failed", "project_id", id, "error", err)
+		}
+	}()
+	response.OK(c, gin.H{"status": "detection_started"})
 }
 
 func (h *Handler) Import(c *gin.Context) {
