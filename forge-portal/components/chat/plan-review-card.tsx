@@ -123,7 +123,7 @@ export function PlanReviewCard({
         <div className="mb-4 border border-white/5 rounded-lg bg-white/[0.02] p-3">
           <DagVisualization
             tasks={tasks}
-            touchedFiles={(planData as any).touched_files}
+            touchedFiles={(planData as Record<string, unknown>).touched_files as { create?: string[]; modify?: string[] } | undefined}
           />
         </div>
       )}

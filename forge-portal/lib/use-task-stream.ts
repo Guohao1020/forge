@@ -26,7 +26,9 @@ export function useTaskStream({ taskId, onEvent, enabled = true }: UseTaskStream
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
+  useEffect(() => {
+    onEventRef.current = onEvent;
+  });
 
   const disconnect = useCallback(() => {
     if (eventSourceRef.current) {

@@ -35,6 +35,7 @@ export default function VersionListPage() {
 
   useEffect(() => {
     fetchVersions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   const handleCreate = async () => {
@@ -46,8 +47,8 @@ export default function VersionListPage() {
       setNewVersion("");
       setNewDesc("");
       await fetchVersions();
-    } catch (e: any) {
-      alert(e.message || "创建失败");
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "创建失败");
     } finally {
       setCreating(false);
     }

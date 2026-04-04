@@ -42,6 +42,7 @@ export default function VersionDetailPage() {
 
   useEffect(() => {
     fetchDetail();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, versionId]);
 
   const handleRelease = async () => {
@@ -50,8 +51,8 @@ export default function VersionDetailPage() {
     try {
       await releaseVersion(Number(projectId), Number(versionId));
       await fetchDetail();
-    } catch (e: any) {
-      alert(e.message || "发布失败");
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "发布失败");
     } finally {
       setReleasing(false);
     }
@@ -226,12 +227,17 @@ function TaskRow({
         </div>
       )}
 
-      {task.touchedFiles && JSON.parse(task.touchedFiles as any)?.length > 0 && (
-        <div className="mt-2 text-xs text-muted-foreground/50 pl-6 truncate">
-          文件: {JSON.parse(task.touchedFiles as any).slice(0, 3).join(", ")}
-          {JSON.parse(task.touchedFiles as any).length > 3 && " ..."}
-        </div>
-      )}
+      {task.touchedFiles && (() => {
+        const files: string[] = typeof task.touchedFiles === "string"
+          ? JSON.parse(task.touchedFiles)
+          : Array.isArray(task.touchedFiles) ? task.touchedFiles : [];
+        return files.length > 0 ? (
+          <div className="mt-2 text-xs text-muted-foreground/50 pl-6 truncate">
+            文件: {files.slice(0, 3).join(", ")}
+            {files.length > 3 && " ..."}
+          </div>
+        ) : null;
+      })()}
     </button>
   );
 }
