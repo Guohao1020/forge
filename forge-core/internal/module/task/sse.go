@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	goredis "github.com/redis/go-redis/v9"
+	"github.com/shulex/forge/forge-core/internal/middleware"
 )
 
 // SSEHub manages SSE connections for task progress streaming.
@@ -95,6 +96,9 @@ func (h *SSEHandler) Stream(c *gin.Context) {
 
 	ch := h.hub.subscribe(taskID)
 	defer h.hub.unsubscribe(taskID, ch)
+
+	middleware.SSEConnect()
+	defer middleware.SSEDisconnect()
 
 	reqCtx := c.Request.Context()
 	ticker := time.NewTicker(30 * time.Second)

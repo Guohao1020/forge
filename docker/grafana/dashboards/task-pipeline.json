@@ -1,0 +1,171 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Tasks Created (Total)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{
+        "expr": "forge_tasks_total",
+        "legendFormat": "total"
+      }],
+      "fieldConfig": {
+        "defaults": { "unit": "short" }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Tasks Completed",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{
+        "expr": "forge_tasks_completed_total",
+        "legendFormat": "completed"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "fixedColor": "green", "mode": "fixed" }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Tasks Failed",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{
+        "expr": "forge_tasks_failed_total",
+        "legendFormat": "failed"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "fixedColor": "red", "mode": "fixed" }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Tasks In Progress",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [{
+        "expr": "forge_tasks_in_progress",
+        "legendFormat": "in progress"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "fixedColor": "#8B5CF6", "mode": "fixed" }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Pipeline Stage Duration (avg ms)",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 },
+      "targets": [{
+        "expr": "forge_pipeline_stage_duration_avg_ms",
+        "legendFormat": "{{ stage }}"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "always"
+      }
+    },
+    {
+      "id": 6,
+      "title": "Task Completion Rate (over time)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "expr": "forge_tasks_completed_total",
+          "legendFormat": "completed"
+        },
+        {
+          "expr": "forge_tasks_failed_total",
+          "legendFormat": "failed"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 20,
+            "lineWidth": 2
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "completed" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "failed" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          }
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "title": "Tasks by Status",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [{
+        "expr": "forge_tasks_by_status",
+        "legendFormat": "{{ status }}"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Active SSE Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 20 },
+      "targets": [{
+        "expr": "forge_sse_connections_active",
+        "legendFormat": "active connections"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 30,
+            "lineWidth": 2
+          },
+          "color": { "fixedColor": "#8B5CF6", "mode": "fixed" }
+        }
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["forge", "tasks"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "title": "Forge Task Pipeline",
+  "uid": "forge-task-pipeline"
+}
