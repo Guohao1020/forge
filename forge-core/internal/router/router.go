@@ -202,6 +202,11 @@ func Setup(deps *Deps) *gin.Engine {
 				}
 			}
 
+			// User Management (PLATFORM_ADMIN only)
+			protected.GET("/admin/users", middleware.RequireRole(middleware.RolePlatformAdmin), deps.AuthHandler.ListUsers)
+			protected.POST("/admin/users", middleware.RequireRole(middleware.RolePlatformAdmin), deps.AuthHandler.CreateUser)
+			protected.PUT("/admin/users/:userId/role", middleware.RequireRole(middleware.RolePlatformAdmin), deps.AuthHandler.UpdateUserRole)
+
 			// Cost Control (admin-only for tenant costs, project-level for project members)
 			if deps.CostHandler != nil {
 				protected.GET("/admin/costs", middleware.RequireRole(middleware.RolePlatformAdmin), deps.CostHandler.GetMonthlyCosts)
