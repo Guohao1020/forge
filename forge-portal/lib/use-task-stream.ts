@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 
 export interface TaskStreamEvent {
-  type: "connected" | "FULL_STATE" | "TASK_PROGRESS" | "STEPS_UPDATE" | "TASK_COMPLETE" | "code_token";
+  type: "connected" | "FULL_STATE" | "TASK_PROGRESS" | "STEPS_UPDATE" | "TASK_COMPLETE" | "code_token" | "analyze_token";
   task_id: number;
   status?: string;
   step_type?: string;
@@ -22,6 +22,8 @@ export function useTaskStream({ taskId, onEvent, enabled = true }: UseTaskStream
   const [connected, setConnected] = useState(false);
   const [streamingTokens, setStreamingTokens] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [analyzeThinking, setAnalyzeThinking] = useState("");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
@@ -33,6 +35,7 @@ export function useTaskStream({ taskId, onEvent, enabled = true }: UseTaskStream
     }
     setConnected(false);
     setIsStreaming(false);
+    setIsAnalyzing(false);
   }, []);
 
   useEffect(() => {
@@ -56,6 +59,27 @@ export function useTaskStream({ taskId, onEvent, enabled = true }: UseTaskStream
         const event: TaskStreamEvent = JSON.parse(e.data);
         if (event.type === "connected") {
           setConnected(true);
+        }
+
+        // Handle analyze_token events (AI thinking process)
+        if (event.type === "analyze_token") {
+          const payload = event.data ?? "";
+          try {
+            const parsed = JSON.parse(payload);
+            if (parsed.event === "thinking_start") {
+              setAnalyzeThinking("");
+              setIsAnalyzing(true);
+            } else if (parsed.event === "thinking_end") {
+              setIsAnalyzing(false);
+            } else {
+              // Raw text chunk
+              setAnalyzeThinking((prev) => prev + payload);
+            }
+          } catch {
+            // Not JSON — treat as raw text chunk
+            setAnalyzeThinking((prev) => prev + payload);
+            setIsAnalyzing(true);
+          }
         }
 
         // Handle code_token events
@@ -117,5 +141,5 @@ export function useTaskStream({ taskId, onEvent, enabled = true }: UseTaskStream
     };
   }, [taskId, enabled]);
 
-  return { connected, disconnect, streamingTokens, isStreaming };
+  return { connected, disconnect, streamingTokens, isStreaming, analyzeThinking, isAnalyzing };
 }
