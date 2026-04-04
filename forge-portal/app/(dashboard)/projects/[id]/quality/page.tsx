@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { Shield, Activity, TrendingUp, AlertCircle } from "lucide-react";
+import { Shield, Activity, TrendingUp, Settings2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { SEVERITY_CONFIG, CATEGORY_CONFIG } from "@/lib/entropy";
 
@@ -33,6 +33,11 @@ export default function QualityPage() {
   const [history, setHistory] = useState<EntropyScan[]>([]);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
+  const [showConfig, setShowConfig] = useState(false);
+  const [configEnabled, setConfigEnabled] = useState(true);
+  const [configSchedule, setConfigSchedule] = useState("weekly");
+  const [configAutoFix, setConfigAutoFix] = useState(false);
+  const [configSaving, setConfigSaving] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -50,6 +55,13 @@ export default function QualityPage() {
         .catch(() => {}),
       api.get<{ scans: EntropyScan[] }>(`/projects/${projectId}/entropy/scans?limit=10`)
         .then((res) => setHistory(res.scans))
+        .catch(() => {}),
+      api.get<{ config: { enabled: boolean; schedule: string; autoFix: boolean } }>(`/projects/${projectId}/entropy/config`)
+        .then((res) => {
+          setConfigEnabled(res.config.enabled);
+          setConfigSchedule(res.config.schedule);
+          setConfigAutoFix(res.config.autoFix);
+        })
         .catch(() => {}),
     ]).finally(() => setLoading(false));
   }, [projectId]);
@@ -184,6 +196,96 @@ export default function QualityPage() {
           </div>
         </div>
       )}
+
+      {/* Scan Configuration */}
+      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-medium text-foreground flex items-center gap-2">
+            <Settings2 className="h-4 w-4 text-muted-foreground" />
+            扫描配置
+          </h2>
+          <button
+            onClick={() => setShowConfig(!showConfig)}
+            className="text-xs text-primary hover:text-primary/80 transition-colors"
+          >
+            {showConfig ? "收起" : "展开"}
+          </button>
+        </div>
+
+        {showConfig && (
+          <div className="space-y-4 pt-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-foreground">启用自动扫描</p>
+                <p className="text-xs text-muted-foreground">按计划自动运行代码质量扫描</p>
+              </div>
+              <button
+                onClick={() => setConfigEnabled(!configEnabled)}
+                className={`relative w-10 h-5 rounded-full transition-colors ${
+                  configEnabled ? "bg-primary" : "bg-white/20"
+                }`}
+              >
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                  configEnabled ? "left-5" : "left-0.5"
+                }`} />
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-sm text-foreground mb-1">扫描频率</label>
+              <select
+                value={configSchedule}
+                onChange={(e) => setConfigSchedule(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+              >
+                <option value="daily">每天</option>
+                <option value="weekly">每周</option>
+                <option value="monthly">每月</option>
+              </select>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-foreground">自动修复</p>
+                <p className="text-xs text-muted-foreground">发现问题时自动创建修复 PR</p>
+              </div>
+              <button
+                onClick={() => setConfigAutoFix(!configAutoFix)}
+                className={`relative w-10 h-5 rounded-full transition-colors ${
+                  configAutoFix ? "bg-primary" : "bg-white/20"
+                }`}
+              >
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                  configAutoFix ? "left-5" : "left-0.5"
+                }`} />
+              </button>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                disabled={configSaving}
+                onClick={async () => {
+                  setConfigSaving(true);
+                  try {
+                    await api.put(`/projects/${projectId}/entropy/config`, {
+                      enabled: configEnabled,
+                      schedule: configSchedule,
+                      autoFix: configAutoFix,
+                    });
+                  } catch {
+                    // ignore
+                  } finally {
+                    setConfigSaving(false);
+                  }
+                }}
+                className="px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
+              >
+                {configSaving ? "保存中..." : "保存配置"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
