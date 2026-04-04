@@ -49,4 +49,3 @@ func BenchmarkDetectProjectType_LargeRepo(b *testing.B) {
 		DetectProjectType(files, languages)
 	}
 }
-
