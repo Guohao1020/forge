@@ -147,6 +147,28 @@ func (h *Handler) Unstar(c *gin.Context) {
 	response.OK(c, nil)
 }
 
+// SyncToRemote creates a GitHub repo for an existing project that has no remote.
+// POST /api/projects/:id/sync
+func (h *Handler) SyncToRemote(c *gin.Context) {
+	userID, tenantID := userCtx(c)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		Private bool `json:"private"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	p, err := h.svc.SyncProjectToRemote(c.Request.Context(), id, tenantID, userID, req.Private)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	response.OK(c, p)
+}
+
 // ---------------------------------------------------------------------------
 // Code browsing handlers
 // ---------------------------------------------------------------------------

@@ -15,12 +15,13 @@ import (
 
 // TaskWorkflowInput is the input to the TaskWorkflow.
 type TaskWorkflowInput struct {
-	TaskID      int64  `json:"task_id"`
-	TenantID    int64  `json:"tenant_id"`
-	ProjectID   int64  `json:"project_id"`
-	CreatedBy   int64  `json:"created_by"`
-	Requirement string `json:"requirement"`
-	Title       string `json:"title"`
+	TaskID      int64                  `json:"task_id"`
+	TenantID    int64                  `json:"tenant_id"`
+	ProjectID   int64                  `json:"project_id"`
+	CreatedBy   int64                  `json:"created_by"`
+	Requirement string                 `json:"requirement"`
+	Title       string                 `json:"title"`
+	PlanResult  map[string]interface{} `json:"plan_result,omitempty"`
 }
 
 type TaskActivities struct {
@@ -205,13 +206,18 @@ func (a *TaskActivities) RunTests(ctx context.Context, taskID int64, testCases m
 
 	if a.k8s != nil {
 		jobName := fmt.Sprintf("test-%d-%d", taskID, time.Now().Unix())
-		err := a.k8s.CreateJob(ctx, jobName, "golang:1.22-alpine",
-			[]string{"sh", "-c", "echo 'Running tests...' && sleep 5 && echo 'All tests passed'"},
+		// Use forge-task-runner image for real test execution
+		// The entrypoint.sh handles: clone → install deps → run tests → report
+		err := a.k8s.CreateJob(ctx, jobName, "forge-task-runner:latest",
+			nil, // entrypoint.sh is the default ENTRYPOINT
 			map[string]string{
-				"TASK_ID":   fmt.Sprintf("%d", taskID),
-				"FRAMEWORK": framework,
+				"TASK_ID":         fmt.Sprintf("%d", taskID),
+				"FRAMEWORK":       framework,
+				"COVERAGE_MIN":    "60",
+				"FORGE_API_URL":   "http://forge-core:8080",
+				"FORGE_API_TOKEN": "", // TODO: inject from config
 			},
-			600, // 10 min timeout
+			1800, // 30 min timeout (real tests take longer)
 		)
 		if err != nil {
 			slog.Warn("k8s test job failed, falling back to mock results", "error", err, "task_id", taskID)

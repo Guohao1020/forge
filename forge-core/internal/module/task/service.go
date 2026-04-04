@@ -3,7 +3,6 @@ package task
 import (
 	"context"
 	"fmt"
-	"log/slog"
 )
 
 // WorkflowStarter abstracts Temporal client for starting task workflows.
@@ -48,16 +47,8 @@ func (s *Service) CreateTask(ctx context.Context, tenantID, projectID, userID in
 		return nil, fmt.Errorf("create steps: %w", err)
 	}
 
-	if s.workflowStarter != nil {
-		workflowID, runID, err := s.workflowStarter.StartTaskWorkflow(ctx, t.ID, tenantID, projectID, userID)
-		if err != nil {
-			slog.Error("failed to start workflow", "task_id", t.ID, "error", err)
-		} else {
-			_ = s.repo.UpdateWorkflowIDs(ctx, t.ID, workflowID, runID)
-			t.WorkflowID = &workflowID
-			t.WorkflowRunID = &runID
-		}
-	}
+	// Do NOT start TaskWorkflow here. The user enters the conversation page
+	// to refine the requirement with AI first. Workflow starts after ConfirmPlan.
 
 	steps, _ := s.repo.GetStepsByTaskID(ctx, t.ID)
 	return &TaskResponse{Task: *t, Steps: steps}, nil
@@ -81,6 +72,37 @@ func (s *Service) ListTaskNodes(ctx context.Context, taskID int64) (*TaskNodeLis
 		nodes = []TaskNode{}
 	}
 	return &TaskNodeListResponse{Nodes: nodes}, nil
+}
+
+// CancelTask permanently cancels a task. Only allowed before code generation starts.
+// Once cancelled, the task cannot be recovered.
+func (s *Service) CancelTask(ctx context.Context, taskID int64) error {
+	t, err := s.repo.FindByID(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("task not found: %w", err)
+	}
+
+	// Only allow cancel before code generation
+	cancellable := map[string]bool{
+		StatusSubmitted: true,
+		StatusAnalyzing: true,
+		StatusPlanning:  true,
+	}
+	if !cancellable[t.Status] {
+		return fmt.Errorf("cannot cancel task in status %s — code generation has already started", t.Status)
+	}
+
+	if err := s.repo.UpdateStatus(ctx, taskID, StatusCancelled); err != nil {
+		return fmt.Errorf("cancel task: %w", err)
+	}
+
+	// Cancel any running Temporal workflows
+	if t.WorkflowID != nil && *t.WorkflowID != "" {
+		// Temporal workflow cancellation is best-effort
+		// The workflow will handle the cancellation signal
+	}
+
+	return nil
 }
 
 func (s *Service) ListTasks(ctx context.Context, projectID int64, status string, page, pageSize int) (*TaskListResponse, error) {

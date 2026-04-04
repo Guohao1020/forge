@@ -51,6 +51,7 @@ export const STATUS_LABELS: Record<string, string> = {
   DEPLOYING: "部署中",
   COMPLETED: "已完成",
   FAILED: "失败",
+  CANCELLED: "已取消",
 };
 
 export const STATUS_COLORS: Record<string, string> = {
@@ -63,6 +64,7 @@ export const STATUS_COLORS: Record<string, string> = {
   DEPLOYING: "#10B981",
   COMPLETED: "#10B981",
   FAILED: "#EF4444",
+  CANCELLED: "#6B7280",
 };
 
 // Kanban columns: group active statuses

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -78,9 +79,22 @@ func (s *Service) TriggerDeploy(ctx context.Context, tenantID, projectID, envID,
 
 	if s.k8sClient != nil {
 		// Real K8s deployment
-		namespace := fmt.Sprintf("tenant-%d-%s", tenantID, env.EnvType)
+		namespace := fmt.Sprintf("tenant-%d-%s", tenantID, strings.ToLower(env.EnvType))
 		deployName := fmt.Sprintf("project-%d", projectID)
-		image := req.Version // Version is expected to be a full image reference when using K8s
+
+		// Determine the container image to deploy.
+		// If version is a full image ref (contains "/"), use it directly.
+		// Otherwise, use a placeholder nginx image for mock deployment
+		// since we haven't built a real image for AI-generated code yet.
+		image := req.Version
+		isMockDeploy := false
+		if !strings.Contains(image, "/") {
+			// No real image built yet — use nginx as placeholder
+			image = "registry.cn-hangzhou.aliyuncs.com/shulex/nginx:alpine"
+			isMockDeploy = true
+			slog.Info("no real image available, using mock deployment",
+				"version", req.Version, "mock_image", image)
+		}
 
 		slog.Info("k8s deploy started",
 			"namespace", namespace,
@@ -128,7 +142,11 @@ func (s *Service) TriggerDeploy(ctx context.Context, tenantID, projectID, envID,
 			slog.Warn("failed to update deploy record status", "error", updateErr)
 		}
 
-		slog.Info("k8s deploy completed", "namespace", namespace, "deployment", deployName)
+		if isMockDeploy {
+			slog.Info("k8s mock deploy completed (placeholder image)", "namespace", namespace, "deployment", deployName)
+		} else {
+			slog.Info("k8s deploy completed", "namespace", namespace, "deployment", deployName)
+		}
 	} else {
 		// Mock mode — immediately mark as deployed
 		slog.Info("mock deploy triggered", "projectId", projectID, "envId", envID, "version", req.Version)

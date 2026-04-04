@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	temporalclient "go.temporal.io/sdk/client"
 
 	ghAdapter "github.com/shulex/forge/forge-core/internal/adapter/github"
 )
@@ -23,9 +24,10 @@ type AuthTokenProvider interface {
 }
 
 type Service struct {
-	repo    *Repository
-	authSvc AuthTokenProvider
-	ws      WorkspaceProvider // optional, for local file browsing
+	repo           *Repository
+	authSvc        AuthTokenProvider
+	ws             WorkspaceProvider // optional, for local file browsing
+	temporalClient temporalclient.Client // optional, for triggering profile scans
 }
 
 // WorkspaceProvider reads files from local workspace (clone).
@@ -37,13 +39,74 @@ func NewService(repo *Repository, authSvc AuthTokenProvider, ws WorkspaceProvide
 	return &Service{repo: repo, authSvc: authSvc, ws: ws}
 }
 
+// SetTemporalClient sets the Temporal client for async operations (profile scanning).
+// Called from main.go after Temporal initialization.
+func (s *Service) SetTemporalClient(tc temporalclient.Client) {
+	s.temporalClient = tc
+}
+
 
 func (s *Service) Create(ctx context.Context, tenantID, userID int64, req *CreateProjectRequest) (*Project, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
 		return nil, errors.New("项目名称不能为空")
 	}
-	return s.repo.Create(ctx, tenantID, userID, req)
+
+	wantSync := req.SyncToRemote
+	// Clear repo fields — insert DB first to validate name uniqueness
+	if wantSync {
+		req.CodePlatform = ""
+		req.CodeRepoURL = ""
+	}
+
+	// 1. Insert project into DB first (validates unique name)
+	p, err := s.repo.Create(ctx, tenantID, userID, req)
+	if err != nil {
+		if strings.Contains(err.Error(), "projects_tenant_id_name_key") {
+			return nil, errors.New("项目名称已存在")
+		}
+		return nil, err
+	}
+
+	// 2. Then create GitHub repo and backfill URL
+	if wantSync {
+		token, tokenErr := s.authSvc.GetGitHubToken(ctx, userID)
+		if tokenErr != nil || token == "" {
+			// Project created but no GitHub — return with warning
+			slog.Warn("project created without GitHub sync — no token", "project_id", p.ID)
+			return p, nil
+		}
+		ghClient := ghAdapter.NewClient(token)
+		repoName := strings.TrimSpace(req.RepoName)
+		if repoName == "" {
+			repoName = slugify(req.Name)
+		}
+		if repoName == "" {
+			repoName = fmt.Sprintf("forge-project-%d", p.ID)
+		}
+		repo, ghErr := ghClient.CreateRepo(ctx, repoName, req.Description, "", req.RepoPrivate)
+		if ghErr != nil {
+			slog.Warn("project created but GitHub repo creation failed", "project_id", p.ID, "error", ghErr)
+			return p, nil
+		}
+		// Backfill repo info
+		platform := "github"
+		repoURL := repo.HTMLURL
+		branch := repo.DefaultBranch
+		updated, updErr := s.repo.Update(ctx, p.ID, tenantID, &UpdateProjectRequest{
+			CodePlatform:  &platform,
+			CodeRepoURL:   &repoURL,
+			DefaultBranch: &branch,
+		})
+		if updErr != nil {
+			slog.Warn("failed to backfill repo URL", "project_id", p.ID, "error", updErr)
+			return p, nil
+		}
+		slog.Info("auto-created GitHub repo", "project_id", p.ID, "repo", repo.FullName)
+		return updated, nil
+	}
+
+	return p, nil
 }
 
 func (s *Service) List(ctx context.Context, tenantID, userID int64, q *ListProjectsQuery) (*ListProjectsResponse, error) {
@@ -76,6 +139,46 @@ func (s *Service) Update(ctx context.Context, id, tenantID int64, req *UpdatePro
 		return nil, errors.New("项目不存在")
 	}
 	return p, err
+}
+
+// SyncProjectToRemote creates a GitHub repo for a project that has no remote repo yet.
+func (s *Service) SyncProjectToRemote(ctx context.Context, id, tenantID, userID int64, private bool) (*Project, error) {
+	p, err := s.repo.GetByID(ctx, id, tenantID, userID)
+	if err != nil {
+		return nil, errors.New("项目不存在")
+	}
+	if p.CodeRepoURL != "" {
+		return nil, errors.New("项目已关联远程仓库")
+	}
+
+	token, err := s.authSvc.GetGitHubToken(ctx, userID)
+	if err != nil || token == "" {
+		return nil, errors.New("请先连接 GitHub 账户")
+	}
+	ghClient := ghAdapter.NewClient(token)
+	repoName := slugify(p.Name)
+	if repoName == "" {
+		repoName = fmt.Sprintf("forge-project-%d", p.ID)
+	}
+	repo, err := ghClient.CreateRepo(ctx, repoName, p.Description, "", private)
+	if err != nil {
+		return nil, fmt.Errorf("创建 GitHub 仓库失败: %w", err)
+	}
+
+	platform := "github"
+	repoURL := repo.HTMLURL
+	branch := repo.DefaultBranch
+	updated, err := s.repo.Update(ctx, id, tenantID, &UpdateProjectRequest{
+		CodePlatform:  &platform,
+		CodeRepoURL:   &repoURL,
+		DefaultBranch: &branch,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	slog.Info("synced project to GitHub", "project_id", id, "repo", repo.FullName)
+	return updated, nil
 }
 
 func (s *Service) Archive(ctx context.Context, id, tenantID int64) error {
@@ -132,12 +235,23 @@ func (s *Service) DetectTechStack(ctx context.Context, projectID, tenantID, user
 		files = []string{}
 	}
 
-	// Detect tech stack from files
+	// Detect tech stack from files (basic frameworks)
 	techStack := map[string]interface{}{
 		"languages":   languages,
 		"frameworks":  detectFrameworks(files),
 		"detected_at": time.Now().Format(time.RFC3339),
 	}
+
+	// Enhanced project type detection (SP-1)
+	profile := DetectProjectType(files, languages)
+	techStack = enhanceTechStack(techStack, profile)
+	slog.Info("project type detected",
+		"project_id", projectID,
+		"type", profile.ProjectType,
+		"subType", profile.SubType,
+		"confidence", profile.Confidence,
+		"branchStrategy", profile.BranchStrategy,
+	)
 
 	tsJSON, _ := json.Marshal(techStack)
 	return s.repo.UpdateTechStack(ctx, projectID, string(tsJSON))
@@ -200,6 +314,27 @@ func (s *Service) ImportFromGitHub(ctx context.Context, tenantID, userID int64, 
 				slog.Warn("tech stack detection failed", "project_id", pid, "error", err)
 			}
 		}(brief.ID)
+
+		// Auto-trigger profile scan for the newly imported project
+		if s.temporalClient != nil {
+			go func(pid int64) {
+				bgCtx := context.Background()
+				input := map[string]interface{}{
+					"project_id": pid,
+					"user_id":    userID,
+				}
+				opts := temporalclient.StartWorkflowOptions{
+					ID:        fmt.Sprintf("profile-scan-%d-%d", pid, time.Now().Unix()),
+					TaskQueue: "forge-task-queue",
+				}
+				we, err := s.temporalClient.ExecuteWorkflow(bgCtx, opts, "ProfileScanWorkflow", input)
+				if err != nil {
+					slog.Warn("auto profile scan failed to start", "project_id", pid, "error", err)
+				} else {
+					slog.Info("auto profile scan started on import", "project_id", pid, "workflow_id", we.GetID())
+				}
+			}(brief.ID)
+		}
 	}
 
 	if resp.Projects == nil {
@@ -227,6 +362,25 @@ func (s *Service) getGitHubClient(ctx context.Context, projectID, tenantID, user
 		return nil, nil, fmt.Errorf("no GitHub token available")
 	}
 	return p, ghAdapter.NewClient(token), nil
+}
+
+// slugify converts a project name to a valid GitHub repo name.
+// Keeps ASCII letters, digits, hyphens; replaces everything else with '-'.
+func slugify(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	// Collapse multiple hyphens, trim leading/trailing hyphens
+	s := b.String()
+	for strings.Contains(s, "--") {
+		s = strings.ReplaceAll(s, "--", "-")
+	}
+	return strings.Trim(s, "-")
 }
 
 // parseOwnerRepo extracts owner and repo from a GitHub URL.

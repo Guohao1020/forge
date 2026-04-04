@@ -13,6 +13,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/specs"
 	"github.com/shulex/forge/forge-core/internal/module/task"
 	"github.com/shulex/forge/forge-core/internal/module/testresult"
+	"github.com/shulex/forge/forge-core/internal/module/version"
 )
 
 type Deps struct {
@@ -28,6 +29,7 @@ type Deps struct {
 	ProfileHandler      *profile.Handler
 	TestResultHandler   *testresult.Handler
 	ArtifactHandler     *artifact.Handler
+	VersionHandler      *version.Handler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -71,6 +73,7 @@ func Setup(deps *Deps) *gin.Engine {
 			protected.DELETE("/projects/:id", deps.ProjectHandler.Archive)
 			protected.POST("/projects/:id/star", deps.ProjectHandler.Star)
 			protected.DELETE("/projects/:id/star", deps.ProjectHandler.Unstar)
+			protected.POST("/projects/:id/sync", deps.ProjectHandler.SyncToRemote)
 
 			// Code browsing
 			protected.GET("/projects/:id/code/tree", deps.ProjectHandler.GetCodeTree)
@@ -85,6 +88,7 @@ func Setup(deps *Deps) *gin.Engine {
 				protected.GET("/projects/:id/tasks", deps.TaskHandler.ListTasks)
 				protected.GET("/projects/:id/tasks/:taskId", deps.TaskHandler.GetTask)
 				protected.GET("/projects/:id/tasks/:taskId/nodes", deps.TaskHandler.ListTaskNodes)
+				protected.POST("/projects/:id/tasks/:taskId/cancel", deps.TaskHandler.CancelTask)
 			}
 
 			// Test Results
@@ -97,7 +101,9 @@ func Setup(deps *Deps) *gin.Engine {
 			if deps.ConversationHandler != nil {
 				protected.POST("/projects/:id/tasks/:taskId/messages", deps.ConversationHandler.SendMessage)
 				protected.GET("/projects/:id/tasks/:taskId/messages", deps.ConversationHandler.GetHistory)
+				protected.POST("/projects/:id/tasks/:taskId/analyze", deps.ConversationHandler.TriggerAnalysis)
 				protected.POST("/projects/:id/tasks/:taskId/confirm", deps.ConversationHandler.ConfirmPlan)
+				protected.POST("/projects/:id/tasks/:taskId/approve-plan", deps.ConversationHandler.ApprovePlan)
 			}
 
 			// SSE
@@ -131,7 +137,17 @@ func Setup(deps *Deps) *gin.Engine {
 			if deps.ProfileHandler != nil {
 				protected.GET("/projects/:id/profiles", deps.ProfileHandler.ListProfiles)
 				protected.GET("/projects/:id/profiles/:key", deps.ProfileHandler.GetProfile)
+				protected.PUT("/projects/:id/profiles/:key", deps.ProfileHandler.SaveProfile)
 				protected.POST("/projects/:id/profiles/scan", deps.ProfileHandler.TriggerScan)
+			}
+
+			// Version Management
+			if deps.VersionHandler != nil {
+				protected.POST("/projects/:id/versions", deps.VersionHandler.Create)
+				protected.GET("/projects/:id/versions", deps.VersionHandler.List)
+				protected.GET("/projects/:id/versions/:vid", deps.VersionHandler.Get)
+				protected.PUT("/projects/:id/versions/:vid", deps.VersionHandler.Update)
+				protected.POST("/projects/:id/versions/:vid/release", deps.VersionHandler.Release)
 			}
 
 			// Specs Center

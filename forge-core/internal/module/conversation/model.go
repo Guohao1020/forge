@@ -65,3 +65,9 @@ type SendMessageResponse struct {
 type ConversationListResponse struct {
 	Messages []*Conversation `json:"messages"`
 }
+
+type PlanConfirmResponse struct {
+	Conversation *Conversation          `json:"conversation"`
+	Status       string                 `json:"status"`   // "plan_review"
+	PlanData     map[string]interface{} `json:"planData"`
+}

@@ -421,6 +421,35 @@ func (c *Client) ListPRs(ctx context.Context, owner, repo, state string) ([]Pull
 	return result, nil
 }
 
+// CreateRepo creates a new GitHub repository under the authenticated user's account.
+// If orgName is non-empty, the repo is created under that organization.
+func (c *Client) CreateRepo(ctx context.Context, name, description, orgName string, private bool) (*Repository, error) {
+	newRepo := &ghlib.Repository{
+		Name:        ghlib.String(name),
+		Description: ghlib.String(description),
+		Private:     ghlib.Bool(private),
+		AutoInit:    ghlib.Bool(true), // initialize with README so the repo is not empty
+	}
+
+	var (
+		r    *ghlib.Repository
+		resp *ghlib.Response
+		err  error
+	)
+	if orgName != "" {
+		r, resp, err = c.client.Repositories.Create(ctx, orgName, newRepo)
+	} else {
+		r, resp, err = c.client.Repositories.Create(ctx, "", newRepo)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("create repo: %w", err)
+	}
+	c.logRateLimit(resp)
+
+	result := repoFromGitHub(r)
+	return &result, nil
+}
+
 func repoFromGitHub(r *ghlib.Repository) Repository {
 	return Repository{
 		ID:            r.GetID(),

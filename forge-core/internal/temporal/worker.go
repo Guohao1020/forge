@@ -23,8 +23,17 @@ func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken 
 	w.RegisterWorkflowWithOptions(wf.TaskWorkflow, workflow.RegisterOptions{
 		Name: "TaskWorkflow",
 	})
+	w.RegisterWorkflowWithOptions(wf.PlanOnlyWorkflow, workflow.RegisterOptions{
+		Name: "PlanOnlyWorkflow",
+	})
+	w.RegisterWorkflowWithOptions(wf.TaskExecutionWorkflow, workflow.RegisterOptions{
+		Name: "TaskExecutionWorkflow",
+	})
 	w.RegisterWorkflowWithOptions(wf.AnalyzeRequirementWorkflow, workflow.RegisterOptions{
 		Name: "AnalyzeRequirementWorkflow",
+	})
+	w.RegisterWorkflowWithOptions(wf.ProfileScanWorkflow, workflow.RegisterOptions{
+		Name: "ProfileScanWorkflow",
 	})
 
 	activities := activity.NewTaskActivities(db, sse, k8sClient)
@@ -64,6 +73,45 @@ func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken 
 	})
 	w.RegisterActivityWithOptions(devops.SavePRInfo, sdkactivity.RegisterOptions{
 		Name: "SavePRInfo",
+	})
+
+	// Version orchestrator workflow + activities
+	w.RegisterWorkflowWithOptions(wf.VersionOrchestrator, workflow.RegisterOptions{
+		Name: "VersionOrchestrator",
+	})
+	versionActs := activity.NewVersionActivities(db)
+	w.RegisterActivityWithOptions(versionActs.UpdateTaskConflict, sdkactivity.RegisterOptions{
+		Name: "UpdateTaskConflict",
+	})
+	w.RegisterActivityWithOptions(versionActs.UpdateVersionStatus, sdkactivity.RegisterOptions{
+		Name: "UpdateVersionStatus",
+	})
+	w.RegisterActivityWithOptions(versionActs.SaveTouchedFiles, sdkactivity.RegisterOptions{
+		Name: "SaveTouchedFiles",
+	})
+
+	// Build activities (S13 — artifact management)
+	buildActs := activity.NewBuildActivities(db)
+	w.RegisterActivityWithOptions(buildActs.BuildDockerImage, sdkactivity.RegisterOptions{
+		Name: "BuildDockerImage",
+	})
+
+	// Deploy activities (S14 — K8s deployment)
+	deployActs := activity.NewDeployActivities(db)
+	w.RegisterActivityWithOptions(deployActs.GenerateK8sManifests, sdkactivity.RegisterOptions{
+		Name: "GenerateK8sManifests",
+	})
+	w.RegisterActivityWithOptions(deployActs.Rollback, sdkactivity.RegisterOptions{
+		Name: "RollbackDeploy",
+	})
+
+	// Preview lifecycle (S17 — cloud preview environments)
+	w.RegisterWorkflowWithOptions(wf.PreviewLifecycleWorkflow, workflow.RegisterOptions{
+		Name: "PreviewLifecycleWorkflow",
+	})
+	previewActs := activity.NewPreviewActivities(db)
+	w.RegisterActivityWithOptions(previewActs.UpdatePreviewStatus, sdkactivity.RegisterOptions{
+		Name: "UpdatePreviewStatus",
 	})
 
 	if err := w.Start(); err != nil {

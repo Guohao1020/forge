@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from temporalio import activity
 from src.agents.coder import CoderAgent
-from src.context.builder import ContextBuilder
+from src.context.cache import ContextCache
 from src.models.router import ModelRouter, Purpose
 
 logger = logging.getLogger(__name__)
@@ -40,9 +40,9 @@ class GenerateOutput:
 @activity.defn(name="generate_code")
 async def generate_code_activity(input: GenerateInput) -> GenerateOutput:
     logger.info(f"Generating code for task {input.task_id}")
-    builder = ContextBuilder()
+    cache = ContextCache()
     try:
-        ctx = await builder.build(input.project_id, purpose="code-generation")
+        ctx = await cache.get_or_build(input.project_id, purpose="code-generation")
 
         # Build user prompt from available data
         user_prompt = ""
@@ -126,9 +126,11 @@ async def generate_code_activity(input: GenerateInput) -> GenerateOutput:
         except Exception as e:
             logger.warning(f"Streaming generation failed, falling back to agent: {e}")
 
-        # Fallback: non-streaming via CoderAgent
+        # Fallback: non-streaming via CoderAgent with context tools
+        from src.context.tools import CONTEXT_TOOLS, ContextToolExecutor
         agent = CoderAgent(router)
-        result = await agent.run(user_prompt, ctx)
+        tool_executor = ContextToolExecutor(ctx, input.project_id)
+        result = await agent.run(user_prompt, ctx, tools=CONTEXT_TOOLS, tool_executor=tool_executor)
         return GenerateOutput(
             files=result.structured.get("files", []),
             commit_message=result.structured.get("commit_message", ""),
@@ -141,4 +143,4 @@ async def generate_code_activity(input: GenerateInput) -> GenerateOutput:
             latency_ms=result.latency_ms,
         )
     finally:
-        await builder.close()
+        await cache.close()

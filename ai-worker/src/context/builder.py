@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -85,31 +86,72 @@ class ContextBuilder:
         ctx = ProjectContext()
         ctx.conversation_history = conversation_history or []
 
-        # Fetch project profile — GET /api/projects/{project_id}
+        # Parallel fetch all 4 APIs (SX-2 optimization: ~4x faster context loading)
+        project_task = self._fetch_project(project_id)
+        specs_task = self._fetch_effective_specs(project_id)
+        prompts_task = self._fetch_prompt_template(purpose)
+        profiles_task = self._fetch_profiles(project_id)
+
+        project_data, specs_data, prompts_data, profiles_data = await asyncio.gather(
+            project_task, specs_task, prompts_task, profiles_task,
+            return_exceptions=True,
+        )
+
+        # Apply project data
+        if isinstance(project_data, dict):
+            ctx.project_name = project_data.get("name", "")
+            ctx.project_description = project_data.get("description", "")
+            ctx.tech_stack = project_data.get("techStack") or {}
+
+        # Apply specs data
+        if isinstance(specs_data, dict):
+            standards = specs_data.get("standards", [])
+            ctx.coding_standards = [
+                s.get("content", "") for s in standards if s.get("content")
+            ]
+            ctx.review_rules = specs_data.get("rules", [])
+
+        # Apply prompt template
+        if isinstance(prompts_data, dict):
+            ctx.prompt_template_system = prompts_data.get("systemPrompt", "")
+            ctx.prompt_template_user = prompts_data.get("userTemplate", "")
+
+        # Apply profiles
+        if isinstance(profiles_data, dict):
+            for key, value in profiles_data.items():
+                if key and value:
+                    ctx.project_profiles[key] = value
+
+        logger.info(
+            "Context built for project %d: standards=%d, rules=%d, profiles=%s, prompt_template=%s",
+            project_id,
+            len(ctx.coding_standards),
+            len(ctx.review_rules),
+            list(ctx.project_profiles.keys()),
+            bool(ctx.prompt_template_system),
+        )
+
+        return ctx
+
+    async def _fetch_project(self, project_id: int) -> dict:
         try:
             resp = await self._client.get(f"/api/projects/{project_id}")
             if resp.status_code == 200:
-                data = resp.json().get("data", {})
-                ctx.project_name = data.get("name", "")
-                ctx.project_description = data.get("description", "")
-                ctx.tech_stack = data.get("techStack") or {}
+                return resp.json().get("data", {})
         except Exception as e:
-            logger.warning(f"Failed to fetch project {project_id}: {e}")
+            logger.warning("Failed to fetch project %d: %s", project_id, e)
+        return {}
 
-        # Fetch effective specs — GET /api/specs/effective/{project_id}
+    async def _fetch_effective_specs(self, project_id: int) -> dict:
         try:
             resp = await self._client.get(f"/api/specs/effective/{project_id}")
             if resp.status_code == 200:
-                data = resp.json().get("data", {})
-                standards = data.get("standards", [])
-                ctx.coding_standards = [
-                    s.get("content", "") for s in standards if s.get("content")
-                ]
-                ctx.review_rules = data.get("rules", [])
+                return resp.json().get("data", {})
         except Exception as e:
-            logger.warning(f"Failed to fetch specs for project {project_id}: {e}")
+            logger.warning("Failed to fetch specs for project %d: %s", project_id, e)
+        return {}
 
-        # Fetch prompt template — GET /api/specs/prompts?purpose={purpose}
+    async def _fetch_prompt_template(self, purpose: str) -> dict:
         try:
             resp = await self._client.get(
                 "/api/specs/prompts", params={"purpose": purpose}
@@ -125,26 +167,30 @@ class ContextBuilder:
                 if not template and items:
                     template = items[0]
                 if template:
-                    ctx.prompt_template_system = template.get("systemPrompt", "")
-                    ctx.prompt_template_user = template.get("userTemplate", "")
+                    return {
+                        "systemPrompt": template.get("systemPrompt", ""),
+                        "userTemplate": template.get("userTemplate", ""),
+                    }
         except Exception as e:
-            logger.warning(f"Failed to fetch prompt template for {purpose}: {e}")
+            logger.warning("Failed to fetch prompt template for %s: %s", purpose, e)
+        return {}
 
-        # Fetch project profiles (AI memory) — GET /api/projects/{project_id}/profiles
+    async def _fetch_profiles(self, project_id: int) -> dict:
         try:
             resp = await self._client.get(f"/api/projects/{project_id}/profiles")
             if resp.status_code == 200:
                 data = resp.json().get("data", {})
                 profiles_list = data.get("profiles", [])
+                result = {}
                 for p in profiles_list:
                     key = p.get("profileKey", "")
                     value = p.get("profileValue", {})
                     if key and value:
-                        ctx.project_profiles[key] = value
+                        result[key] = value
+                return result
         except Exception as e:
-            logger.warning(f"Failed to fetch project profiles for {project_id}: {e}")
-
-        return ctx
+            logger.warning("Failed to fetch profiles for project %d: %s", project_id, e)
+        return {}
 
     async def close(self):
         await self._client.aclose()

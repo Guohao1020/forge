@@ -1,12 +1,15 @@
 # Forge Platform — 里程碑计划
 
-> **版本**: 4.2
-> **日期**: 2026-04-02
+> **版本**: 6.0
+> **日期**: 2026-04-05
 > **前置文档**: [PRD.md](PRD.md) | [technical-design.md](technical-design.md)
 > **架构变更**: v3.0 采用垂直切片(Slice)替代水平分层(Milestone)，每个切片前后端一起交付
 > **v4.0 变更**: Phase 2 重构为 7 阶段 AI 开发流水线（P1~P7），对应切片 S8~S14
 > **v4.1 变更**: 新增 S15 代码浏览与分支管理、S16 项目画像与 AI 记忆、S17 云端预览环境
 > **v4.2 变更**: 新增 SaaS 基础设施架构（K8s 集群拓扑、GitHub App、任务容器、多租户隔离），标注基础设施前置依赖
+> **v6.0 变更**: 新增 SP-1（项目智能接入）、SP-2（AI 方案推荐）、SP-3（多平台制品策略）；Phase 2b 扩展为 26 天含 11 个切片；完整 20 个执行计划文档编写完成
+> **v5.1 变更**: Phase 2b 重设计为 Harness Engineering 架构 — 新增 SH-1~SH-4 切片（Agent Loop、上下文工具、项目协调器、版本管理 UI）；S9/S10/S11 升级为 S9'/S10'/S11'（集成 context tools）；新增版本管理 + 多需求并发协调。详见 [harness-engineering-design.md](plans/harness-engineering-design.md)
+> **v5.0 变更**: 战略重规划 — Phase 2 拆分为 2a/2b/2c/2d 四个子阶段，新增 SX-1~SX-4 补洞切片；S15 已基本完成并入验证；执行顺序从"按流水线阶段线性推进"调整为"先补洞 → 再增强 → 最后基础设施"。详见 [phase2-strategic-replan.md](plans/phase2-strategic-replan.md)
 
 ---
 
@@ -96,6 +99,62 @@ Phase 1 全部完成后，用户可以在浏览器中完成以下完整流程：
 8. 查看 AI Review 评分 + 质量信息
 9. 查看测试报告（基础版：AI 生成的单测通过/失败，其他层级 "Coming soon"）
 10. 查看部署环境状态（信息展示，无实际 K8s 部署）
+
+---
+
+## Phase 2 执行策略（v5.0 战略重规划）
+
+> 详细战略分析见 [phase2-strategic-replan.md](plans/phase2-strategic-replan.md)
+
+### 核心洞察
+
+代码审计发现 Phase 1 链路上有关键环节是空的：需求分析返回占位文本（AnalystAgent 未接线）、规范注入未验证、项目画像扫描未触发。**在这些空洞之上继续增强流水线没有意义。**
+
+### 新执行顺序
+
+```
+Phase 2a — 补洞（3-4 天）         ← 让核心差异化能力首次生效
+├── SX-1 接线需求分析（AnalystAgent → Temporal）
+├── SX-2 验证+修复规范注入
+├── SX-3 接线项目画像扫描
+└── SX-4 端到端质量验证 + S15 收尾
+
+Phase 2b — Harness Engineering + 产品增强（26 天）
+├── SH-1 Harness 基座（ContextCache + 并行获取 + Agent Loop + ModelRouter tools）— 3天
+├── SH-2 上下文工具（5 个 context tools + ContextToolExecutor + Agent 接入）— 2天
+├── SH-3a 版本数据模型 + CRUD API — 2天
+├── SH-3b 版本协调器（VersionOrchestrator + 冲突检测 + ContinueAsNew）— 3天
+├── SH-4 版本管理 UI（版本列表/详情 + 冲突展示 + 发布按钮）— 2天
+├── S9'  任务拆分增强（DAG 可视化 + touched_files + 冲突预标记）— 2天
+├── S10' 测试先行（TestWriter + context tools + 测试审批 + 预览 UI）— 2天
+├── S11' 代码生成增强（Coder + context tools + Lint + 并行子任务）— 2天
+���── SP-1 项目智能接入（类型检测 + 引导式创建 + 接入清单）— 3天
+├── SP-2 AI 方案推荐（RecommendationCard + 上下文感知推荐 + 选择 UI）— 2天
+└── SP-3 多平台制品策略（构建模板引擎 + 分支策略 + 签名密钥管理）— 3天
+
+Phase 2c — 基础设施（5-7 天）
+├── Infra-1 最小 K8s 环境（k3s/Docker）
+├── S12 自动化测试执行（K8s Job + 4层测试 + 覆盖率门禁 + AI 修复循环）— 3天
+└── S13 制品管理（Docker 构建 + Trivy 扫描 + 语义化版本）— 2天
+
+Phase 2d — 部署闭环（7 天）
+├── S14 K8s 部署（资源清单生成 + 自动部署 + 回滚 + 环境管理）— 3天
+├── S16 项目画像 RAG 增强（pgvector + 语义搜索 + 增量更新 + 可视化）— 2天
+└── S17 云端预览（AI 检测 + Dockerfile 生成 + 临时环境 + 生命周期管理）— 2天
+```
+
+### 切片状态总览
+
+| 切片 | 状态 | 所属阶段 |
+|------|------|---------|
+| S1-S7 | ✅ COMPLETED | Phase 1 |
+| S8 | ✅ COMPLETED | Phase 2 |
+| SX-1~SX-4 | 🔴 NOT STARTED | Phase 2a（补洞） |
+| SH-1~SH-4, S9', S10', S11' | 🔴 NOT STARTED | Phase 2b（Harness + 流水线） |
+| SP-1, SP-2, SP-3 | 🔴 NOT STARTED | Phase 2b（产品增强） |
+| Infra-1, S12, S13 | 🔴 NOT STARTED | Phase 2c（基础设施） |
+| S14, S16-RAG, S17 | 🔴 NOT STARTED | Phase 2d（部署闭环） |
+| S15 | ⚠️ ~90% DONE | 在 SX-4 中收尾 |
 
 ---
 

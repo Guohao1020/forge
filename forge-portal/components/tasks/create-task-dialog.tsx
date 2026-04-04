@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +26,7 @@ export function CreateTaskDialog({
   onOpenChange,
   onCreated,
 }: CreateTaskDialogProps) {
+  const router = useRouter();
   const [requirement, setRequirement] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -39,10 +41,12 @@ export function CreateTaskDialog({
     setLoading(true);
     setError("");
     try {
-      await createTask(projectId, requirement.trim());
+      const detail = await createTask(projectId, requirement.trim());
       setRequirement("");
       onOpenChange(false);
       onCreated();
+      // Navigate to task detail — workflow starts after plan confirmation
+      router.push(`/projects/${projectId}/tasks/${detail.task.id}`);
     } catch (err: unknown) {
       console.error("[CreateTask] error:", err);
       setError(err instanceof Error ? err.message : "创建失败");
@@ -63,7 +67,7 @@ export function CreateTaskDialog({
             <Textarea
               value={requirement}
               onChange={(e) => setRequirement(e.target.value)}
-              placeholder="用自然语言描述你的需求，例如：实现用户注册功能，支持手机号和邮箱注册..."
+              placeholder="用自然语言描述你的需求，例如：实现一个网页端的计算器程序..."
               className="bg-input border-border resize-none min-h-[120px]"
               autoFocus
             />

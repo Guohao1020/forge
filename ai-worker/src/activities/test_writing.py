@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from temporalio import activity
 
 from src.agents.test_writer import TestWriterAgent
-from src.context.builder import ContextBuilder
+from src.context.cache import ContextCache
 from src.models.router import ModelRouter
 
 logger = logging.getLogger(__name__)
@@ -36,9 +36,9 @@ class TestWritingOutput:
 @activity.defn(name="generate_test_cases")
 async def generate_test_cases_activity(input: TestWritingInput) -> TestWritingOutput:
     logger.info(f"Generating test cases for task {input.task_id}")
-    builder = ContextBuilder()
+    cache = ContextCache()
     try:
-        ctx = await builder.build(input.project_id, purpose="code-generation")
+        ctx = await cache.get_or_build(input.project_id, purpose="code-generation")
 
         # Build user prompt from plan
         user_prompt = ""
@@ -55,9 +55,15 @@ async def generate_test_cases_activity(input: TestWritingInput) -> TestWritingOu
 
         user_prompt += "\nGenerate test cases for the implementation tasks above. Write tests that will validate the code BEFORE it is written."
 
+        from src.context.tools import CONTEXT_TOOLS, ContextToolExecutor
+        # TestWriterAgent uses 3 tools: db_schema, api_catalog, read_project_file
+        test_tools = [t for t in CONTEXT_TOOLS if t["name"] in (
+            "query_db_schema", "query_api_catalog", "read_project_file"
+        )]
         router = ModelRouter()
         agent = TestWriterAgent(router)
-        result = await agent.run(user_prompt, ctx)
+        tool_executor = ContextToolExecutor(ctx, input.project_id)
+        result = await agent.run(user_prompt, ctx, tools=test_tools, tool_executor=tool_executor)
 
         return TestWritingOutput(
             test_files=result.structured.get("test_files", []),
@@ -70,4 +76,4 @@ async def generate_test_cases_activity(input: TestWritingInput) -> TestWritingOu
             latency_ms=result.latency_ms,
         )
     finally:
-        await builder.close()
+        await cache.close()

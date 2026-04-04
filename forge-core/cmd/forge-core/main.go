@@ -19,6 +19,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/specs"
 	"github.com/shulex/forge/forge-core/internal/module/task"
 	"github.com/shulex/forge/forge-core/internal/module/testresult"
+	"github.com/shulex/forge/forge-core/internal/module/version"
 	forgetemporal "github.com/shulex/forge/forge-core/internal/temporal"
 	"github.com/shulex/forge/forge-core/internal/temporal/activity"
 	"github.com/shulex/forge/forge-core/internal/workspace"
@@ -98,10 +99,9 @@ func main() {
 	}
 	taskRepo := task.NewRepository(db)
 	taskService := task.NewService(taskRepo, workflowStarter)
-	taskHandler := task.NewHandler(taskService)
 	taskSSE := task.NewSSEHandler(sseHub, rdb)
 
-	// Conversation module
+	// Conversation module (must be before taskHandler — provides ConversationCreator)
 	convRepo := conversation.NewRepository(db)
 	var temporalInner client.Client
 	if temporalClient != nil {
@@ -110,6 +110,13 @@ func main() {
 	convService := conversation.NewService(convRepo, taskRepo, temporalInner)
 	convHandler := conversation.NewHandler(convService)
 
+	// Wire Temporal client to project service for auto-profile-scan on import
+	if temporalInner != nil {
+		projectService.SetTemporalClient(temporalInner)
+	}
+
+	taskHandler := task.NewHandler(taskService, convService)
+
 	// Pipeline module
 	pipelineRepo := pipeline.NewRepository(db)
 	pipelineSvc := pipeline.NewService(pipelineRepo, k8sClient)
@@ -117,7 +124,7 @@ func main() {
 
 	// Profile module
 	profileRepo := profile.NewRepository(db)
-	profileSvc := profile.NewService(profileRepo)
+	profileSvc := profile.NewService(profileRepo, temporalInner)
 	profileHandler := profile.NewHandler(profileSvc)
 
 	// Test Results module
@@ -134,6 +141,11 @@ func main() {
 	artifactRepo := artifact.NewRepository(db)
 	artifactSvc := artifact.NewService(artifactRepo)
 	artifactHandler := artifact.NewHandler(artifactSvc)
+
+	// Version module
+	versionRepo := version.NewRepository(db)
+	versionSvc := version.NewService(versionRepo)
+	versionHandler := version.NewHandler(versionSvc)
 
 	// Specs module
 	specsRepo := specs.NewRepository(db)
@@ -153,6 +165,7 @@ func main() {
 		ProfileHandler:      profileHandler,
 		TestResultHandler:   testResultHandler,
 		ArtifactHandler:     artifactHandler,
+		VersionHandler:      versionHandler,
 	})
 
 	slog.Info("forge-core starting", "port", cfg.ServerPort)

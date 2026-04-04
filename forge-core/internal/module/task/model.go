@@ -17,6 +17,7 @@ const (
 	StatusDeploying    = "DEPLOYING"
 	StatusCompleted    = "COMPLETED"
 	StatusFailed       = "FAILED"
+	StatusCancelled    = "CANCELLED"
 )
 
 // Step status constants

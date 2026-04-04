@@ -17,12 +17,19 @@ MAX_TOKENS = 8192
 
 @dataclass
 class LLMResponse:
-    content: str
+    content: str                         # Text content from the response
     model: str
     provider: str
     input_tokens: int
     output_tokens: int
     latency_ms: int
+    stop_reason: str = "end_turn"        # "end_turn" or "tool_use"
+    tool_calls: list = None              # List of tool call dicts [{name, id, input}]
+    raw_content: Any = None              # Raw response content for multi-turn (assistant message)
+
+    def __post_init__(self):
+        if self.tool_calls is None:
+            self.tool_calls = []
 
 
 async def call_anthropic(
@@ -30,24 +37,52 @@ async def call_anthropic(
     model: str,
     system: str,
     messages: list[dict[str, Any]],
+    **kwargs: Any,
 ) -> LLMResponse:
-    """Call Anthropic Claude API."""
+    """Call Anthropic Claude API with optional tool support."""
     client = anthropic.AsyncAnthropic(api_key=api_key)
     start = time.monotonic()
-    response = await client.messages.create(
-        model=model,
-        max_tokens=MAX_TOKENS,
-        system=system,
-        messages=messages,
-    )
+
+    create_kwargs: dict[str, Any] = {
+        "model": model,
+        "max_tokens": MAX_TOKENS,
+        "system": system,
+        "messages": messages,
+    }
+    # Pass tools if provided
+    tools = kwargs.get("tools")
+    if tools:
+        create_kwargs["tools"] = tools
+
+    response = await client.messages.create(**create_kwargs)
     latency_ms = int((time.monotonic() - start) * 1000)
+
+    # Extract text content and tool calls
+    content_text = ""
+    tool_calls = []
+    raw_content = []
+
+    for block in response.content:
+        raw_content.append(block)
+        if block.type == "text":
+            content_text = block.text
+        elif block.type == "tool_use":
+            tool_calls.append({
+                "id": block.id,
+                "name": block.name,
+                "input": block.input,
+            })
+
     return LLMResponse(
-        content=response.content[0].text,
+        content=content_text,
         model=response.model,
         provider="anthropic",
         input_tokens=response.usage.input_tokens,
         output_tokens=response.usage.output_tokens,
         latency_ms=latency_ms,
+        stop_reason=response.stop_reason,  # "end_turn" or "tool_use"
+        tool_calls=tool_calls,
+        raw_content=raw_content,
     )
 
 
@@ -58,23 +93,55 @@ async def _call_openai_compatible(
     messages: list[dict[str, Any]],
     provider: str,
     base_url: Optional[str] = None,
+    response_format: Optional[Dict[str, Any]] = None,
+    tools: Optional[list[dict]] = None,
 ) -> LLMResponse:
-    """Shared implementation for OpenAI-compatible APIs."""
+    """Shared implementation for OpenAI-compatible APIs with tool support."""
     kwargs: dict[str, Any] = {"api_key": api_key}
     if base_url:
         kwargs["base_url"] = base_url
     client = openai.AsyncOpenAI(**kwargs)
 
     full_messages = [{"role": "system", "content": system}] + messages
+    create_kwargs: dict[str, Any] = {
+        "model": model,
+        "max_tokens": MAX_TOKENS,
+        "messages": full_messages,
+    }
+    if response_format:
+        create_kwargs["response_format"] = response_format
+    if tools:
+        # Convert Anthropic-format tools to OpenAI function calling format
+        openai_tools = []
+        for t in tools:
+            openai_tools.append({
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": t.get("input_schema", {}),
+                },
+            })
+        create_kwargs["tools"] = openai_tools
+
     start = time.monotonic()
-    response = await client.chat.completions.create(
-        model=model,
-        max_tokens=MAX_TOKENS,
-        messages=full_messages,
-    )
+    response = await client.chat.completions.create(**create_kwargs)
     latency_ms = int((time.monotonic() - start) * 1000)
     choice = response.choices[0]
     usage = response.usage
+
+    # Extract tool calls if present
+    tool_calls = []
+    stop_reason = "end_turn"
+    if choice.finish_reason == "tool_calls" or (choice.message.tool_calls and len(choice.message.tool_calls) > 0):
+        stop_reason = "tool_use"
+        for tc in choice.message.tool_calls:
+            tool_calls.append({
+                "id": tc.id,
+                "name": tc.function.name,
+                "input": json.loads(tc.function.arguments) if tc.function.arguments else {},
+            })
+
     return LLMResponse(
         content=choice.message.content or "",
         model=response.model,
@@ -82,6 +149,9 @@ async def _call_openai_compatible(
         input_tokens=usage.prompt_tokens if usage else 0,
         output_tokens=usage.completion_tokens if usage else 0,
         latency_ms=latency_ms,
+        stop_reason=stop_reason,
+        tool_calls=tool_calls,
+        raw_content=choice.message,
     )
 
 
@@ -90,9 +160,14 @@ async def call_openai(
     model: str,
     system: str,
     messages: list[dict[str, Any]],
+    response_format: Optional[Dict[str, Any]] = None,
+    tools: Optional[list[dict]] = None,
 ) -> LLMResponse:
     """Call OpenAI API."""
-    return await _call_openai_compatible(api_key, model, system, messages, "openai")
+    return await _call_openai_compatible(
+        api_key, model, system, messages, "openai",
+        response_format=response_format, tools=tools,
+    )
 
 
 async def call_dashscope(
@@ -100,15 +175,14 @@ async def call_dashscope(
     model: str,
     system: str,
     messages: list[dict[str, Any]],
+    response_format: Optional[Dict[str, Any]] = None,
+    tools: Optional[list[dict]] = None,
 ) -> LLMResponse:
     """Call Alibaba DashScope API (OpenAI-compatible)."""
     return await _call_openai_compatible(
-        api_key,
-        model,
-        system,
-        messages,
-        "dashscope",
+        api_key, model, system, messages, "dashscope",
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        response_format=response_format, tools=tools,
     )
 
 
@@ -117,15 +191,14 @@ async def call_deepseek(
     model: str,
     system: str,
     messages: list[dict[str, Any]],
+    response_format: Optional[Dict[str, Any]] = None,
+    tools: Optional[list[dict]] = None,
 ) -> LLMResponse:
     """Call DeepSeek API (OpenAI-compatible)."""
     return await _call_openai_compatible(
-        api_key,
-        model,
-        system,
-        messages,
-        "deepseek",
+        api_key, model, system, messages, "deepseek",
         base_url="https://api.deepseek.com",
+        response_format=response_format, tools=tools,
     )
 
 

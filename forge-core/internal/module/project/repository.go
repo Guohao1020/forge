@@ -141,6 +141,8 @@ func (r *Repository) Update(ctx context.Context, id, tenantID int64, req *Update
 			name           = COALESCE($3, name),
 			description    = COALESCE($4, description),
 			default_branch = COALESCE($5, default_branch),
+			code_platform  = COALESCE($6, code_platform),
+			code_repo_url  = COALESCE($7, code_repo_url),
 			updated_at     = NOW()
 		WHERE id = $1 AND tenant_id = $2 AND status != 'ARCHIVED'
 		RETURNING id, tenant_id, name, COALESCE(description,''), status,
@@ -148,6 +150,7 @@ func (r *Repository) Update(ctx context.Context, id, tenantID int64, req *Update
 		          default_branch, COALESCE(ai_model,''),
 		          risk_threshold, auto_merge, created_by, created_at, updated_at`,
 		id, tenantID, req.Name, req.Description, req.DefaultBranch,
+		req.CodePlatform, req.CodeRepoURL,
 	).Scan(
 		&p.ID, &p.TenantID, &p.Name, &p.Description, &p.Status,
 		&p.CodePlatform, &p.CodeRepoURL, &p.DefaultBranch, &p.AIModel,

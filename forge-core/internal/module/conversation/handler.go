@@ -64,6 +64,31 @@ func (h *Handler) GetHistory(c *gin.Context) {
 	response.OK(c, &ConversationListResponse{Messages: convs})
 }
 
+// POST /api/projects/:id/tasks/:taskId/analyze
+func (h *Handler) TriggerAnalysis(c *gin.Context) {
+	projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "无效的项目ID")
+		return
+	}
+
+	taskID, err := strconv.ParseInt(c.Param("taskId"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "无效的任务ID")
+		return
+	}
+
+	tenantID, _ := c.Get("tenant_id")
+
+	result, err := h.service.TriggerAnalysis(c.Request.Context(),
+		projectID, taskID, tenantID.(int64))
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, "触发分析失败")
+		return
+	}
+	response.OK(c, result)
+}
+
 // POST /api/projects/:id/tasks/:taskId/confirm
 func (h *Handler) ConfirmPlan(c *gin.Context) {
 	taskID, err := strconv.ParseInt(c.Param("taskId"), 10, 64)
@@ -74,9 +99,27 @@ func (h *Handler) ConfirmPlan(c *gin.Context) {
 
 	tenantID, _ := c.Get("tenant_id")
 
-	if err := h.service.ConfirmPlan(c.Request.Context(), taskID, tenantID.(int64)); err != nil {
+	result, err := h.service.ConfirmPlan(c.Request.Context(), taskID, tenantID.(int64))
+	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, "确认方案失败: "+err.Error())
 		return
 	}
-	response.OK(c, gin.H{"message": "方案已确认，生成流程已启动"})
+	response.OK(c, result)
+}
+
+// POST /api/projects/:id/tasks/:taskId/approve-plan
+func (h *Handler) ApprovePlan(c *gin.Context) {
+	taskID, err := strconv.ParseInt(c.Param("taskId"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "无效的任务ID")
+		return
+	}
+
+	tenantID, _ := c.Get("tenant_id")
+
+	if err := h.service.ApprovePlan(c.Request.Context(), taskID, tenantID.(int64)); err != nil {
+		response.Fail(c, http.StatusInternalServerError, "批准方案失败: "+err.Error())
+		return
+	}
+	response.OK(c, gin.H{"message": "方案已批准，代码生成流程已启动"})
 }

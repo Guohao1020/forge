@@ -30,7 +30,7 @@ class ApiError extends Error {
 
 async function request<T>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit & { timeout?: number } = {}
 ): Promise<T> {
   const token = typeof window !== "undefined"
     ? localStorage.getItem("forge_token")
@@ -45,10 +45,28 @@ async function request<T>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers,
-  });
+  const { timeout, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timeoutId = timeout
+    ? setTimeout(() => controller.abort(), timeout)
+    : undefined;
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      ...fetchOptions,
+      headers,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError(-2, "请求超时，AI 分析可能需要更长时间。请刷新页面查看对话历史。");
+    }
+    throw err;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 
   const text = await res.text();
   let json: ApiResult<T>;
@@ -77,8 +95,8 @@ async function request<T>(
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
+  post: <T>(path: string, body?: unknown, opts?: { timeout?: number }) =>
+    request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined, ...opts }),
   put: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "PUT", body: body ? JSON.stringify(body) : undefined }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),

@@ -55,35 +55,45 @@ class CircuitBreaker:
         return False
 
 
+# Each Purpose maps to a fallback chain of (provider, model) pairs.
+# The router tries each in order, skipping providers without API keys
+# or with open circuit breakers.
+#
+# Model selection per step:
+#   ANALYZE:      qwen3-max (strongest reasoning, for requirement understanding)
+#   PLAN:         qwen3-max (needs strong reasoning for architecture decisions)
+#   TEST_WRITING: qwen3-coder-plus (code-specialized)
+#   GENERATE:     qwen3-coder-plus (code-specialized)
+#   REVIEW:       qwen3-max (needs reasoning to evaluate code quality)
 ROUTING_RULES: dict[Purpose, list[tuple[str, str]]] = {
     Purpose.ANALYZE: [
+        ("dashscope", "qwen3-max"),
         ("anthropic", "claude-sonnet-4-20250514"),
         ("openai", "gpt-4o"),
-        ("dashscope", "qwen-max"),
         ("deepseek", "deepseek-chat"),
     ],
     Purpose.PLAN: [
+        ("dashscope", "qwen3-max"),
         ("anthropic", "claude-sonnet-4-20250514"),
         ("openai", "gpt-4o"),
-        ("dashscope", "qwen-max"),
         ("deepseek", "deepseek-chat"),
     ],
     Purpose.TEST_WRITING: [
+        ("dashscope", "qwen3-coder-plus"),
         ("anthropic", "claude-sonnet-4-20250514"),
         ("openai", "gpt-4o"),
-        ("dashscope", "qwen-max"),
         ("deepseek", "deepseek-chat"),
     ],
     Purpose.GENERATE: [
+        ("dashscope", "qwen3-coder-plus"),
         ("anthropic", "claude-sonnet-4-20250514"),
         ("openai", "gpt-4o"),
-        ("dashscope", "qwen-max"),
         ("deepseek", "deepseek-chat"),
     ],
     Purpose.REVIEW: [
+        ("dashscope", "qwen3-max"),
         ("anthropic", "claude-sonnet-4-20250514"),
         ("openai", "gpt-4o"),
-        ("dashscope", "qwen-max"),
     ],
 }
 
@@ -116,8 +126,15 @@ class ModelRouter:
         system: str,
         messages: list[dict[str, Any]],
         purpose: Purpose = Purpose.GENERATE,
+        tools: list[dict] | None = None,
     ) -> LLMResponse:
-        """Route a chat request through the fallback chain for the given purpose."""
+        """Route a chat request through the fallback chain for the given purpose.
+
+        Args:
+            tools: Optional tool definitions. When provided, the LLM may return
+                   tool_use stop_reason with tool_calls in the response.
+                   Providers that don't support tools are skipped.
+        """
         chain = ROUTING_RULES[purpose]
         errors: list[str] = []
 
@@ -135,7 +152,15 @@ class ModelRouter:
 
             try:
                 caller = PROVIDER_CALLERS[provider]
-                response = await caller(api_key, model, system, messages)
+                call_kwargs: dict[str, Any] = {}
+                # For ANALYZE purpose on OpenAI-compatible providers, enforce JSON output
+                # (but NOT when tools are active — tool responses use different format)
+                if purpose == Purpose.ANALYZE and provider in ("dashscope", "openai", "deepseek") and not tools:
+                    call_kwargs["response_format"] = {"type": "json_object"}
+                # Pass tools through to provider callers
+                if tools:
+                    call_kwargs["tools"] = tools
+                response = await caller(api_key, model, system, messages, **call_kwargs)
                 breaker.record_success()
                 logger.info(
                     "LLM call succeeded: provider=%s model=%s latency=%dms",

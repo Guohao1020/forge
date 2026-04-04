@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from temporalio import activity
 from src.agents.reviewer import ReviewerAgent
-from src.context.builder import ContextBuilder
+from src.context.cache import ContextCache
 from src.models.router import ModelRouter
 
 logger = logging.getLogger(__name__)
@@ -36,9 +36,9 @@ class ReviewOutput:
 @activity.defn(name="review_code")
 async def review_code_activity(input: ReviewInput) -> ReviewOutput:
     logger.info(f"Reviewing code for task {input.task_id} (attempt {input.attempt})")
-    builder = ContextBuilder()
+    cache = ContextCache()
     try:
-        ctx = await builder.build(input.project_id, purpose="code-review")
+        ctx = await cache.get_or_build(input.project_id, purpose="code-review")
 
         # Extract files from direct files param or from code result
         files = input.files
@@ -58,9 +58,15 @@ async def review_code_activity(input: ReviewInput) -> ReviewOutput:
 
         user_prompt = "## Code to Review\n\n" + "\n\n".join(code_sections) if code_sections else "No code files provided for review."
 
+        from src.context.tools import CONTEXT_TOOLS, ContextToolExecutor
+        # ReviewerAgent uses 2 tools: read_project_file, query_business_rules
+        reviewer_tools = [t for t in CONTEXT_TOOLS if t["name"] in (
+            "read_project_file", "query_business_rules"
+        )]
         router = ModelRouter()
         agent = ReviewerAgent(router)
-        result = await agent.run(user_prompt, ctx)
+        tool_executor = ContextToolExecutor(ctx, input.project_id)
+        result = await agent.run(user_prompt, ctx, tools=reviewer_tools, tool_executor=tool_executor)
         return ReviewOutput(
             passed=result.structured.get("passed", False),
             score=result.structured.get("score", 0),
@@ -73,4 +79,4 @@ async def review_code_activity(input: ReviewInput) -> ReviewOutput:
             latency_ms=result.latency_ms,
         )
     finally:
-        await builder.close()
+        await cache.close()

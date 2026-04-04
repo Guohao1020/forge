@@ -7,6 +7,8 @@ interface StepTimelineProps {
   steps: TaskStep[];
   selectedStepId?: number;
   onStepClick?: (step: TaskStep) => void;
+  /** When task is terminal (COMPLETED/FAILED/CANCELLED), all steps are clickable */
+  taskTerminal?: boolean;
 }
 
 const stepIcons: Record<string, React.ReactNode> = {
@@ -46,14 +48,14 @@ function getStepSummary(step: TaskStep): string | null {
   }
 }
 
-export function StepTimeline({ steps, selectedStepId, onStepClick }: StepTimelineProps) {
+export function StepTimeline({ steps, selectedStepId, onStepClick, taskTerminal = false }: StepTimelineProps) {
   return (
     <div className="space-y-0">
       {steps.map((step, i) => {
         const color = STATUS_COLORS[step.status === "RUNNING" ? "ANALYZING" : step.status] || "#8888A0";
         const isLast = i === steps.length - 1;
         const isSelected = selectedStepId === step.id;
-        const isClickable = !!onStepClick;
+        const isClickable = !!onStepClick && (step.status !== "PENDING" || taskTerminal);
         const summary = getStepSummary(step);
 
         return (
@@ -61,8 +63,8 @@ export function StepTimeline({ steps, selectedStepId, onStepClick }: StepTimelin
             key={step.id}
             className={`flex gap-3 rounded-lg transition-colors ${
               isClickable ? "cursor-pointer hover:bg-white/[0.03]" : ""
-            } ${isSelected ? "bg-white/[0.03] border-l-2 border-primary pl-2" : "pl-[10px]"}`}
-            onClick={() => onStepClick?.(step)}
+            } ${step.status === "PENDING" && !taskTerminal ? "opacity-40" : ""} ${isSelected ? "bg-white/[0.03] border-l-2 border-primary pl-2" : "pl-[10px]"}`}
+            onClick={() => isClickable && onStepClick?.(step)}
           >
             {/* Timeline line + icon */}
             <div className="flex flex-col items-center">

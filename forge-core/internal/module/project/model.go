@@ -33,12 +33,17 @@ type CreateProjectRequest struct {
 	AIModel       string `json:"aiModel"`
 	RiskThreshold *int   `json:"riskThreshold"`
 	AutoMerge     *bool  `json:"autoMerge"`
+	SyncToRemote  bool   `json:"syncToRemote"`  // true = auto-create repo on GitHub
+	RepoPrivate   bool   `json:"repoPrivate"`   // private repo when syncToRemote
+	RepoName      string `json:"repoName"`      // GitHub repo name (ASCII slug)
 }
 
 type UpdateProjectRequest struct {
 	Name          *string `json:"name"`
 	Description   *string `json:"description"`
 	DefaultBranch *string `json:"defaultBranch"`
+	CodePlatform  *string `json:"codePlatform"`
+	CodeRepoURL   *string `json:"codeRepoUrl"`
 }
 
 type ListProjectsQuery struct {

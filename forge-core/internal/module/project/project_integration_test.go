@@ -17,7 +17,7 @@ func setupService(t *testing.T) (*project.Service, context.Context) {
 	t.Helper()
 	db := testutil.TestDB(t)
 	repo := project.NewRepository(db)
-	svc := project.NewService(repo, nil)
+	svc := project.NewService(repo, nil, nil)
 	return svc, context.Background()
 }
 

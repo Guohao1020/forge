@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -46,11 +47,53 @@ func (h *Handler) GetProfile(c *gin.Context) {
 }
 
 func (h *Handler) TriggerScan(c *gin.Context) {
-	_, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.Fail(c, http.StatusBadRequest, "invalid project id")
 		return
 	}
-	// TODO: Temporal integration — trigger profile scan workflow
-	response.OK(c, gin.H{"status": "scan_queued"})
+
+	var req ScanRequest
+	_ = c.ShouldBindJSON(&req) // optional body with keys filter
+
+	userID, _ := c.Get("userID")
+	uid, _ := userID.(int64)
+
+	workflowID, err := h.svc.TriggerScan(c.Request.Context(), projectID, uid, req.Keys)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, "failed to trigger scan: "+err.Error())
+		return
+	}
+
+	response.OK(c, gin.H{
+		"status":     "scan_started",
+		"workflowId": workflowID,
+	})
+}
+
+// SaveProfile handles PUT /api/projects/:id/profiles/:key — called by Python ai-worker to save scan results.
+func (h *Handler) SaveProfile(c *gin.Context) {
+	projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid project id")
+		return
+	}
+	key := c.Param("key")
+	if key == "" {
+		response.Fail(c, http.StatusBadRequest, "profile key is required")
+		return
+	}
+
+	var body json.RawMessage
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+
+	entry, err := h.svc.SaveProfile(c.Request.Context(), projectID, key, body)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, "failed to save profile: "+err.Error())
+		return
+	}
+	response.OK(c, entry)
 }

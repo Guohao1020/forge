@@ -1,6 +1,8 @@
 package task
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -8,12 +10,18 @@ import (
 	"github.com/shulex/forge/forge-core/internal/pkg/response"
 )
 
-type Handler struct {
-	service *Service
+// ConversationCreator saves initial messages when tasks are created.
+type ConversationCreator interface {
+	CreateInitialMessage(ctx context.Context, taskID int64, content string) error
 }
 
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+type Handler struct {
+	service     *Service
+	convCreator ConversationCreator
+}
+
+func NewHandler(service *Service, cc ConversationCreator) *Handler {
+	return &Handler{service: service, convCreator: cc}
 }
 
 // POST /api/projects/:id/tasks
@@ -39,6 +47,13 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		response.Fail(c, http.StatusInternalServerError, "创建任务失败")
 		return
 	}
+	// Save requirement as the first conversation message
+	if h.convCreator != nil {
+		if err := h.convCreator.CreateInitialMessage(c.Request.Context(), result.Task.ID, req.Requirement); err != nil {
+			slog.Warn("failed to save initial conversation message", "task_id", result.Task.ID, "error", err)
+		}
+	}
+
 	response.OK(c, result)
 }
 
@@ -76,6 +91,21 @@ func (h *Handler) ListTaskNodes(c *gin.Context) {
 		return
 	}
 	response.OK(c, result)
+}
+
+// POST /api/projects/:id/tasks/:taskId/cancel
+func (h *Handler) CancelTask(c *gin.Context) {
+	taskID, err := strconv.ParseInt(c.Param("taskId"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "无效的任务ID")
+		return
+	}
+
+	if err := h.service.CancelTask(c.Request.Context(), taskID); err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	response.OK(c, gin.H{"message": "任务已取消"})
 }
 
 // GET /api/projects/:id/tasks/:taskId

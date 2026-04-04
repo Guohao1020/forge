@@ -1,17 +1,20 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Wifi, ExternalLink, Globe } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { StepTimeline } from "@/components/tasks/step-timeline";
 import { TaskWorkspace } from "@/components/tasks/task-workspace";
+import { ChatPanel } from "@/components/chat/chat-panel";
+import { Risk } from "@/components/chat/risk-alert";
 import { getTaskDetail, TaskDetail, TaskStep, STATUS_LABELS, STATUS_COLORS } from "@/lib/tasks";
 import { useTaskStream, TaskStreamEvent } from "@/lib/use-task-stream";
 import { getTaskPreview, PreviewEnvironment } from "@/lib/preview";
+import { Conversation, SendMessageResponse, PlanConfirmResponse, sendMessage, confirmPlan, approvePlan, triggerAnalysis, getHistory, cancelTask } from "@/lib/conversation";
 
-const TERMINAL_STATUSES = ["COMPLETED", "FAILED"];
+const TERMINAL_STATUSES = ["COMPLETED", "FAILED", "CANCELLED"];
 
 /**
  * Pick the best step to auto-select:
@@ -32,12 +35,37 @@ export default function TaskDetailPage() {
   const params = useParams();
   const projectId = params.id as string;
   const taskId = params.taskId as string;
+  const router = useRouter();
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedStep, setSelectedStep] = useState<TaskStep | null>(null);
   const [previewEnv, setPreviewEnv] = useState<PreviewEnvironment | null>(null);
   // Track whether user has manually clicked a step
   const userSelectedRef = useRef(false);
+
+  // Conversation state (for SUBMITTED/ANALYZING tasks)
+  const [messages, setMessages] = useState<Conversation[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [latestRisks, setLatestRisks] = useState<Risk[]>([]);
+  const [confirmationData, setConfirmationData] = useState<{
+    summary: string;
+    taskTitle: string;
+    affectedModules?: string[];
+    riskLevel?: string;
+    estimatedComplexity?: string;
+    risks?: Risk[];
+    nonFunctional?: string[];
+    functionalRequirements?: string[];
+    acceptanceCriteria?: string[];
+    outOfScope?: string[];
+  } | null>(null);
+  const [planReviewData, setPlanReviewData] = useState<PlanConfirmResponse["planData"] | null>(null);
+  const [isPlanApproving, setIsPlanApproving] = useState(false);
+  // Clickable options from AI clarify response
+  const [latestOptions, setLatestOptions] = useState<string[]>([]);
+  // Track whether initial analysis has been triggered
+  const initialAnalysisTriggered = useRef(false);
 
   const fetchDetail = useCallback(async () => {
     try {
@@ -54,6 +82,185 @@ export default function TaskDetailPage() {
   }, [projectId, taskId]);
 
   const isTerminal = detail?.task ? TERMINAL_STATUSES.includes(detail.task.status) : false;
+  const isConversationPhase = detail?.task
+    ? ["SUBMITTED", "ANALYZING", "PLANNING"].includes(detail.task.status)
+    : false;
+
+  // Load conversation history and auto-trigger initial analysis
+  useEffect(() => {
+    if (!isConversationPhase) return;
+    getHistory(Number(projectId), Number(taskId))
+      .then(async (msgs) => {
+        setMessages(msgs);
+
+        // Extract options from the last assistant message's metadata (for page refresh)
+        const lastAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
+        if (lastAssistant?.metadata) {
+          const meta = lastAssistant.metadata as Record<string, unknown>;
+          const opts = (meta.options || []) as string[];
+          if (opts.length > 0) {
+            setLatestOptions(opts);
+          }
+          // Check if last message was a confirmed status → show confirmation card
+          if (meta.status === "confirmed") {
+            setConfirmationData({
+              summary: (meta.summary as string) || "",
+              taskTitle: (meta.task_title as string) || detail?.task?.title || "",
+              affectedModules: (meta.affected_modules) as string[] | undefined,
+              estimatedComplexity: (meta.estimated_complexity) as string | undefined,
+              risks: meta.risks as Risk[] | undefined,
+              functionalRequirements: meta.functional_requirements as string[] | undefined,
+              acceptanceCriteria: meta.acceptance_criteria as string[] | undefined,
+              outOfScope: meta.out_of_scope as string[] | undefined,
+            });
+          }
+        }
+
+        // Auto-trigger analysis if only the initial user message exists and no AI response yet
+        const hasAssistant = msgs.some((m) => m.role === "assistant");
+        if (msgs.length >= 1 && !hasAssistant && !initialAnalysisTriggered.current) {
+          initialAnalysisTriggered.current = true;
+          setChatLoading(true);
+          try {
+            const res = await triggerAnalysis(Number(projectId), Number(taskId));
+            setMessages((prev) => [...prev, res.conversation]);
+            // Extract options for clickable buttons
+            if (res.status === "clarify" && res.metadata) {
+              const opts = (res.metadata.options || []) as string[];
+              setLatestOptions(opts);
+            } else {
+              setLatestOptions([]);
+            }
+            if (res.status === "confirmed" && res.metadata) {
+              setLatestOptions([]);
+              setConfirmationData({
+                summary: (res.metadata.summary as string) || "",
+                taskTitle: (res.metadata.task_title as string) || (res.metadata.taskTitle as string) || detail?.task?.title || "",
+                affectedModules: (res.metadata.affected_modules || res.metadata.affectedModules) as string[] | undefined,
+                riskLevel: (res.metadata.estimated_complexity || res.metadata.riskLevel) as string | undefined,
+                estimatedComplexity: (res.metadata.estimated_complexity || res.metadata.estimatedComplexity) as string | undefined,
+                risks: res.metadata.risks as Risk[] | undefined,
+                nonFunctional: res.metadata.nonFunctional as string[] | undefined,
+                functionalRequirements: res.metadata.functional_requirements as string[] | undefined,
+                acceptanceCriteria: res.metadata.acceptance_criteria as string[] | undefined,
+                outOfScope: res.metadata.out_of_scope as string[] | undefined,
+              });
+            }
+          } catch (err) {
+            console.error("[Chat] initial analysis error:", err);
+          } finally {
+            setChatLoading(false);
+          }
+        }
+      })
+      .catch(() => {});
+  }, [isConversationPhase, projectId, taskId, detail?.task?.title]);
+
+  const handleChatSend = useCallback(async (content: string) => {
+    // Optimistically add user message
+    const userMsg: Conversation = {
+      id: Date.now(),
+      taskId: Number(taskId),
+      role: "user",
+      content,
+      createdAt: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, userMsg]);
+    setLatestOptions([]); // Clear previous options while waiting
+    setChatLoading(true);
+
+    try {
+      const res: SendMessageResponse = await sendMessage(Number(projectId), Number(taskId), content);
+      // Add assistant reply
+      setMessages((prev) => [...prev, res.conversation]);
+
+      // Extract options for clickable buttons
+      if (res.status === "clarify" && res.metadata) {
+        const opts = (res.metadata.options || []) as string[];
+        setLatestOptions(opts);
+      } else {
+        setLatestOptions([]);
+      }
+
+      if (res.status === "confirmed" && res.metadata) {
+        setLatestOptions([]);
+        setConfirmationData({
+          summary: (res.metadata.summary as string) || "",
+          taskTitle: (res.metadata.task_title as string) || (res.metadata.taskTitle as string) || detail?.task?.title || "",
+          affectedModules: (res.metadata.affected_modules || res.metadata.affectedModules) as string[] | undefined,
+          riskLevel: (res.metadata.estimated_complexity || res.metadata.riskLevel) as string | undefined,
+          estimatedComplexity: (res.metadata.estimated_complexity || res.metadata.estimatedComplexity) as string | undefined,
+          risks: res.metadata.risks as Risk[] | undefined,
+          nonFunctional: res.metadata.nonFunctional as string[] | undefined,
+          functionalRequirements: res.metadata.functional_requirements as string[] | undefined,
+          acceptanceCriteria: res.metadata.acceptance_criteria as string[] | undefined,
+          outOfScope: res.metadata.out_of_scope as string[] | undefined,
+        });
+        if (res.metadata.risks) {
+          setLatestRisks(res.metadata.risks as Risk[]);
+        }
+      }
+    } catch (err) {
+      console.error("[Chat] send error:", err);
+      // Remove optimistic message on error
+      setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
+    } finally {
+      setChatLoading(false);
+    }
+  }, [projectId, taskId, detail?.task?.title]);
+
+  const handleChatConfirm = useCallback(async () => {
+    setIsConfirming(true);
+    try {
+      const result = await confirmPlan(Number(projectId), Number(taskId));
+      setConfirmationData(null);
+      // Add the plan message to conversation
+      if (result.conversation) {
+        setMessages((prev) => [...prev, result.conversation]);
+      }
+      // Show plan review card
+      if (result.planData) {
+        setPlanReviewData(result.planData);
+      }
+      fetchDetail();
+    } catch (err) {
+      console.error("[Chat] confirm error:", err);
+    } finally {
+      setIsConfirming(false);
+    }
+  }, [projectId, taskId, fetchDetail]);
+
+  const handleApprovePlan = useCallback(async () => {
+    setIsPlanApproving(true);
+    try {
+      await approvePlan(Number(projectId), Number(taskId));
+      setPlanReviewData(null);
+      fetchDetail();
+    } catch (err) {
+      console.error("[Chat] approve plan error:", err);
+    } finally {
+      setIsPlanApproving(false);
+    }
+  }, [projectId, taskId, fetchDetail]);
+
+  const handleChatModify = useCallback(() => {
+    // Clear confirmation or plan review, allow further conversation
+    setConfirmationData(null);
+    setPlanReviewData(null);
+  }, []);
+
+  const handleChatCancel = useCallback(async () => {
+    if (!confirm("确定要取消此任务吗？取消后不可恢复。")) return;
+    try {
+      await cancelTask(Number(projectId), Number(taskId));
+      setConfirmationData(null);
+      setPlanReviewData(null);
+      router.push(`/projects/${projectId}`);
+    } catch (err) {
+      console.error("[Chat] cancel error:", err);
+      alert("取消失败：" + (err instanceof Error ? err.message : "未知错误"));
+    }
+  }, [router, projectId, taskId]);
 
   const handleStreamEvent = useCallback((event: TaskStreamEvent) => {
     if (event.type === "TASK_PROGRESS" || event.type === "STEPS_UPDATE" || event.type === "TASK_COMPLETE" || event.type === "FULL_STATE") {
@@ -199,21 +406,42 @@ export default function TaskDetailPage() {
               steps={steps || []}
               selectedStepId={selectedStep?.id}
               onStepClick={handleStepClick}
+              taskTerminal={isTerminal}
             />
           </div>
         </div>
       </div>
 
-      {/* Right panel: Workspace */}
-      <div className="flex-1 overflow-y-auto p-6">
-        <TaskWorkspace
-          selectedStep={selectedStep}
-          steps={steps || []}
-          requirement={task.requirement}
-          streamingTokens={streamingTokens}
-          isStreaming={isStreaming}
-        />
-      </div>
+      {/* Right panel: Chat or Workspace */}
+      {isConversationPhase && !(selectedStep && selectedStep.status === "COMPLETED" && userSelectedRef.current) ? (
+        <div className="flex-1 overflow-hidden">
+          <ChatPanel
+            messages={messages}
+            onSend={handleChatSend}
+            onConfirm={handleChatConfirm}
+            onModify={handleChatModify}
+            onCancel={handleChatCancel}
+            isLoading={chatLoading}
+            confirmationData={confirmationData}
+            isConfirming={isConfirming}
+            risks={latestRisks}
+            planReviewData={planReviewData}
+            onApprovePlan={handleApprovePlan}
+            isPlanApproving={isPlanApproving}
+            latestOptions={latestOptions}
+          />
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto p-6">
+          <TaskWorkspace
+            selectedStep={selectedStep}
+            steps={steps || []}
+            requirement={task.requirement}
+            streamingTokens={streamingTokens}
+            isStreaming={isStreaming}
+          />
+        </div>
+      )}
     </div>
   );
 }
