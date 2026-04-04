@@ -38,9 +38,20 @@ func Setup(deps *Deps) *gin.Engine {
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
 	r.Use(middleware.CORS())
+	r.Use(middleware.MetricsMiddleware())
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
+	})
+
+	// Prometheus metrics endpoint (no auth required)
+	r.GET("/metrics", func(c *gin.Context) {
+		c.Data(200, "text/plain; charset=utf-8", []byte(middleware.PrometheusFormat()))
+	})
+
+	// JSON metrics endpoint (for admin dashboard)
+	r.GET("/api/admin/metrics", func(c *gin.Context) {
+		c.JSON(200, middleware.GetMetrics())
 	})
 
 	api := r.Group("/api")
