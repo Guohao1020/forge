@@ -1,0 +1,50 @@
+# Codeup CI Pipeline (Alibaba Cloud)
+# Equivalent to .github/workflows/ci.yml for Codeup platform
+#
+# Note: Codeup uses Flow (云效 Flow) for CI/CD.
+# This file documents the pipeline configuration for reference.
+# Actual pipeline should be configured in Codeup Flow UI.
+
+stages:
+  - test
+  - build
+
+# === Go Tests ===
+go-test:
+  stage: test
+  image: golang:1.26-alpine
+  script:
+    - cd forge-core
+    - go build ./cmd/forge-core
+    - go vet ./internal/...
+    - go test ./internal/middleware/... ./internal/module/auth/... ./internal/module/version/... ./internal/module/specs/... ./internal/temporal/... ./internal/pkg/... -count=1
+    - go test ./internal/module/project/... -run TestDetect -count=1
+
+# === Python Tests ===
+python-test:
+  stage: test
+  image: python:3.12-slim
+  script:
+    - cd ai-worker
+    - pip install -r requirements.txt
+    - python -m pytest tests/ --cov=src --cov-report=term --cov-fail-under=50 -q
+
+# === TypeScript Check ===
+ts-check:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd forge-portal
+    - npm ci
+    - npx tsc --noEmit
+    - npm run build
+
+# === Docker Build ===
+docker-build:
+  stage: build
+  services:
+    - docker:dind
+  script:
+    - docker build -t forge-core:ci ./forge-core
+    - docker build -t forge-ai-worker:ci ./ai-worker
+    - docker build -t forge-portal:ci ./forge-portal
