@@ -76,9 +76,15 @@ export default function TaskDetailPage() {
     try {
       const data = await getTaskDetail(projectId, taskId);
       setDetail(data);
-      // Fetch preview environment for this task
-      const preview = await getTaskPreview(projectId, taskId);
-      setPreviewEnv(preview);
+      // Fetch preview environment only for deployed tasks (avoid 404 noise)
+      if (data.task && ["DEPLOYING", "COMPLETED"].includes(data.task.status)) {
+        try {
+          const preview = await getTaskPreview(projectId, taskId);
+          setPreviewEnv(preview);
+        } catch {
+          // No preview — expected for most tasks
+        }
+      }
     } catch {
       // ignore
     } finally {
