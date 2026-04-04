@@ -9,6 +9,13 @@ import { ConfirmationCard } from "./confirmation-card";
 import { PlanReviewCard } from "./plan-review-card";
 import { RiskAlert, Risk } from "./risk-alert";
 import { Conversation, PlanConfirmResponse } from "@/lib/conversation";
+import { RecommendationCard } from "./recommendation-card";
+
+interface RecommendationData {
+  options: Array<{ id: string; title: string; pros: string[]; cons: string[]; risk: "LOW" | "MEDIUM" | "HIGH"; recommended: boolean; reason: string }>;
+  aiRecommendation: string;
+  contextFactors?: string[];
+}
 
 interface ChatPanelProps {
   messages: Conversation[];
@@ -34,8 +41,8 @@ interface ChatPanelProps {
   planReviewData?: PlanConfirmResponse["planData"] | null;
   onApprovePlan?: () => void;
   isPlanApproving?: boolean;
-  /** Options from the latest AI clarify response for clickable selection */
   latestOptions?: string[];
+  recommendation?: RecommendationData | null;
 }
 
 export function ChatPanel({
@@ -52,6 +59,7 @@ export function ChatPanel({
   onApprovePlan,
   isPlanApproving = false,
   latestOptions = [],
+  recommendation,
 }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -93,8 +101,18 @@ export function ChatPanel({
             createdAt={msg.createdAt}
           />
         ))}
+        {/* AI recommendation cards (SP-2) */}
+        {recommendation && !isLoading && !confirmationData && !planReviewData && (
+          <RecommendationCard
+            options={recommendation.options}
+            aiRecommendation={recommendation.aiRecommendation}
+            contextFactors={recommendation.contextFactors}
+            onSelect={(selection) => onSend(selection)}
+            disabled={isLoading}
+          />
+        )}
         {/* Clickable option buttons from AI clarify response */}
-        {latestOptions.length > 0 && !isLoading && !confirmationData && !planReviewData && (
+        {latestOptions.length > 0 && !isLoading && !confirmationData && !planReviewData && !recommendation && (
           <OptionButtons
             options={latestOptions}
             onSelect={(opt) => onSend(opt)}

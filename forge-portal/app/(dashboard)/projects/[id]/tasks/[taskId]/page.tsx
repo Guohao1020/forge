@@ -62,6 +62,11 @@ export default function TaskDetailPage() {
   } | null>(null);
   const [planReviewData, setPlanReviewData] = useState<PlanConfirmResponse["planData"] | null>(null);
   const [isPlanApproving, setIsPlanApproving] = useState(false);
+  const [latestRecommendation, setLatestRecommendation] = useState<{
+    options: Array<{ id: string; title: string; pros: string[]; cons: string[]; risk: "LOW" | "MEDIUM" | "HIGH"; recommended: boolean; reason: string }>;
+    aiRecommendation: string;
+    contextFactors?: string[];
+  } | null>(null);
   // Clickable options from AI clarify response
   const [latestOptions, setLatestOptions] = useState<string[]>([]);
   // Track whether initial analysis has been triggered
@@ -178,8 +183,21 @@ export default function TaskDetailPage() {
       if (res.status === "clarify" && res.metadata) {
         const opts = (res.metadata.options || []) as string[];
         setLatestOptions(opts);
+
+        // Check for AI recommendations (SP-2)
+        const recs = res.metadata.recommendations as any;
+        if (recs && recs.options && recs.options.length > 0) {
+          setLatestRecommendation({
+            options: recs.options,
+            aiRecommendation: recs.ai_recommendation || recs.aiRecommendation || "",
+            contextFactors: recs.context_factors || recs.contextFactors,
+          });
+        } else {
+          setLatestRecommendation(null);
+        }
       } else {
         setLatestOptions([]);
+        setLatestRecommendation(null);
       }
 
       if (res.status === "confirmed" && res.metadata) {
@@ -429,6 +447,7 @@ export default function TaskDetailPage() {
             onApprovePlan={handleApprovePlan}
             isPlanApproving={isPlanApproving}
             latestOptions={latestOptions}
+            recommendation={latestRecommendation}
           />
         </div>
       ) : (

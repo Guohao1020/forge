@@ -23,6 +23,19 @@ import { api } from "@/lib/api";
 import { AlertTriangle, Lock, Globe, ExternalLink, CheckCircle2 } from "lucide-react";
 import { GitHubIcon } from "@/components/icons";
 
+interface TechStack {
+  projectType?: string;
+  subType?: string;
+  branchStrategy?: string;
+  deployTarget?: string;
+  artifactType?: string;
+  languages?: Record<string, number>;
+  frameworks?: string[];
+  testFrameworks?: string[];
+  buildTools?: string[];
+  confidence?: string;
+}
+
 interface Project {
   id: number;
   name: string;
@@ -30,6 +43,7 @@ interface Project {
   defaultBranch: string;
   codePlatform: string;
   codeRepoUrl: string;
+  techStack?: TechStack;
 }
 
 export default function ProjectSettingsPage() {
@@ -232,6 +246,48 @@ export default function ProjectSettingsPage() {
         )}
       </div>
 
+      {/* Project Type Detection (SP-1) */}
+      {project.techStack && project.techStack.projectType && (
+        <>
+          <Separator className="my-8" />
+          <div className="space-y-4">
+            <h2 className="text-sm font-medium text-foreground">项目类型检测</h2>
+            <div className="grid grid-cols-2 gap-3">
+              <InfoCard label="项目类型" value={formatProjectType(project.techStack.projectType)} />
+              <InfoCard label="子类型" value={project.techStack.subType || "—"} />
+              <InfoCard label="分支策略" value={formatBranchStrategy(project.techStack.branchStrategy)} />
+              <InfoCard label="部署目标" value={project.techStack.deployTarget || "—"} />
+              <InfoCard label="制品类型" value={project.techStack.artifactType || "—"} />
+              <InfoCard label="检测置信度" value={project.techStack.confidence || "—"} />
+            </div>
+            {project.techStack.frameworks && project.techStack.frameworks.length > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">检测到的框架</p>
+                <div className="flex flex-wrap gap-1">
+                  {project.techStack.frameworks.map((f) => (
+                    <span key={f} className="px-2 py-0.5 rounded text-xs bg-primary/10 text-primary border border-primary/20">
+                      {f}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {project.techStack.testFrameworks && project.techStack.testFrameworks.length > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">测试框架</p>
+                <div className="flex flex-wrap gap-1">
+                  {project.techStack.testFrameworks.map((f) => (
+                    <span key={f} className="px-2 py-0.5 rounded text-xs bg-green-500/10 text-green-400 border border-green-500/20">
+                      {f}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
       <Separator className="my-8" />
 
       {/* Danger zone */}
@@ -265,4 +321,35 @@ export default function ProjectSettingsPage() {
       </div>
     </div>
   );
+}
+
+function InfoCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-2">
+      <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">{label}</p>
+      <p className="text-sm text-foreground">{value}</p>
+    </div>
+  );
+}
+
+function formatProjectType(type: string): string {
+  const map: Record<string, string> = {
+    web_app: "Web 应用",
+    mobile_app: "移动应用",
+    desktop_app: "桌面应用",
+    backend_api: "后端 API",
+    library: "函数库",
+    monorepo: "Monorepo",
+    unknown: "未识别",
+  };
+  return map[type] || type;
+}
+
+function formatBranchStrategy(strategy?: string): string {
+  const map: Record<string, string> = {
+    trunk_based: "主干开发",
+    github_flow: "GitHub Flow",
+    release_train: "发布列车",
+  };
+  return strategy ? (map[strategy] || strategy) : "—";
 }
