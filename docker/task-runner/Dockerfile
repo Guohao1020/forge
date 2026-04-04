@@ -20,8 +20,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# --- Go 1.22 ---
-ENV GOLANG_VERSION=1.22.5
+# --- Go 1.26 ---
+ENV GOLANG_VERSION=1.26.1
 RUN curl -fsSL "https://go.dev/dl/go${GOLANG_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/go"
