@@ -53,6 +53,7 @@ func Setup(deps *Deps) *gin.Engine {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.CORS())
 	r.Use(middleware.AccessLog())
+	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(middleware.MetricsMiddleware())
 
 	r.GET("/health", func(c *gin.Context) {

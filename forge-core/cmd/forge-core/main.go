@@ -3,7 +3,11 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/shulex/forge/forge-core/internal/config"
 	"github.com/shulex/forge/forge-core/internal/k8s"
@@ -185,9 +189,35 @@ func main() {
 		EntropyHandler:      entropyHandler,
 	})
 
-	slog.Info("forge-core starting", "port", cfg.ServerPort)
-	if err := r.Run(":" + cfg.ServerPort); err != nil {
-		slog.Error("server failed", "error", err)
-		os.Exit(1)
+	// Graceful shutdown
+	srv := &http.Server{
+		Addr:         ":" + cfg.ServerPort,
+		Handler:      r,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
+
+	go func() {
+		slog.Info("forge-core starting", "port", cfg.ServerPort)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+	slog.Info("shutting down", "signal", sig.String())
+
+	// Give in-flight requests 10 seconds to complete
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("forced shutdown", "error", err)
+	}
+
+	slog.Info("forge-core stopped")
 }
