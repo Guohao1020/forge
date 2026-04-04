@@ -259,7 +259,7 @@
 1. **Docker 旧 worker 必须停掉**：`docker stop forge-ai-worker`
 2. **本地 AI worker 启动命令**：
    ```bash
-   cd ai-worker && DASHSCOPE_API_KEY=sk-25e77eee66bd474a941655501a2e6d73 python -B -m src.worker
+   cd ai-worker && DASHSCOPE_API_KEY=sk-***REDACTED*** python -B -m src.worker
    ```
 3. **forge-core 重新编译**：`cd forge-core && go build ./cmd/forge-core && ./forge-core.exe`
 4. **前端 dev server**：`cd forge-portal && npm run dev`
