@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -214,8 +215,8 @@ func (a *TaskActivities) RunTests(ctx context.Context, taskID int64, testCases m
 				"TASK_ID":         fmt.Sprintf("%d", taskID),
 				"FRAMEWORK":       framework,
 				"COVERAGE_MIN":    "60",
-				"FORGE_API_URL":   "http://forge-core:8080",
-				"FORGE_API_TOKEN": "", // TODO: inject from config
+				"FORGE_API_URL":   getEnvOrDefault("FORGE_API_URL", "http://forge-core:8080"),
+				"FORGE_API_TOKEN": os.Getenv("FORGE_API_TOKEN"),
 			},
 			1800, // 30 min timeout (real tests take longer)
 		)
@@ -433,4 +434,11 @@ func (a *TaskActivities) CreatePreview(ctx context.Context, input map[string]int
 
 	slog.Info("preview environment created", "task_id", taskID, "url", previewURL, "k8s", usedK8s)
 	return nil
+}
+
+func getEnvOrDefault(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
 }
