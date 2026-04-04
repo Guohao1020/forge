@@ -166,6 +166,8 @@ func main() {
 	specsHandler := specs.NewHandler(specsService)
 
 	r := router.Setup(&router.Deps{
+		DB:                  db,
+		RDB:                 rdb,
 		AuthHandler:         authHandler,
 		AuthService:         authService,
 		ProjectHandler:      projectHandler,

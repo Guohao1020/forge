@@ -1,7 +1,12 @@
 package router
 
 import (
+	"context"
+	"time"
+
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/shulex/forge/forge-core/internal/middleware"
 	"github.com/shulex/forge/forge-core/internal/module/artifact"
 	"github.com/shulex/forge/forge-core/internal/module/cost"
@@ -18,7 +23,12 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/version"
 )
 
+var routerStartTime = time.Now()
+
 type Deps struct {
+	DB  *pgxpool.Pool
+	RDB *goredis.Client
+
 	AuthHandler    *auth.Handler
 	AuthService    *auth.Service
 	ProjectHandler *project.Handler
@@ -42,10 +52,43 @@ func Setup(deps *Deps) *gin.Engine {
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
 	r.Use(middleware.CORS())
+	r.Use(middleware.AccessLog())
 	r.Use(middleware.MetricsMiddleware())
 
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
+		health := gin.H{"status": "ok"}
+
+		// Check database
+		if deps.DB != nil {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			defer cancel()
+			if err := deps.DB.Ping(ctx); err != nil {
+				health["database"] = "down"
+				health["status"] = "degraded"
+			} else {
+				health["database"] = "up"
+			}
+		}
+
+		// Check Redis
+		if deps.RDB != nil {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			defer cancel()
+			if err := deps.RDB.Ping(ctx).Err(); err != nil {
+				health["redis"] = "down"
+				health["status"] = "degraded"
+			} else {
+				health["redis"] = "up"
+			}
+		}
+
+		health["uptime"] = time.Since(routerStartTime).Truncate(time.Second).String()
+
+		status := 200
+		if health["status"] == "degraded" {
+			status = 503
+		}
+		c.JSON(status, health)
 	})
 
 	// Prometheus metrics endpoint (no auth required)
@@ -66,6 +109,7 @@ func Setup(deps *Deps) *gin.Engine {
 		// Protected routes
 		protected := api.Group("")
 		protected.Use(middleware.JWTAuth(deps.AuthService))
+		protected.Use(middleware.RateLimitMiddleware())
 		{
 			protected.POST("/auth/logout", deps.AuthHandler.Logout)
 			protected.GET("/auth/me", deps.AuthHandler.Me)
