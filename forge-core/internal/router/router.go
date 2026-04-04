@@ -5,6 +5,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/middleware"
 	"github.com/shulex/forge/forge-core/internal/module/artifact"
 	"github.com/shulex/forge/forge-core/internal/module/cost"
+	"github.com/shulex/forge/forge-core/internal/module/entropy"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/pipeline"
@@ -32,6 +33,7 @@ type Deps struct {
 	ArtifactHandler     *artifact.Handler
 	VersionHandler      *version.Handler
 	CostHandler         *cost.Handler
+	EntropyHandler      *entropy.Handler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -212,6 +214,16 @@ func Setup(deps *Deps) *gin.Engine {
 				protected.GET("/admin/costs", middleware.RequireRole(middleware.RolePlatformAdmin), deps.CostHandler.GetMonthlyCosts)
 				protected.GET("/admin/budget", middleware.RequireRole(middleware.RolePlatformAdmin), deps.CostHandler.GetBudgetStatus)
 				protected.GET("/projects/:id/costs", middleware.RequireRole(middleware.RoleProjectAdmin), deps.CostHandler.GetProjectCosts)
+			}
+
+			// Entropy Management (code quality scans)
+			if deps.EntropyHandler != nil {
+				protected.GET("/projects/:id/entropy/latest", deps.EntropyHandler.GetLatestScan)
+				protected.GET("/projects/:id/entropy/scans", deps.EntropyHandler.ListScans)
+				protected.GET("/projects/:id/entropy/trends", deps.EntropyHandler.GetTrends)
+				protected.GET("/projects/:id/entropy/config", deps.EntropyHandler.GetConfig)
+				protected.PUT("/projects/:id/entropy/config", middleware.RequireRole(middleware.RoleProjectAdmin), deps.EntropyHandler.UpdateConfig)
+				protected.POST("/projects/:id/entropy/scan", deps.EntropyHandler.TriggerScan)
 			}
 		}
 	}

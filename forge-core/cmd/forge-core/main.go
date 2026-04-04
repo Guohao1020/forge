@@ -11,6 +11,7 @@ import (
 
 	"github.com/shulex/forge/forge-core/internal/module/artifact"
 	"github.com/shulex/forge/forge-core/internal/module/cost"
+	"github.com/shulex/forge/forge-core/internal/module/entropy"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/pipeline"
@@ -152,6 +153,13 @@ func main() {
 	costSvc := cost.NewService(db)
 	costHandler := cost.NewHandler(costSvc)
 
+	// Entropy module
+	entropySvc := entropy.NewService(db)
+	if temporalInner != nil {
+		entropySvc.SetTemporalClient(temporalInner)
+	}
+	entropyHandler := entropy.NewHandler(entropySvc)
+
 	// Specs module
 	specsRepo := specs.NewRepository(db)
 	specsService := specs.NewService(specsRepo, rdb)
@@ -172,6 +180,7 @@ func main() {
 		ArtifactHandler:     artifactHandler,
 		VersionHandler:      versionHandler,
 		CostHandler:         costHandler,
+		EntropyHandler:      entropyHandler,
 	})
 
 	slog.Info("forge-core starting", "port", cfg.ServerPort)

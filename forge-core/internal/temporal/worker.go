@@ -120,6 +120,27 @@ func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken 
 		Name: "UpdatePreviewStatus",
 	})
 
+	// Entropy Management (code quality scans)
+	w.RegisterWorkflowWithOptions(wf.EntropyScanWorkflow, workflow.RegisterOptions{
+		Name: "EntropyScanWorkflow",
+	})
+	entropyActs := activity.NewEntropyActivities(db)
+	w.RegisterActivityWithOptions(entropyActs.FetchProjectFiles, sdkactivity.RegisterOptions{
+		Name: "FetchProjectFiles",
+	})
+	w.RegisterActivityWithOptions(entropyActs.RunEntropyLint, sdkactivity.RegisterOptions{
+		Name: "RunEntropyLint",
+	})
+	w.RegisterActivityWithOptions(entropyActs.RunEntropyAIScan, sdkactivity.RegisterOptions{
+		Name: "RunEntropyAIScan",
+	})
+	w.RegisterActivityWithOptions(entropyActs.SaveEntropyResults, sdkactivity.RegisterOptions{
+		Name: "SaveEntropyResults",
+	})
+	w.RegisterActivityWithOptions(entropyActs.CreateAutoFixPR, sdkactivity.RegisterOptions{
+		Name: "CreateAutoFixPR",
+	})
+
 	if err := w.Start(); err != nil {
 		return nil, err
 	}
