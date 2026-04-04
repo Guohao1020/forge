@@ -20,7 +20,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { api } from "@/lib/api";
-import { AlertTriangle, Lock, Globe, ExternalLink, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, Lock, Globe, ExternalLink, CheckCircle2, Shield, Activity, TrendingUp } from "lucide-react";
 import { GitHubIcon } from "@/components/icons";
 
 interface TechStack {
@@ -64,6 +64,14 @@ export default function ProjectSettingsPage() {
   const [syncPrivate, setSyncPrivate] = useState(true);
   const [githubConnected, setGithubConnected] = useState<boolean | null>(null);
 
+  // Entropy scan state
+  const [entropyScan, setEntropyScan] = useState<{
+    score: number;
+    issueCount: number;
+    scannedAt: string;
+  } | null>(null);
+  const [scanLoading, setScanLoading] = useState(false);
+
   useEffect(() => {
     api.get<Project>(`/projects/${projectId}`).then((p) => {
       setProject(p);
@@ -74,6 +82,9 @@ export default function ProjectSettingsPage() {
     api.get<{ connected: boolean }>("/auth/github/status")
       .then((res) => setGithubConnected(res.connected))
       .catch(() => setGithubConnected(false));
+    api.get<{ scan: { score: number; issueCount: number; scannedAt: string } | null }>(`/projects/${projectId}/entropy/latest`)
+      .then((res) => { if (res.scan) setEntropyScan(res.scan); })
+      .catch(() => {});
   }, [projectId]);
 
   async function handleSave(e: React.FormEvent) {
@@ -287,6 +298,69 @@ export default function ProjectSettingsPage() {
           </div>
         </>
       )}
+
+      {/* Code Quality / Entropy */}
+      <Separator className="my-8" />
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-medium text-foreground flex items-center gap-2">
+            <Shield className="h-4 w-4 text-primary" />
+            代码质量
+          </h2>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={scanLoading}
+            onClick={async () => {
+              setScanLoading(true);
+              try {
+                await api.post(`/projects/${projectId}/entropy/scan`, {});
+                setSaveMsg("质量扫描已启动");
+                setTimeout(() => setSaveMsg(""), 3000);
+              } catch {
+                setSaveMsg("扫描启动失败");
+                setTimeout(() => setSaveMsg(""), 3000);
+              } finally {
+                setScanLoading(false);
+              }
+            }}
+          >
+            <Activity className="h-3.5 w-3.5 mr-1.5" />
+            {scanLoading ? "启动中..." : "运行扫描"}
+          </Button>
+        </div>
+
+        {entropyScan ? (
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-3 text-center">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">质量分数</p>
+              <p className={`text-2xl font-bold ${
+                entropyScan.score >= 80 ? "text-green-400" :
+                entropyScan.score >= 60 ? "text-yellow-400" : "text-red-400"
+              }`}>
+                {entropyScan.score}
+              </p>
+            </div>
+            <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-3 text-center">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">问题数量</p>
+              <p className="text-2xl font-bold text-foreground">{entropyScan.issueCount}</p>
+            </div>
+            <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-3 text-center">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">上次��描</p>
+              <p className="text-sm text-foreground mt-1">
+                {new Date(entropyScan.scannedAt).toLocaleDateString("zh-CN")}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-white/10 bg-white/5 p-4 text-center">
+            <TrendingUp className="h-8 w-8 text-muted-foreground mx-auto mb-2 opacity-30" />
+            <p className="text-sm text-muted-foreground">尚未运行过质量扫描</p>
+            <p className="text-xs text-muted-foreground mt-1">点击「运行扫描」开始首次代码质量检测</p>
+          </div>
+        )}
+      </div>
 
       <Separator className="my-8" />
 
