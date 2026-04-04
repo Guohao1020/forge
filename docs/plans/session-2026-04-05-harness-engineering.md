@@ -108,21 +108,31 @@
 - Next.js build: **PASS**
 
 ### 测试验证
-- Go tests: **30/30 PASS** (版本状态机 + 项目类型检测 + 冲突检测)
-- Python tests: **55/55 PASS**
+- Go tests: **33/33 PASS** (版本状态机15 + 项目类型检测11 + 冲突检测7)
+- Python tests: **88/88 PASS** (原有55 + 新增33: cache 8 + tools 14 + agent loop 11)
+- **总计: 121 tests, 全部通过**
 
 ### 运行时验证
 | 测试项 | 结果 |
 |--------|------|
-| PostgreSQL + Redis + Temporal 启动 | **PASS** |
-| Migration 016 执行 | **PASS** |
+| PostgreSQL + Redis + Temporal + pgvector 启动 | **PASS** |
+| Migration 016 (project_versions) | **PASS** |
+| Migration 017 (profile_embeddings + pgvector) | **PASS** |
 | forge-core 启动 (port 8080) | **PASS** |
 | 用户登录 (admin/admin123) | **PASS** |
 | POST /versions (创建版本) | **PASS** — id=2, status=PLANNING |
-| GET /versions (版本列表) | **PASS** — 正确返回 |
+| GET /versions (版本列表) | **PASS** |
 | GET /versions/:vid (版本详情) | **PASS** — 含空任务列表 |
 | POST /tasks (创建任务) | **PASS** — id=27, 7步骤 |
-| POST /messages (AI分析) | **PASS** — AnalystAgent真正调用, 返回clarify+追问+选项 |
+| POST /messages (AI 6轮对话) | **PASS** — understanding→scenario→constraints→confirmed |
+| POST /confirm (规划) | **PASS** — PlannerAgent 输出 5 任务 DAG |
+| POST /approve-plan (执行) | **PASS** — 全流程: test→generate→review→test→deploy |
+| GitHub PR 创建 | **PASS** — PR #4 on Harvey-GuoHao/shulex-jisuanqi |
+| ContextCache Redis | **PASS** — MISS→SET→HIT(6次) |
+| POST /detect (类型检测) | **PASS** — 返回 projectType + branchStrategy |
+| POST /profiles/scan (画像扫描) | **PASS** — Temporal→Python→file tree fetch |
+| 前端版本列表页 | **PASS** — v2.0.0 卡片 + 进度条 |
+| 前端版本详情页 | **PASS** — 任务列表 + 面包屑导航 |
 
 ### 前端UI验证 (Chrome浏览器截图)
 | 页面 | 结果 |
@@ -147,20 +157,36 @@
 
 ---
 
-## 五、Git 提交
+## 五、Git 提交 (11 commits)
 
 ```
+bc439fe test: add 33 unit tests for Harness Engineering components
+0e1a60f fix: handle string entries in file tree for profile scanning
+336a0d0 feat: add POST /projects/:id/detect endpoint for manual tech stack re-detection
+133e3a5 feat: integrate SP-1 project type display + SP-2 recommendation cards in UI
+41cbcf9 chore: add workspaces/ to .gitignore (AI-generated user project code)
+bbeddba fix: save branch_name, files_changed, lines_added to task record after deploy
+e96d418 fix: add missing json import in LLM client (tools parse error)
+7c95f76 docs: session summary + upgrade postgres to pgvector/pgvector:pg16
 268ebe5 fix: version API bug fixes — NULL handling, context key names, path normalization
 31625ad feat: Phase 2 Harness Engineering — Agent Loop, Context Tools, Version Management, DAG Visualization
 ```
 
-97 files changed, 22,038 insertions(+), 1,551 deletions(+)
+121+ files changed, ~24,000 insertions
+
+### 运行时发现并修复的 Bug (5 个)
+1. `e96d418` — json import 缺失导致 tools 解析失败
+2. `268ebe5` — 版本 API NULL scan + context key 命名不匹配
+3. `bbeddba` — SavePRInfo 未保存 branch_name/files_changed/lines_added
+4. `0e1a60f` — 画像扫描 file tree 格式处理 (string vs dict)
+5. `336a0d0` — 新增手动触发检测端点 (既有项目无法触发)
 
 ---
 
 ## 六、下个Session建议
 
-1. **重建PostgreSQL容器** — `docker compose down && docker compose up -d` 使用pgvector镜像
-2. **启动AI Worker** — 测试Context Tools的LLM工具调用循环
+1. **在浏览器中完整走一遍对话流** — localhost:3000, 创建任务, 6轮对话, 确认, 规划审批, 查看DAG
+2. **测试版本管理完整流程** — 创建版本→关联多个任务→验证冲突检测→发布
+3. **导入一个真实 Go/Java 项目** — 触发完整的类型检测 + 画像扫描（当前测试项目太简单）
 3. **多任务并发测试** — 在同一版本下创建3个任务，验证冲突检测
 4. **前端对话体验** — 在浏览器中完整走一遍：需求→分析→确认→规划→DAG→批准→生成
