@@ -1,7 +1,7 @@
 # Session 2026-04-05 — Harness Engineering 全面实施
 
-> **持续时间**: 1 session (长会话)
-> **范围**: Phase 2 全面规划 + 16 个切片代码实现 + 端到端验证
+> **持续时间**: 1 session (超长会话, 61 commits)
+> **范围**: Phase 2 全面规划 + 16 切片代码 + P0 流式输出 + 端到端浏览器验证 + Docker + CI + 236 tests
 
 ---
 
@@ -172,7 +172,7 @@ e96d418 fix: add missing json import in LLM client (tools parse error)
 31625ad feat: Phase 2 Harness Engineering — Agent Loop, Context Tools, Version Management, DAG Visualization
 ```
 
-121+ files changed, ~24,000 insertions
+170 files changed, +27,688 insertions
 
 ### 运行时发现并修复的 Bug (5 个)
 1. `e96d418` — json import 缺失导致 tools 解析失败
@@ -181,11 +181,21 @@ e96d418 fix: add missing json import in LLM client (tools parse error)
 4. `0e1a60f` — 画像扫描 file tree 格式处理 (string vs dict)
 5. `336a0d0` — 新增手动触发检测端点 (既有项目无法触发)
 
+### 后期追加交付
+- **236 tests** (105 Go + 120 Python + 11 API) + 7 benchmarks, Python coverage 58%
+- **P0 流式输出**: LLM chat_stream → Redis analyze:stream → Go SSE → StreamingThinking component
+- **Docker**: 3 production images built (core 121MB, worker 365MB, portal 302MB)
+- **CI**: GitHub Actions + Codeup pipeline
+- **DevOps**: Makefile, 5 scripts, pre-commit (10 hooks), .editorconfig
+- **Docs**: README rewrite, CHANGELOG, CONTRIBUTING, STATUS, architecture diagrams
+- **Release**: v0.1.0 (Phase 1) + v0.2.0 (Phase 2) tags pushed
+- **浏览器验证**: 多轮 AI 对话 (understanding → scenario phase progression), 选项按钮, 版本管理页面
+
 ---
 
 ## 六、下个Session建议
 
-1. **在浏览器中完整走一遍对话流** — localhost:3000, 创建任务, 6轮对话, 确认, 规划审批, 查看DAG
+1. **导入一个真实 Go/Java 项目** — 触发完整的类型检测 + 画像扫描（当前测试项目太简单）
 2. **测试版本管理完整流程** — 创建版本→关联多个任务→验证冲突检测→发布
 3. **导入一个真实 Go/Java 项目** — 触发完整的类型检测 + 画像扫描（当前测试项目太简单）
 3. **多任务并发测试** — 在同一版本下创建3个任务，验证冲突检测
