@@ -100,17 +100,30 @@ func (h *SSEHandler) Stream(c *gin.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	// Subscribe to Redis code-streaming channel (if Redis available)
+	// Subscribe to Redis streaming channels (if Redis available)
 	var redisCh <-chan *goredis.Message
+	var analyzeRedisCh <-chan *goredis.Message
 	if h.rdb != nil {
 		subCtx, cancelSub := context.WithCancel(reqCtx)
 		defer cancelSub()
-		channel := fmt.Sprintf("code:stream:%d", taskID)
-		sub := h.rdb.Subscribe(subCtx, channel)
-		redisCh = sub.Channel()
+
+		// Code generation streaming
+		codeChannel := fmt.Sprintf("code:stream:%d", taskID)
+		codeSub := h.rdb.Subscribe(subCtx, codeChannel)
+		redisCh = codeSub.Channel()
 		defer func() {
-			if err := sub.Close(); err != nil {
-				slog.Debug("redis sub close", "error", err)
+			if err := codeSub.Close(); err != nil {
+				slog.Debug("redis code sub close", "error", err)
+			}
+		}()
+
+		// Analyze streaming (P0: thinking process)
+		analyzeChannel := fmt.Sprintf("analyze:stream:%d", taskID)
+		analyzeSub := h.rdb.Subscribe(subCtx, analyzeChannel)
+		analyzeRedisCh = analyzeSub.Channel()
+		defer func() {
+			if err := analyzeSub.Close(); err != nil {
+				slog.Debug("redis analyze sub close", "error", err)
 			}
 		}()
 	}
@@ -135,6 +148,22 @@ func (h *SSEHandler) Stream(c *gin.Context) {
 			// Forward as a code_token SSE event
 			evt := TaskProgressEvent{
 				Type:   "code_token",
+				TaskID: taskID,
+				Data:   msg.Payload,
+			}
+			evtData, err := json.Marshal(evt)
+			if err == nil {
+				fmt.Fprintf(c.Writer, "data: %s\n\n", evtData)
+				c.Writer.Flush()
+			}
+		case msg, ok := <-analyzeRedisCh:
+			if !ok {
+				analyzeRedisCh = nil
+				continue
+			}
+			// Forward as analyze_token SSE event (thinking process)
+			evt := TaskProgressEvent{
+				Type:   "analyze_token",
 				TaskID: taskID,
 				Data:   msg.Payload,
 			}

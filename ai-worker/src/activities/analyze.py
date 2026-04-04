@@ -226,6 +226,22 @@ def _generate_fallback_options(question: str) -> list:
     return ["是的", "不是", "需要进一步讨论"]
 
 
+async def _publish_thinking(task_id: int, text: str) -> None:
+    """Publish thinking tokens to Redis for real-time SSE streaming."""
+    try:
+        import redis.asyncio as aioredis
+        from src.config import settings
+        r = aioredis.from_url(
+            f"redis://{settings.redis_host}:{settings.redis_port}",
+            password=settings.redis_password or None,
+        )
+        channel = f"analyze:stream:{task_id}"
+        await r.publish(channel, text)
+        await r.close()
+    except Exception as e:
+        logger.debug(f"Failed to publish thinking token: {e}")
+
+
 @activity.defn(name="analyze_requirement")
 async def analyze_requirement_activity(input: AnalyzeInput) -> AnalyzeOutput:
     logger.info(f"Analyzing requirement for task {input.task_id}")
@@ -236,9 +252,16 @@ async def analyze_requirement_activity(input: AnalyzeInput) -> AnalyzeOutput:
             purpose="requirement-analysis",
             conversation_history=input.conversation_history,
         )
+
+        # Publish "thinking started" event
+        await _publish_thinking(input.task_id, '{"event":"thinking_start"}')
+
         router = ModelRouter()
         agent = AnalystAgent(router)
         result = await agent.run(input.requirement, ctx)
+
+        # Publish "thinking complete" event
+        await _publish_thinking(input.task_id, '{"event":"thinking_end"}')
 
         # Normalize to new single-question format
         result.structured = normalize_clarify_response(result.structured)
