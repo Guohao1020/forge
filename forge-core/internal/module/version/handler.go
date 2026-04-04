@@ -27,9 +27,9 @@ func (h *Handler) Create(c *gin.Context) {
 		response.Fail(c, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	tenantID, _ := c.Get("tenantID")
+	tenantID, _ := c.Get("tenant_id")
 	tid, _ := tenantID.(int64)
-	userID, _ := c.Get("userID")
+	userID, _ := c.Get("user_id")
 	uid, _ := userID.(int64)
 
 	v, err := h.svc.Create(c.Request.Context(), tid, projectID, uid, &req)
@@ -46,7 +46,7 @@ func (h *Handler) List(c *gin.Context) {
 		response.Fail(c, http.StatusBadRequest, "invalid project id")
 		return
 	}
-	tenantID, _ := c.Get("tenantID")
+	tenantID, _ := c.Get("tenant_id")
 	tid, _ := tenantID.(int64)
 
 	versions, err := h.svc.List(c.Request.Context(), tid, projectID)
@@ -63,7 +63,7 @@ func (h *Handler) Get(c *gin.Context) {
 		response.Fail(c, http.StatusBadRequest, "invalid version id")
 		return
 	}
-	tenantID, _ := c.Get("tenantID")
+	tenantID, _ := c.Get("tenant_id")
 	tid, _ := tenantID.(int64)
 
 	detail, err := h.svc.Get(c.Request.Context(), tid, versionID)
@@ -85,7 +85,7 @@ func (h *Handler) Update(c *gin.Context) {
 		response.Fail(c, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	tenantID, _ := c.Get("tenantID")
+	tenantID, _ := c.Get("tenant_id")
 	tid, _ := tenantID.(int64)
 
 	if err := h.svc.Update(c.Request.Context(), tid, versionID, &req); err != nil {
@@ -101,7 +101,7 @@ func (h *Handler) Release(c *gin.Context) {
 		response.Fail(c, http.StatusBadRequest, "invalid version id")
 		return
 	}
-	tenantID, _ := c.Get("tenantID")
+	tenantID, _ := c.Get("tenant_id")
 	tid, _ := tenantID.(int64)
 
 	v, err := h.svc.Release(c.Request.Context(), tid, versionID)

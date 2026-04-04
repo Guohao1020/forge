@@ -32,7 +32,7 @@ func (r *Repository) Create(ctx context.Context, v *ProjectVersion) error {
 func (r *Repository) ListByProject(ctx context.Context, projectID, tenantID int64) ([]ProjectVersion, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT v.id, v.tenant_id, v.project_id, v.version, v.status, v.description,
-		        v.git_tag, v.released_at, v.created_by, v.created_at, v.updated_at,
+		        COALESCE(v.git_tag, ''), v.released_at, COALESCE(v.created_by, 0), v.created_at, v.updated_at,
 		        COALESCE((SELECT COUNT(*) FROM engine.tasks t WHERE t.version_id = v.id), 0) AS task_count,
 		        COALESCE((SELECT COUNT(*) FROM engine.tasks t WHERE t.version_id = v.id AND t.status = 'COMPLETED'), 0) AS completed_count
 		 FROM engine.project_versions v
@@ -68,7 +68,7 @@ func (r *Repository) GetByID(ctx context.Context, id, tenantID int64) (*ProjectV
 	var v ProjectVersion
 	err := r.db.QueryRow(ctx,
 		`SELECT v.id, v.tenant_id, v.project_id, v.version, v.status, v.description,
-		        v.git_tag, v.released_at, v.created_by, v.created_at, v.updated_at,
+		        COALESCE(v.git_tag, ''), v.released_at, COALESCE(v.created_by, 0), v.created_at, v.updated_at,
 		        COALESCE((SELECT COUNT(*) FROM engine.tasks t WHERE t.version_id = v.id), 0),
 		        COALESCE((SELECT COUNT(*) FROM engine.tasks t WHERE t.version_id = v.id AND t.status = 'COMPLETED'), 0)
 		 FROM engine.project_versions v
