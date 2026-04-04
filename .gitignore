@@ -40,11 +40,25 @@ mvnw.cmd
 # Build
 build/
 
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+*.pyc
+
 # Env
 .env
 .env.local
 *.env.local
 forge-core/k8s/kubeconfig
 forge-core/.env.k8s
+
+# AI-generated workspaces (user project code)
 forge-core/workspaces/
 workspaces/
+
+# Binary artifacts
+*.exe~
+forge-core/forge-core.exe~
