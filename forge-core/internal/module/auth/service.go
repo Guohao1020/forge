@@ -40,9 +40,10 @@ func NewService(repo *Repository, jwtSecret string, jwtExpireHours int, githubCl
 
 type Claims struct {
 	jwt.RegisteredClaims
-	UserID   int64  `json:"uid"`
-	TenantID int64  `json:"tid"`
-	Username string `json:"usr"`
+	UserID   int64    `json:"uid"`
+	TenantID int64    `json:"tid"`
+	Username string   `json:"usr"`
+	Roles    []string `json:"roles,omitempty"` // RBAC role codes
 }
 
 func (s *Service) Login(ctx context.Context, req *LoginRequest, ipAddr string) (*LoginResponse, error) {
@@ -64,6 +65,13 @@ func (s *Service) Login(ctx context.Context, req *LoginRequest, ipAddr string) (
 	jti := uuid.New().String()
 	expiresAt := time.Now().Add(s.jwtExpire)
 
+	// Fetch user roles for JWT claims (RBAC enforcement)
+	userRoles, _ := s.repo.GetUserRoles(ctx, user.ID)
+	roleCodes := make([]string, 0, len(userRoles))
+	for _, r := range userRoles {
+		roleCodes = append(roleCodes, r.Code)
+	}
+
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        jti,
@@ -73,6 +81,7 @@ func (s *Service) Login(ctx context.Context, req *LoginRequest, ipAddr string) (
 		UserID:   user.ID,
 		TenantID: user.TenantID,
 		Username: user.Username,
+		Roles:    roleCodes,
 	})
 
 	tokenString, err := token.SignedString(s.jwtSecret)

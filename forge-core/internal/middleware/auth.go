@@ -40,6 +40,11 @@ func JWTAuth(authService *auth.Service) gin.HandlerFunc {
 		c.Set("tenant_id", claims.TenantID)
 		c.Set("username", claims.Username)
 		c.Set("token_jti", claims.ID)
+		// RBAC: set user roles from JWT claims
+		if len(claims.Roles) > 0 {
+			c.Set("user_roles", claims.Roles)
+			c.Set("user_role", claims.Roles[0]) // primary role (highest)
+		}
 		c.Next()
 	}
 }
