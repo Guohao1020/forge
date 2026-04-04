@@ -48,22 +48,29 @@ Git: 74 commits pushed to origin/main, v0.2.0 tagged
 Working tree: clean
 ```
 
+## Phase 3 Progress (prototyped in this session)
+
+| Module | Code | Tests | Remaining |
+|--------|------|-------|-----------|
+| **Metrics** | `middleware/metrics.go` + wired in router | 2 | **DONE** — `/metrics` live now |
+| **Constraint Engine** | `lint_activities.go` + registered in worker | 4 | Wire into TaskWorkflow + frontend (~1 day) |
+| **Cost Control** | `cost/` module (model+service+handler) | 8 | Register in router + frontend widget (~1 day) |
+| **RBAC** | `middleware/rbac.go` (RequireRole) | 4 | Apply to routes + user management UI (~3 days) |
+
+Read `docs/plans/phase3-technical-spike.md` for full analysis of all 7 Phase 3 modules.
+
 ## Next Session Priorities
 
-Read `docs/plans/phase3-technical-spike.md` for detailed analysis. Summary:
-
-1. **Constraint Engine** (1 day remaining): `lint_activities.go` exists. Wire into TaskWorkflow between GENERATE and REVIEW. Add frontend lint results display.
-
-2. **Enterprise Auth / RBAC** (5 days): Tables exist. Add role-checking middleware + user management UI.
-
-3. **IM Bot** (5 days): New forge-bot service. DingTalk webhook + card templates.
-
-4. **Cost Control** (1 day remaining): `cost/` module exists. Wire into router + add frontend dashboard widget.
+1. **Wire Constraint Engine** (~1 day): Add LINT step between GENERATE and REVIEW in TaskWorkflow
+2. **Wire Cost Control** (~1 day): Register routes, add budget check before LLM calls
+3. **Apply RBAC** (~3 days): Add RequireRole() to routes, build user management page
+4. **IM Bot** (~5 days): New forge-bot service (needs Harvey's DingTalk admin setup)
 
 ## Quick Start
 
 ```bash
 make dev          # Start all services
-make test         # Run 252 tests
+make test         # Run 264 tests
 make deploy       # Docker production deployment
+curl localhost:8080/metrics  # Prometheus metrics (live now)
 ```
