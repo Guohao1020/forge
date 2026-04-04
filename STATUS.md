@@ -56,6 +56,18 @@ make test-api
 3. **Version workflow**: Create a version, add multiple tasks, verify conflict detection
 4. **K8s cluster**: When ready, all K8s deployment code is written and waiting
 
+## Cleanup (Optional)
+
+```bash
+# Remove old Java-era Docker images (~5.5GB)
+docker rmi forge-forge-core forge-forge-portal forge-forge-pipeline \
+           forge-forge-specs forge-forge-identity forge-forge-bot \
+           forge-forge-engine forge-forge-beacon
+
+# Remove empty legacy directories (not tracked in git)
+rmdir forge-engine forge-identity forge-pipeline forge-specs 2>/dev/null
+```
+
 ## Key Files
 
 | File | Purpose |
