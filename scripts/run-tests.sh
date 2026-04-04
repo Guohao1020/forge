@@ -37,7 +37,7 @@ cd ..
 echo ""
 echo "=== Python Unit Tests ==="
 cd ai-worker
-if python -m pytest tests/ --tb=short -q 2>&1 | tail -5; then
+if python -m pytest tests/ --cov=src --cov-report=term --tb=short -q 2>&1 | tail -10; then
     PASS=$((PASS + 1))
 else
     FAIL=$((FAIL + 1))
