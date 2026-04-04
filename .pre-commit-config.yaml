@@ -2,16 +2,20 @@
 # Install: pip install pre-commit && pre-commit install
 # Run manually: pre-commit run --all-files
 
+exclude: '^(forge-core/workspaces/|workspaces/|node_modules/|\.next/)'
+
 repos:
   # General
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
     hooks:
       - id: trailing-whitespace
-        exclude: '\.md$'
+        exclude: '\.(md|svg)$'
       - id: end-of-file-fixer
+        exclude: '\.svg$'
       - id: check-yaml
       - id: check-json
+        exclude: 'tsconfig\.json'
       - id: check-merge-conflict
       - id: detect-private-key
 

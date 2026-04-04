@@ -119,4 +119,3 @@ func TestDetectProjectType(t *testing.T) {
 		})
 	}
 }
-
