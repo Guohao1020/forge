@@ -6,6 +6,14 @@ All notable changes to the Forge platform are documented here.
 
 ### Added
 
+#### Streaming AI Analysis (P0)
+- **Real-time thinking display**: LLM tokens stream character-by-character via Redis → Go SSE → browser.
+- `router.chat_stream(channel_prefix="analyze")` publishes to `analyze:stream:{taskId}`.
+- Go SSE handler subscribes to both `code:stream` and `analyze:stream` channels.
+- `useTaskStream` hook exports `analyzeThinking` and `isAnalyzing` state.
+- `StreamingThinking` component: pulsing cursor during thinking, collapsible after completion.
+- Falls back to synchronous `agent.run()` if streaming fails — no regression.
+
 #### Harness Engineering Foundation (SH-1)
 - **ContextCache**: Redis-backed workflow-level context caching (TTL 10min). Reduces API calls from 20/workflow to 4.
 - **Parallel context fetch**: `asyncio.gather` for 4 concurrent API calls in `ContextBuilder.build()`.
