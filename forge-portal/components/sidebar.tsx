@@ -3,11 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ForgeLogo } from "./forge-logo";
-import { FolderOpen, BookOpen } from "lucide-react";
+import { FolderOpen, BookOpen, Settings, Users, KeyRound } from "lucide-react";
 
 const navItems = [
   { href: "/projects", label: "项目大厅", icon: FolderOpen },
   { href: "/specs", label: "规范中心", icon: BookOpen },
+];
+
+const settingsItems = [
+  { href: "/settings/users", label: "用户管理", icon: Users },
+  { href: "/settings/account", label: "账户设置", icon: KeyRound },
 ];
 
 export function Sidebar() {
@@ -38,6 +43,30 @@ export function Sidebar() {
           );
         })}
       </nav>
+
+      <div className="p-3 border-t border-[var(--border)]">
+        <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-[var(--muted-foreground)] uppercase tracking-wider">
+          <Settings size={14} />
+          平台设置
+        </div>
+        {settingsItems.map((item) => {
+          const active = pathname === item.href;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                active
+                  ? "text-[var(--foreground)] bg-[rgba(139,92,246,0.1)]"
+                  : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              }`}
+            >
+              <item.icon size={14} />
+              {item.label}
+            </Link>
+          );
+        })}
+      </div>
     </aside>
   );
 }

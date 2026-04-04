@@ -33,6 +33,11 @@ type UpdateUserRoleRequest struct {
 	Role string `json:"role" binding:"required"`
 }
 
+type ChangePasswordRequest struct {
+	OldPassword string `json:"oldPassword" binding:"required,min=1"`
+	NewPassword string `json:"newPassword" binding:"required,min=6"`
+}
+
 // --- Repository Methods ---
 
 func (r *Repository) ListUsers(ctx context.Context, tenantID int64) ([]UserListItem, error) {
@@ -99,6 +104,17 @@ func (r *Repository) RemoveAllRoles(ctx context.Context, userID int64) error {
 	return err
 }
 
+func (r *Repository) GetPasswordHash(ctx context.Context, userID int64) (string, error) {
+	var hash string
+	err := r.db.QueryRow(ctx, `SELECT password_hash FROM auth.users WHERE id = $1`, userID).Scan(&hash)
+	return hash, err
+}
+
+func (r *Repository) UpdatePassword(ctx context.Context, userID int64, newHash string) error {
+	_, err := r.db.Exec(ctx, `UPDATE auth.users SET password_hash = $1 WHERE id = $2`, newHash, userID)
+	return err
+}
+
 // --- Service Methods ---
 
 func (s *Service) ListUsers(ctx context.Context, tenantID int64) ([]UserListItem, error) {
@@ -139,6 +155,24 @@ func (s *Service) UpdateUserRole(ctx context.Context, userID int64, role string)
 	return s.repo.AssignRole(ctx, userID, role)
 }
 
+func (s *Service) ChangePassword(ctx context.Context, userID int64, oldPassword, newPassword string) error {
+	hash, err := s.repo.GetPasswordHash(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("user not found")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(oldPassword)); err != nil {
+		return fmt.Errorf("原密码不正确")
+	}
+
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+
+	return s.repo.UpdatePassword(ctx, userID, string(newHash))
+}
+
 // --- Handler Methods ---
 
 func (h *Handler) ListUsers(c *gin.Context) {
@@ -169,6 +203,28 @@ func (h *Handler) CreateUser(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"id": userID})
+}
+
+// PUT /api/auth/password
+func (h *Handler) ChangePassword(c *gin.Context) {
+	uid, _ := c.Get("user_id")
+	userID, _ := uid.(int64)
+	if userID == 0 {
+		response.Fail(c, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+
+	var req ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+
+	if err := h.service.ChangePassword(c.Request.Context(), userID, req.OldPassword, req.NewPassword); err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	response.OK(c, gin.H{"status": "password_changed"})
 }
 
 func (h *Handler) UpdateUserRole(c *gin.Context) {

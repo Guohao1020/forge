@@ -69,6 +69,7 @@ func Setup(deps *Deps) *gin.Engine {
 		{
 			protected.POST("/auth/logout", deps.AuthHandler.Logout)
 			protected.GET("/auth/me", deps.AuthHandler.Me)
+			protected.PUT("/auth/password", deps.AuthHandler.ChangePassword)
 
 			// GitHub OAuth
 			protected.GET("/auth/github/authorize", deps.AuthHandler.GitHubAuthorize)

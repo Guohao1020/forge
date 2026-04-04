@@ -13,6 +13,7 @@ import {
   Brain,
   Settings,
   Tags,
+  Shield,
 } from "lucide-react";
 import { ForgeLogo } from "./forge-logo";
 
@@ -34,6 +35,7 @@ export function ProjectSidebar({ projectId, projectName }: ProjectSidebarProps) 
     { href: `${base}/versions`, label: "版本", icon: Tags },
     { href: `${base}/deploy`, label: "部署", icon: Rocket },
     { href: `${base}/profile`, label: "画像", icon: Brain },
+    { href: `${base}/quality`, label: "质量", icon: Shield },
     { href: `${base}/settings`, label: "设置", icon: Settings },
   ];
 
