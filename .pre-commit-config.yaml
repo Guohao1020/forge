@@ -54,3 +54,9 @@ repos:
         language: system
         files: 'forge-portal/.*\.(ts|tsx)$'
         pass_filenames: false
+      - id: eslint-check
+        name: ESLint Check (new files)
+        entry: bash -c 'cd forge-portal && npx eslint app/ components/ lib/ --max-warnings 50 2>&1 | tail -3'
+        language: system
+        files: 'forge-portal/.*\.(ts|tsx)$'
+        pass_filenames: false
