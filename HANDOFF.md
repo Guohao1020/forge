@@ -33,7 +33,7 @@
 
 ### Runtime Verified
 - 6-round AI conversation (understanding → scenario → constraints → confirmed)
-- Full pipeline: plan → test → generate → review → test → deploy → GitHub PR #4
+- Full pipeline: plan → test → generate → **lint** → review → test → deploy → GitHub PR #4
 - ContextCache: MISS → SET → HIT verified
 - Streaming: LLM stream at 4.3s latency
 - Version API: create/list/detail/release all working
@@ -44,27 +44,30 @@
 ```
 Services running: PostgreSQL+pgvector, Redis, Temporal, forge-core
 Services stopped: AI Worker, forge-portal (start with make dev)
-Git: 74 commits pushed to origin/main, v0.2.0 tagged
+Git: 84 commits pushed to origin/main
+Tags: v0.1.0, v0.2.0, v0.3.0
 Working tree: clean
+Users: admin (PLATFORM_ADMIN), dev1 (DEVELOPER)
 ```
 
-## Phase 3 Progress (prototyped in this session)
+## Phase 3 — COMPLETE (5 modules)
 
-| Module | Code | Tests | Remaining |
-|--------|------|-------|-----------|
-| **Metrics** | `middleware/metrics.go` + wired in router | 2 | **DONE** — `/metrics` live now |
-| **Constraint Engine** | `lint_activities.go` + registered in worker | 4 | Wire into TaskWorkflow + frontend (~1 day) |
-| **Cost Control** | `cost/` module (model+service+handler) | 8 | Register in router + frontend widget (~1 day) |
-| **RBAC** | `middleware/rbac.go` (RequireRole) | 4 | Apply to routes + user management UI (~3 days) |
-
-Read `docs/plans/phase3-technical-spike.md` for full analysis of all 7 Phase 3 modules.
+| Module | Status | Verified |
+|--------|--------|----------|
+| **Metrics** | LIVE | `/metrics` (Prometheus) + `/api/admin/metrics` (JSON) |
+| **Cost Control** | LIVE | `/admin/costs` + `/admin/budget` + `/projects/:id/costs` |
+| **Constraint Engine** | LIVE | RunLint in pipeline between GENERATE and REVIEW |
+| **RBAC** | ENFORCED | 5-level hierarchy, JWT roles, 403 on unauthorized |
+| **User Management** | LIVE | `/admin/users` create/list/role-assign |
 
 ## Next Session Priorities
 
-1. **Wire Constraint Engine** (~1 day): Add LINT step between GENERATE and REVIEW in TaskWorkflow
-2. **Wire Cost Control** (~1 day): Register routes, add budget check before LLM calls
-3. **Apply RBAC** (~3 days): Add RequireRole() to routes, build user management page
-4. **IM Bot** (~5 days): New forge-bot service (needs Harvey's DingTalk admin setup)
+Read `docs/plans/phase3-technical-spike.md` for remaining Phase 3 modules.
+
+1. **IM Bot** (~5 days): New forge-bot service — DingTalk webhook + card templates. Needs DingTalk admin setup.
+2. **Grafana Dashboards** (~2 days): Prometheus data already collecting. Create 3 dashboards (platform health, AI performance, task pipeline).
+3. **Entropy Management** (~5 days): Scheduled scans for code quality degradation + auto-fix PRs.
+4. **Frontend for RBAC**: User management page in forge-portal (list users, invite, role assign).
 
 ## Quick Start
 
