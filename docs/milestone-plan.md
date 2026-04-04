@@ -149,11 +149,11 @@ Phase 2d — 部署闭环（7 天）
 |------|------|---------|
 | S1-S7 | ✅ COMPLETED | Phase 1 |
 | S8 | ✅ COMPLETED | Phase 2 |
-| SX-1~SX-4 | 🔴 NOT STARTED | Phase 2a（补洞） |
-| SH-1~SH-4, S9', S10', S11' | 🔴 NOT STARTED | Phase 2b（Harness + 流水线） |
-| SP-1, SP-2, SP-3 | 🔴 NOT STARTED | Phase 2b（产品增强） |
-| Infra-1, S12, S13 | 🔴 NOT STARTED | Phase 2c（基础设施） |
-| S14, S16-RAG, S17 | 🔴 NOT STARTED | Phase 2d（部署闭环） |
+| SX-1~SX-4 | ✅ COMPLETED | Phase 2a（补洞）— 占位文本修复、规范注入验证、画像扫描接线 |
+| SH-1~SH-4, S9', S10', S11' | ✅ COMPLETED | Phase 2b（Harness + 流水线）— ContextCache、Agent Loop、Context Tools、版本管理、DAG 可视化 |
+| SP-1, SP-2, SP-3 | ✅ COMPLETED | Phase 2b（产品增强）— 项目类型检测、AI 推荐卡片、多平台设计 |
+| Infra-1, S12, S13 | ✅ COMPLETED | Phase 2c（基础设施）— task-runner Dockerfile、RunTests 更新、BuildDockerImage |
+| S14, S16-RAG, S17 | ✅ COMPLETED | Phase 2d（部署闭环）— K8s manifest 生成、pgvector 迁移、Preview 生命周期 |
 | S15 | ⚠️ ~90% DONE | 在 SX-4 中收尾 |
 
 ---
