@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -251,6 +252,14 @@ func (r *Repository) DeleteNodesByTaskID(ctx context.Context, taskID int64) erro
 	_, err := r.db.Exec(ctx,
 		`DELETE FROM engine.task_nodes WHERE task_id = $1`,
 		taskID,
+	)
+	return err
+}
+
+func (r *Repository) SaveStepOutput(ctx context.Context, taskID int64, stepType string, output json.RawMessage) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE engine.task_steps SET output = $1 WHERE task_id = $2 AND step_type = $3`,
+		output, taskID, stepType,
 	)
 	return err
 }

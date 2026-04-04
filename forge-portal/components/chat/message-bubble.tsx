@@ -7,6 +7,7 @@ interface MessageBubbleProps {
   role: string;
   content: string;
   createdAt?: string;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -150,7 +151,7 @@ function formatAIContent(content: string): string {
   }
 }
 
-export function MessageBubble({ role, content, createdAt }: MessageBubbleProps) {
+export function MessageBubble({ role, content, createdAt, metadata }: MessageBubbleProps) {
   const displayContent = useMemo(
     () => (role === "assistant" ? formatAIContent(content) : content),
     [role, content]
@@ -180,11 +181,18 @@ export function MessageBubble({ role, content, createdAt }: MessageBubbleProps) 
         ) : (
           <MarkdownPreview content={displayContent} className="text-sm" />
         )}
-        {createdAt && (
-          <p className="text-xs text-white/20 mt-2">
-            {new Date(createdAt).toLocaleTimeString()}
-          </p>
-        )}
+        <div className="flex items-center gap-2 mt-2">
+          {!isUser && metadata && typeof metadata.model === "string" && (
+            <span className="text-[10px] text-white/15 font-mono">
+              {metadata.model.replace(/^(claude|gpt|qwen)/i, (m) => m.charAt(0).toUpperCase() + m.slice(1))}
+            </span>
+          )}
+          {createdAt && (
+            <span className="text-[10px] text-white/15">
+              {new Date(createdAt).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

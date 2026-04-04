@@ -21,6 +21,7 @@ type TaskRepo interface {
 	UpdateAnalysis(ctx context.Context, taskID int64, analysis string) error
 	UpdateStepStatus(ctx context.Context, taskID int64, stepType, status string) error
 	GetStepsByTaskID(ctx context.Context, taskID int64) ([]task.TaskStep, error)
+	SaveStepOutput(ctx context.Context, taskID int64, stepType string, output json.RawMessage) error
 }
 
 type Service struct {
@@ -179,9 +180,23 @@ func (s *Service) ConfirmPlan(ctx context.Context, taskID, tenantID int64) (*Pla
 		return nil, fmt.Errorf("temporal not available")
 	}
 
-	// Mark ANALYZE step as COMPLETED
+	// Mark ANALYZE step as COMPLETED and save confirmed requirements as step output
 	if err := s.taskRepo.UpdateStepStatus(ctx, taskID, task.StepTypeAnalyze, task.StepCompleted); err != nil {
 		slog.Warn("failed to mark ANALYZE completed", "task_id", taskID, "error", err)
+	}
+	// Save the last confirmed metadata as ANALYZE step output (P1: requirements document)
+	history, _ := s.repo.ListByTaskID(ctx, taskID)
+	for i := len(history) - 1; i >= 0; i-- {
+		msg := history[i]
+		if msg.Role == RoleAssistant && msg.Metadata != nil {
+			var meta map[string]interface{}
+			if err := json.Unmarshal(*msg.Metadata, &meta); err == nil {
+				if status, ok := meta["status"].(string); ok && status == "confirmed" {
+					_ = s.taskRepo.SaveStepOutput(ctx, taskID, task.StepTypeAnalyze, *msg.Metadata)
+					break
+				}
+			}
+		}
 	}
 
 	// Start PlanOnlyWorkflow — generates plan and returns it

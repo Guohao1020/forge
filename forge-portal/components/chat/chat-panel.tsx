@@ -99,6 +99,7 @@ export function ChatPanel({
             role={msg.role}
             content={msg.content}
             createdAt={msg.createdAt}
+            metadata={msg.metadata as Record<string, unknown> | undefined}
           />
         ))}
         {/* AI recommendation cards (SP-2) */}
