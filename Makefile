@@ -22,7 +22,7 @@ dev-stop:
 test: test-go test-python test-ts
 
 test-go:
-	cd forge-core && go test ./internal/middleware/... ./internal/module/auth/... ./internal/module/version/... ./internal/module/specs/... ./internal/temporal/workflow/... ./internal/pkg/... -count=1
+	cd forge-core && go test ./internal/middleware/... ./internal/module/auth/... ./internal/module/version/... ./internal/module/specs/... ./internal/temporal/... ./internal/pkg/... -count=1
 	cd forge-core && go test ./internal/module/project/... -run TestDetect -count=1
 
 test-python:
