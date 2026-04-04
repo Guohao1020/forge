@@ -91,6 +91,9 @@ jobs:
       - name: Type Check
         run: npx tsc --noEmit
 
+      - name: ESLint
+        run: npx eslint app/ components/ lib/ --max-warnings 50
+
       - name: Build
         run: npm run build
 

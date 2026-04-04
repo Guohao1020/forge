@@ -19,7 +19,7 @@ dev-stop:
 
 # === Testing ===
 
-test: test-go test-python test-ts
+test: test-go test-python test-ts test-lint
 
 test-go:
 	cd forge-core && go test ./internal/middleware/... ./internal/module/auth/... ./internal/module/version/... ./internal/module/specs/... ./internal/temporal/... ./internal/pkg/... -count=1
@@ -30,6 +30,9 @@ test-python:
 
 test-ts:
 	cd forge-portal && npx tsc --noEmit --pretty false
+
+test-lint:
+	cd forge-portal && npx eslint app/ components/ lib/ --max-warnings 50
 
 test-api:
 	bash scripts/test-api.sh
