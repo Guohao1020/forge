@@ -199,7 +199,8 @@ function TestStepCard({ output }: { output: TestStepOutput }) {
   );
 }
 
-export function TaskWorkspace({ selectedStep, steps: _steps, requirement, streamingTokens, isStreaming }: TaskWorkspaceProps) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function TaskWorkspace({ selectedStep, steps, requirement, streamingTokens, isStreaming }: TaskWorkspaceProps) {
   if (!selectedStep) {
     return <EmptyState />;
   }
