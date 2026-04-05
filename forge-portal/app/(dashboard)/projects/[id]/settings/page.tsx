@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { AlertTriangle, Lock, Globe, ExternalLink, CheckCircle2, Shield, Activity, TrendingUp, Webhook, BookOpen } from "lucide-react";
+import { AlertTriangle, Lock, Globe, ExternalLink, CheckCircle2, Shield, Activity, TrendingUp, Webhook, BookOpen, Download } from "lucide-react";
 import { GitHubIcon } from "@/components/icons";
 
 interface TechStack {
@@ -149,6 +149,11 @@ export default function ProjectSettingsPage() {
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors">
           <Webhook size={12} /> Webhooks
         </Link>
+        <a href={`/api/projects/${projectId}/export`}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
+          download>
+          <Download size={12} /> 导出备份
+        </a>
       </div>
 
       <form onSubmit={handleSave} className="space-y-5">
