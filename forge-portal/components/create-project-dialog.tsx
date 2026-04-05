@@ -14,8 +14,24 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
-import { AlertTriangle, Lock, Globe } from "lucide-react";
+import { AlertTriangle, Lock, Globe, Layout, Code2, Smartphone, Layers } from "lucide-react";
 import { GitHubIcon } from "@/components/icons";
+
+interface ProjectTemplate {
+  id: string;
+  name: string;
+  description: string;
+  language: string;
+  frameworks: string[];
+  category: string;
+}
+
+const CATEGORY_ICONS: Record<string, typeof Code2> = {
+  backend: Code2,
+  frontend: Layout,
+  fullstack: Layers,
+  mobile: Smartphone,
+};
 
 interface CreateProjectDialogProps {
   open: boolean;
@@ -37,13 +53,19 @@ export function CreateProjectDialog({
   const [showWarning, setShowWarning] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [step, setStep] = useState<"template" | "details">("template");
+  const [templates, setTemplates] = useState<ProjectTemplate[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
 
-  // Check GitHub connection status when dialog opens
+  // Check GitHub connection status and load templates when dialog opens
   useEffect(() => {
     if (open) {
       api.get<{ connected: boolean }>("/auth/github/status")
         .then((res) => setGithubConnected(res.connected))
         .catch(() => setGithubConnected(false));
+      api.get<{ templates: ProjectTemplate[] }>("/projects/templates")
+        .then((res) => setTemplates(res.templates))
+        .catch(() => {});
     }
   }, [open]);
 
@@ -55,6 +77,8 @@ export function CreateProjectDialog({
     setRepoName("");
     setShowWarning(false);
     setError("");
+    setStep("template");
+    setSelectedTemplate(null);
   }
 
   async function doCreate() {
@@ -91,6 +115,51 @@ export function CreateProjectDialog({
       return;
     }
     doCreate();
+  }
+
+  // Template selection step
+  if (step === "template") {
+    return (
+      <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
+        <DialogContent className="bg-card border-border text-foreground max-w-lg">
+          <DialogHeader>
+            <DialogTitle>选择项目模板</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 max-h-80 overflow-auto">
+            <button
+              onClick={() => { setSelectedTemplate(null); setStep("details"); }}
+              className={`w-full text-left px-3 py-2.5 rounded-lg border transition-colors hover:border-primary/30 ${
+                !selectedTemplate ? "border-primary/50 bg-primary/5" : "border-white/10 bg-white/5"
+              }`}
+            >
+              <p className="text-sm font-medium text-foreground">空白项目</p>
+              <p className="text-xs text-muted-foreground">从零开始创建项目</p>
+            </button>
+            {templates.map((tmpl) => {
+              const Icon = CATEGORY_ICONS[tmpl.category] || Code2;
+              return (
+                <button
+                  key={tmpl.id}
+                  onClick={() => {
+                    setSelectedTemplate(tmpl.id);
+                    setDescription(tmpl.description);
+                    setStep("details");
+                  }}
+                  className="w-full text-left px-3 py-2.5 rounded-lg border border-white/10 bg-white/5 hover:border-primary/30 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <Icon className="h-4 w-4 text-primary shrink-0" />
+                    <p className="text-sm font-medium text-foreground">{tmpl.name}</p>
+                    <span className="text-[9px] text-muted-foreground px-1.5 py-0.5 bg-white/5 rounded">{tmpl.language}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5 pl-6">{tmpl.description}</p>
+                </button>
+              );
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
   }
 
   // Warning confirmation view
