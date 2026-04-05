@@ -17,6 +17,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/cost"
 	"github.com/shulex/forge/forge-core/internal/module/entropy"
 	"github.com/shulex/forge/forge-core/internal/module/search"
+	"github.com/shulex/forge/forge-core/internal/module/settings"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/pipeline"
@@ -168,6 +169,10 @@ func main() {
 	// Search module
 	searchHandler := search.NewHandler(db)
 
+	// Settings module
+	settingsSvc := settings.NewService(db)
+	settingsHandler := settings.NewHandler(settingsSvc)
+
 	// Specs module
 	specsRepo := specs.NewRepository(db)
 	specsService := specs.NewService(specsRepo, rdb)
@@ -192,6 +197,7 @@ func main() {
 		CostHandler:         costHandler,
 		EntropyHandler:      entropyHandler,
 		SearchHandler:       searchHandler,
+		SettingsHandler:     settingsHandler,
 	})
 
 	// Graceful shutdown

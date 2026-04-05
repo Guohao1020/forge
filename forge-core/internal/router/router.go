@@ -12,6 +12,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/cost"
 	"github.com/shulex/forge/forge-core/internal/module/entropy"
 	"github.com/shulex/forge/forge-core/internal/module/search"
+	"github.com/shulex/forge/forge-core/internal/module/settings"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/pipeline"
@@ -46,6 +47,7 @@ type Deps struct {
 	CostHandler         *cost.Handler
 	EntropyHandler      *entropy.Handler
 	SearchHandler       *search.Handler
+	SettingsHandler     *settings.Handler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -125,6 +127,14 @@ func Setup(deps *Deps) *gin.Engine {
 
 			// Recent activity feed
 			protected.GET("/activity", deps.ProjectHandler.GetRecentActivity)
+
+			// Platform settings
+			if deps.SettingsHandler != nil {
+				protected.GET("/settings", deps.SettingsHandler.List)
+				protected.GET("/settings/:key", deps.SettingsHandler.Get)
+				protected.PUT("/settings/:key", middleware.RequireRole(middleware.RolePlatformAdmin), deps.SettingsHandler.Set)
+				protected.PUT("/settings", middleware.RequireRole(middleware.RolePlatformAdmin), deps.SettingsHandler.BulkSet)
+			}
 
 			// GitHub OAuth
 			protected.GET("/auth/github/authorize", deps.AuthHandler.GitHubAuthorize)

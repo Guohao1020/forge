@@ -1,7 +1,7 @@
-# Binary output
-forge-core
-forge-core.exe
-forge-core.exe~
+# Binary output (only in root, not cmd/forge-core/ source dir)
+/forge-core
+/forge-core.exe
+/forge-core.exe~
 
 # Workspaces (AI-generated task code, cloned repos)
 workspaces/
