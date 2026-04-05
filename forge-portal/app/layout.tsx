@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "@/lib/auth";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { LoadingBar } from "@/components/ui/loading-bar";
+import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts";
 import { Toaster } from "sonner";
 import "./globals.css";
 
@@ -40,6 +41,7 @@ export default function RootLayout({
     <html lang="zh-CN" className={`${geistSans.variable} ${geistMono.variable} dark`}>
       <body className="antialiased">
         <LoadingBar />
+        <KeyboardShortcutsDialog />
         <ErrorBoundary>
           <AuthProvider>{children}</AuthProvider>
         </ErrorBoundary>
