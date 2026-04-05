@@ -101,6 +101,38 @@ func TestDetectProjectType(t *testing.T) {
 			wantSubType:  "unknown",
 			wantStrategy: "trunk_based",
 		},
+		{
+			name:         "Empty file list",
+			files:        []string{},
+			languages:    nil,
+			wantType:     "unknown",
+			wantSubType:  "unknown",
+			wantStrategy: "trunk_based",
+		},
+		{
+			name:         "Only README",
+			files:        []string{"README.md", "LICENSE", ".gitignore"},
+			languages:    map[string]int{},
+			wantType:     "unknown",
+			wantSubType:  "unknown",
+			wantStrategy: "trunk_based",
+		},
+		{
+			name:         "Windows backslash paths normalized",
+			files:        []string{"go.mod", "cmd\\server\\main.go", "internal\\handler\\api.go"},
+			languages:    map[string]int{"Go": 5000},
+			wantType:     "backend_api",
+			wantSubType:  "go_api",
+			wantStrategy: "trunk_based",
+		},
+		{
+			name:         "Nil languages map with Go files",
+			files:        []string{"go.mod", "cmd/main.go", "internal/handler.go"},
+			languages:    nil,
+			wantType:     "backend_api",
+			wantSubType:  "go_api",
+			wantStrategy: "trunk_based",
+		},
 	}
 
 	for _, tt := range tests {
