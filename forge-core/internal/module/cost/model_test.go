@@ -61,3 +61,31 @@ func TestModelPricingEntries(t *testing.T) {
 		}
 	}
 }
+
+func TestEstimateCostAllModels(t *testing.T) {
+	// Verify each model produces reasonable costs for 1M tokens
+	for model, pricing := range ModelPricing {
+		cost := EstimateCost(model, 1_000_000, 1_000_000)
+		if cost <= 0 {
+			t.Errorf("model %q: cost should be > 0, got %.4f", model, cost)
+		}
+		expectedMin := pricing.Input + pricing.Output // at least input + output for 1M each
+		if cost < expectedMin*0.9 {
+			t.Errorf("model %q: cost %.4f too low (expected ~%.4f)", model, cost, expectedMin)
+		}
+	}
+}
+
+func TestEstimateCostUnknownModel(t *testing.T) {
+	cost := EstimateCost("nonexistent-model", 1_000_000, 1_000_000)
+	// Should use default pricing ($1/$3 per 1M)
+	if cost < 3.0 || cost > 5.0 {
+		t.Errorf("unknown model cost should be ~$4, got $%.2f", cost)
+	}
+}
+
+func BenchmarkEstimateCost(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		EstimateCost("qwen3-max", 500_000, 200_000)
+	}
+}
