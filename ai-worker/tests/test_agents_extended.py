@@ -160,3 +160,20 @@ class TestReviewerAgent:
         assert result.structured["passed"] is False
         assert len(result.structured["findings"]) == 1
         assert result.structured["fix_instructions"] != ""
+
+    def test_system_prompt_with_project_context(self):
+        agent = ReviewerAgent(MagicMock())
+        ctx = ProjectContext(
+            project_name="forge",
+            project_description="AI platform",
+            review_rules=[{"name": "no-console-log", "category": "style", "severity": "warning"}],
+        )
+        prompt = agent._build_system_prompt(ctx)
+        assert "no-console-log" in prompt
+        assert "forge" in prompt  # project context included
+
+    def test_system_prompt_with_empty_rules(self):
+        agent = ReviewerAgent(MagicMock())
+        ctx = ProjectContext(review_rules=[])
+        prompt = agent._build_system_prompt(ctx)
+        assert len(prompt) > 0  # base prompt still present
