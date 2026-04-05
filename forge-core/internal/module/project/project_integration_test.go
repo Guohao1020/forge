@@ -2,7 +2,10 @@ package project_test
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/shulex/forge/forge-core/internal/module/project"
 	"github.com/shulex/forge/forge-core/internal/testutil"
@@ -12,6 +15,11 @@ const (
 	testTenantID int64 = 1
 	testUserID   int64 = 1
 )
+
+// uid generates a unique suffix for test data to avoid conflicts across runs.
+func uid() string {
+	return fmt.Sprintf("%d_%d", time.Now().UnixMilli(), rand.Intn(10000))
+}
 
 func setupService(t *testing.T) (*project.Service, context.Context) {
 	t.Helper()
@@ -25,9 +33,10 @@ func setupService(t *testing.T) (*project.Service, context.Context) {
 
 func TestCreateProject(t *testing.T) {
 	svc, ctx := setupService(t)
+	name := "测试项目_" + uid()
 
 	p, err := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
-		Name:        "测试项目",
+		Name:        name,
 		Description: "集成测试用项目",
 	})
 	if err != nil {
@@ -36,8 +45,8 @@ func TestCreateProject(t *testing.T) {
 	if p.ID == 0 {
 		t.Fatal("expected non-zero ID")
 	}
-	if p.Name != "测试项目" {
-		t.Fatalf("expected name '测试项目', got '%s'", p.Name)
+	if p.Name != name {
+		t.Fatalf("expected name '%s', got '%s'", name, p.Name)
 	}
 	if p.Status != "ACTIVE" {
 		t.Fatalf("expected status ACTIVE, got '%s'", p.Status)
@@ -66,16 +75,17 @@ func TestCreateProject_EmptyName(t *testing.T) {
 
 func TestCreateProject_DuplicateName(t *testing.T) {
 	svc, ctx := setupService(t)
+	name := "唯一性测试_" + uid()
 
 	_, err := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
-		Name: "唯一性测试",
+		Name: name,
 	})
 	if err != nil {
 		t.Fatalf("first create failed: %v", err)
 	}
 
 	_, err = svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
-		Name: "唯一性测试",
+		Name: name,
 	})
 	if err == nil {
 		t.Fatal("expected error for duplicate name within same tenant")
@@ -84,17 +94,18 @@ func TestCreateProject_DuplicateName(t *testing.T) {
 
 func TestGetByID(t *testing.T) {
 	svc, ctx := setupService(t)
+	name := "查询测试_" + uid()
 
 	created, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
-		Name: "查询测试",
+		Name: name,
 	})
 
 	got, err := svc.GetByID(ctx, created.ID, testTenantID, testUserID)
 	if err != nil {
 		t.Fatalf("GetByID failed: %v", err)
 	}
-	if got.Name != "查询测试" {
-		t.Fatalf("expected '查询测试', got '%s'", got.Name)
+	if got.Name != name {
+		t.Fatalf("expected '%s', got '%s'", name, got.Name)
 	}
 }
 
@@ -111,11 +122,11 @@ func TestUpdateProject(t *testing.T) {
 	svc, ctx := setupService(t)
 
 	created, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
-		Name:        "更新前",
+		Name:        "更新前_" + uid(),
 		Description: "旧描述",
 	})
 
-	newName := "更新后"
+	newName := "更新后_" + uid()
 	newDesc := "新描述"
 	updated, err := svc.Update(ctx, created.ID, testTenantID, &project.UpdateProjectRequest{
 		Name:        &newName,
@@ -124,8 +135,8 @@ func TestUpdateProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
-	if updated.Name != "更新后" {
-		t.Fatalf("expected name '更新后', got '%s'", updated.Name)
+	if updated.Name != newName {
+		t.Fatalf("expected name '%s', got '%s'", newName, updated.Name)
 	}
 	if updated.Description != "新描述" {
 		t.Fatalf("expected description '新描述', got '%s'", updated.Description)
@@ -136,7 +147,7 @@ func TestArchiveProject(t *testing.T) {
 	svc, ctx := setupService(t)
 
 	created, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
-		Name: "归档测试",
+		Name: "归档测试_" + uid(),
 	})
 
 	err := svc.Archive(ctx, created.ID, testTenantID)
@@ -157,7 +168,7 @@ func TestStarAndUnstar(t *testing.T) {
 	svc, ctx := setupService(t)
 
 	created, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
-		Name: "收藏测试",
+		Name: "收藏测试_" + uid(),
 	})
 
 	// Star
@@ -186,7 +197,7 @@ func TestStarIdempotent(t *testing.T) {
 	svc, ctx := setupService(t)
 
 	created, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
-		Name: "幂等收藏",
+		Name: "幂等收藏_" + uid(),
 	})
 
 	// Star twice should not error
@@ -201,9 +212,10 @@ func TestStarIdempotent(t *testing.T) {
 func TestListProjects(t *testing.T) {
 	svc, ctx := setupService(t)
 
-	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "列表项目A"})
-	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "列表项目B"})
-	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "列表项目C"})
+	u := uid()
+	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "列表项目A_" + u})
+	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "列表项目B_" + u})
+	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "列表项目C_" + u})
 
 	result, err := svc.List(ctx, testTenantID, testUserID, &project.ListProjectsQuery{
 		Page: 1,
@@ -223,12 +235,14 @@ func TestListProjects(t *testing.T) {
 func TestListProjects_Search(t *testing.T) {
 	svc, ctx := setupService(t)
 
-	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "搜索目标Alpha"})
-	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "搜索目标Beta"})
-	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "无关项目"})
+	u2 := uid()
+	searchTerm := "搜索目标_" + u2
+	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: searchTerm + "_Alpha"})
+	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: searchTerm + "_Beta"})
+	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "无关项目_" + u2})
 
 	result, err := svc.List(ctx, testTenantID, testUserID, &project.ListProjectsQuery{
-		Search: "搜索目标",
+		Search: searchTerm,
 		Page:   1,
 		Size:   10,
 	})
@@ -243,8 +257,9 @@ func TestListProjects_Search(t *testing.T) {
 func TestListProjects_StarredFilter(t *testing.T) {
 	svc, ctx := setupService(t)
 
-	p1, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "收藏筛选A"})
-	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "收藏筛选B"})
+	u3 := uid()
+	p1, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "收藏筛选A_" + u3})
+	svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "收藏筛选B_" + u3})
 
 	svc.Star(ctx, p1.ID, testTenantID, testUserID)
 
@@ -259,8 +274,8 @@ func TestListProjects_StarredFilter(t *testing.T) {
 	if result.Total != 1 {
 		t.Fatalf("expected 1 starred project, got %d", result.Total)
 	}
-	if result.Projects[0].Name != "收藏筛选A" {
-		t.Fatalf("expected '收藏筛选A', got '%s'", result.Projects[0].Name)
+	if result.Projects[0].Name != "收藏筛选A_"+u3 {
+		t.Fatalf("expected '收藏筛选A_%s', got '%s'", u3, result.Projects[0].Name)
 	}
 }
 
@@ -269,7 +284,7 @@ func TestListProjects_Pagination(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
-			Name: "分页测试" + string(rune('A'+i)),
+			Name: fmt.Sprintf("分页测试_%s_%c", uid(), rune('A'+i)),
 		})
 	}
 
@@ -291,11 +306,12 @@ func TestListProjects_Pagination(t *testing.T) {
 func TestListProjects_ArchivedNotShown(t *testing.T) {
 	svc, ctx := setupService(t)
 
-	p, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: "归档不可见"})
+	archName := "归档不可见_" + uid()
+	p, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: archName})
 	svc.Archive(ctx, p.ID, testTenantID)
 
 	result, _ := svc.List(ctx, testTenantID, testUserID, &project.ListProjectsQuery{
-		Search: "归档不可见",
+		Search: archName,
 		Page:   1,
 		Size:   10,
 	})
