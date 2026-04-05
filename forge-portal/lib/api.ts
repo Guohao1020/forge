@@ -1,5 +1,14 @@
 const BASE_URL = "/api";
 
+let requestCounter = 0;
+function generateRequestId(): string {
+  requestCounter++;
+  const ts = Date.now().toString(36);
+  const cnt = requestCounter.toString(36);
+  const rand = Math.random().toString(36).substring(2, 6);
+  return `fe-${ts}-${cnt}-${rand}`;
+}
+
 interface ApiResult<T> {
   code: number;
   message: string;
@@ -36,8 +45,10 @@ async function request<T>(
     ? localStorage.getItem("forge_token")
     : null;
 
+  const requestId = generateRequestId();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "X-Request-ID": requestId,
     ...((options.headers as Record<string, string>) || {}),
   };
 
