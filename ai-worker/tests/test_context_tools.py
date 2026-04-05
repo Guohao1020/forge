@@ -217,3 +217,48 @@ class TestContextToolExecutor:
             })
             assert "截断" in result
             assert len(result) < 25000
+
+
+class TestProfileAvailabilityHint:
+    """Tests for build_profile_availability_hint edge cases."""
+
+    def test_empty_profiles(self):
+        from src.context.tools import build_profile_availability_hint
+        result = build_profile_availability_hint({})
+        assert "empty" in result  # all dimensions show as empty
+        assert "api_catalog" in result
+
+    def test_profiles_with_data(self):
+        from src.context.tools import build_profile_availability_hint
+        profiles = {
+            "api_catalog": {"endpoints": ["/api/v1/users", "/api/v1/tasks"]},
+            "db_schema": {"tables": ["users", "tasks", "projects"]},
+        }
+        result = build_profile_availability_hint(profiles)
+        assert "api_catalog" in result
+        assert "2" in result  # 2 endpoints
+        assert "db_schema" in result
+
+    def test_profiles_with_empty_data(self):
+        from src.context.tools import build_profile_availability_hint
+        profiles = {"api_catalog": {}}
+        result = build_profile_availability_hint(profiles)
+        assert "empty" in result
+
+    def test_count_profile_items_all_types(self):
+        from src.context.tools import _count_profile_items
+        assert _count_profile_items("api_catalog", {"endpoints": [1, 2, 3]}) == 3
+        assert _count_profile_items("db_schema", {"tables": [1]}) == 1
+        assert _count_profile_items("module_graph", {"modules": []}) == 0
+        assert _count_profile_items("business_rules", {"rules": [1, 2]}) == 2
+        assert _count_profile_items("architecture", {"services": [1, 2, 3, 4]}) == 4
+
+    def test_count_profile_items_unknown_key(self):
+        from src.context.tools import _count_profile_items
+        result = _count_profile_items("unknown_key", {"foo": [1, 2]})
+        assert result == 0
+
+    def test_count_profile_items_non_dict(self):
+        from src.context.tools import _count_profile_items
+        result = _count_profile_items("api_catalog", "just a string")
+        assert result == 0
