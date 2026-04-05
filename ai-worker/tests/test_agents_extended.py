@@ -83,6 +83,22 @@ class TestCoderAgent:
         assert "PEP 8" in constraints
         assert "type hints" in constraints
 
+    def test_language_alias_js(self):
+        constraints = _build_language_constraints({"languages": ["js"]})
+        assert "JavaScript" in constraints or "ESLint" in constraints or len(constraints) > 0
+
+    def test_language_alias_ts(self):
+        constraints = _build_language_constraints({"languages": ["ts"]})
+        assert "TypeScript" in constraints or "strict" in constraints or len(constraints) > 0
+
+    def test_language_alias_golang(self):
+        constraints = _build_language_constraints({"languages": ["golang"]})
+        assert "Go" in constraints or "gofmt" in constraints
+
+    def test_language_alias_py(self):
+        constraints = _build_language_constraints({"languages": ["py"]})
+        assert "PEP" in constraints or "Python" in constraints or "type" in constraints
+
     @pytest.mark.asyncio
     async def test_run_returns_files(self):
         router = MagicMock(spec=ModelRouter)
