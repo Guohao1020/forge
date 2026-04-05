@@ -87,3 +87,60 @@ class TestFileSelection:
         file_tree = ["README.md", "LICENSE", ".gitignore"]
         result = _select_files_for_dimension(file_tree, "api_catalog")
         assert result == []
+
+    def test_select_files_unknown_dimension(self):
+        """Unknown dimension should return empty list."""
+        file_tree = ["handler.go", "router.go"]
+        result = _select_files_for_dimension(file_tree, "nonexistent_dimension")
+        assert result == []
+
+    def test_select_files_mixed_entries(self):
+        """Mix of dict and string entries."""
+        file_tree = [
+            {"path": "internal/router.go"},
+            "api/handler.go",
+            {"name": "controller.ts"},
+        ]
+        result = _select_files_for_dimension(file_tree, "api_catalog")
+        assert "internal/router.go" in result
+        assert "api/handler.go" in result
+
+    def test_select_files_all_binary(self):
+        """All binary files should result in empty list."""
+        file_tree = ["logo.png", "font.woff2", "archive.tar.gz", "pkg.lock"]
+        result = _select_files_for_dimension(file_tree, "api_catalog")
+        assert result == []
+
+    def test_select_files_db_schema(self):
+        file_tree = [
+            "migrations/001_init.sql",
+            "internal/model.go",
+            "prisma/schema.prisma",
+            "README.md",
+        ]
+        result = _select_files_for_dimension(file_tree, "db_schema")
+        assert "migrations/001_init.sql" in result
+        assert "internal/model.go" in result
+
+    def test_select_files_architecture(self):
+        file_tree = [
+            "main.go",
+            "Dockerfile",
+            "docker-compose.yml",
+            "config.go",
+            "random.txt",
+        ]
+        result = _select_files_for_dimension(file_tree, "architecture")
+        assert "main.go" in result
+        assert "Dockerfile" in result
+        assert "random.txt" not in result
+
+
+class TestAllDimensions:
+    def test_dimension_count(self):
+        assert len(ALL_DIMENSIONS) >= 5
+
+    def test_dimensions_non_empty(self):
+        for dim in ALL_DIMENSIONS:
+            assert dim != ""
+            assert isinstance(dim, str)
