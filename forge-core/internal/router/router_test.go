@@ -113,3 +113,42 @@ func TestSetup_RouteCount(t *testing.T) {
 		t.Errorf("expected at least 5 routes, got %d", len(routes))
 	}
 }
+
+func TestSetup_RequestID(t *testing.T) {
+	r := Setup(&Deps{})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/health", nil)
+	r.ServeHTTP(w, req)
+
+	reqID := w.Header().Get("X-Request-ID")
+	if reqID == "" {
+		t.Error("expected X-Request-ID header")
+	}
+}
+
+func TestSetup_RequestID_Forwarded(t *testing.T) {
+	r := Setup(&Deps{})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/health", nil)
+	req.Header.Set("X-Request-ID", "custom-id-123")
+	r.ServeHTTP(w, req)
+
+	reqID := w.Header().Get("X-Request-ID")
+	if reqID != "custom-id-123" {
+		t.Errorf("expected forwarded ID 'custom-id-123', got %s", reqID)
+	}
+}
+
+func TestSetup_NotFound(t *testing.T) {
+	r := Setup(&Deps{})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/nonexistent/path", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
