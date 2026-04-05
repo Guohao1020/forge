@@ -306,6 +306,16 @@ func PrometheusFormat() string {
 	for path, count := range httpMetrics.errorsByPath {
 		fmt.Fprintf(&b, "forge_http_errors_by_path{path=%q} %d\n", path, count)
 	}
+
+	b.WriteString("# HELP forge_http_latency_by_path_avg_ms Average latency per path\n")
+	b.WriteString("# TYPE forge_http_latency_by_path_avg_ms gauge\n")
+	for path, latSum := range httpMetrics.latencyByPath {
+		cnt := httpMetrics.latencyCountBy[path]
+		if cnt > 0 {
+			avg := latSum / float64(cnt)
+			fmt.Fprintf(&b, "forge_http_latency_by_path_avg_ms{path=%q} %.2f\n", path, avg)
+		}
+	}
 	httpMetrics.mu.RUnlock()
 
 	// --- Uptime ---
