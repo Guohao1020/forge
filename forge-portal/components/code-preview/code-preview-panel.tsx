@@ -34,12 +34,12 @@ export function CodePreviewPanel({
   const modifyCount = files.filter((f) => f.action === "modify").length;
 
   return (
-    <div className="border border-white/10 rounded-lg bg-[#0A0A12] overflow-hidden">
-      <div className="grid grid-cols-[220px_1fr] h-[400px]">
+    <div className="border border-border rounded-lg bg-white overflow-hidden">
+      <div className="grid grid-cols-[220px_1fr] h-[500px]">
         {/* File tree */}
-        <div className="border-r border-white/10 overflow-hidden">
-          <div className="px-3 py-2 border-b border-white/10 bg-white/[0.02]">
-            <span className="text-xs text-white/40">
+        <div className="border-r border-border overflow-hidden">
+          <div className="px-3 py-2 border-b border-border bg-muted/20">
+            <span className="text-xs text-muted-foreground">
               {files.length} files
               {createCount > 0 && <span className="text-green-400 ml-1.5">+{createCount}</span>}
               {modifyCount > 0 && <span className="text-yellow-400 ml-1.5">~{modifyCount}</span>}
@@ -62,12 +62,12 @@ export function CodePreviewPanel({
 
       {/* Footer */}
       {commitMessage && (
-        <div className="border-t border-white/10 px-4 py-2 flex items-center justify-between bg-white/[0.02]">
-          <div className="flex items-center gap-2 text-xs text-white/40">
+        <div className="border-t border-border px-4 py-2 flex items-center justify-between bg-muted/20">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <GitCommit className="h-3.5 w-3.5" />
             <span className="font-mono">{commitMessage}</span>
           </div>
-          <span className="text-xs text-white/30">
+          <span className="text-xs text-muted-foreground/60">
             {filesChanged || files.length} files
             {linesAdded ? ` (+${linesAdded})` : ""}
             {linesDeleted ? ` (-${linesDeleted})` : ""}

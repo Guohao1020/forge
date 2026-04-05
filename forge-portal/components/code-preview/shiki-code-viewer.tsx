@@ -65,7 +65,7 @@ async function getHighlighter(): Promise<Highlighter> {
 
   highlighterPromise = import("shiki").then(async ({ createHighlighter }) => {
     const instance = await createHighlighter({
-      themes: ["vitesse-dark"],
+      themes: ["vitesse-light"],
       langs: [...SUPPORTED_LANGUAGES],
     });
     highlighterInstance = instance;
@@ -120,7 +120,7 @@ export function ShikiCodeViewer({
 
         const html = highlighter.codeToHtml(content, {
           lang: langToUse,
-          theme: "vitesse-dark",
+          theme: "vitesse-light",
         });
 
         if (!cancelled) {
@@ -141,7 +141,7 @@ export function ShikiCodeViewer({
 
   if (!content) {
     return (
-      <div className="flex items-center justify-center h-full text-white/20 text-sm">
+      <div className="flex items-center justify-center h-full text-muted-foreground/40 text-sm">
         Select a file from the left to view code
       </div>
     );
@@ -152,10 +152,10 @@ export function ShikiCodeViewer({
   return (
     <div className="h-full flex flex-col">
       {fileName && (
-        <div className="flex items-center px-4 py-2 border-b border-white/10 bg-white/[0.02]">
-          <span className="text-xs text-white/50 font-mono">{fileName}</span>
+        <div className="flex items-center px-4 py-2 border-b border-border bg-muted/20">
+          <span className="text-xs text-muted-foreground font-mono">{fileName}</span>
           {detectedLang && detectedLang !== "text" && (
-            <span className="ml-2 text-xs text-white/30">{detectedLang}</span>
+            <span className="ml-2 text-xs text-muted-foreground/60">{detectedLang}</span>
           )}
         </div>
       )}
@@ -166,17 +166,17 @@ export function ShikiCodeViewer({
             <code>
               {lines.map((line, i) => (
                 <div key={i} className="flex">
-                  <span className="inline-block w-10 text-right pr-4 text-white/20 select-none shrink-0">
+                  <span className="inline-block w-10 text-right pr-4 text-muted-foreground/40 select-none shrink-0">
                     {i + 1}
                   </span>
-                  <span className="text-white/70 whitespace-pre">{line}</span>
+                  <span className="text-foreground/70 whitespace-pre">{line}</span>
                 </div>
               ))}
             </code>
           </pre>
         ) : (
           <div
-            className="shiki-container bg-[#0A0A12] text-sm font-mono overflow-auto [&_.shiki]:!bg-[#0A0A12] [&_pre]:p-4 [&_pre]:leading-relaxed [&_code]:![counter-reset:line] [&_code>.line]:[counter-increment:line] [&_code>.line]:before:content-[counter(line)] [&_code>.line]:before:inline-block [&_code>.line]:before:w-10 [&_code>.line]:before:text-right [&_code>.line]:before:pr-4 [&_code>.line]:before:text-white/20 [&_code>.line]:before:select-none [&_code>.line]:before:shrink-0"
+            className="shiki-container bg-white text-sm font-mono overflow-auto [&_.shiki]:!bg-transparent [&_pre]:p-4 [&_pre]:leading-relaxed [&_code]:![counter-reset:line] [&_code>.line]:[counter-increment:line] [&_code>.line]:before:content-[counter(line)] [&_code>.line]:before:inline-block [&_code>.line]:before:w-10 [&_code>.line]:before:text-right [&_code>.line]:before:pr-4 [&_code>.line]:before:text-muted-foreground/40 [&_code>.line]:before:select-none [&_code>.line]:before:shrink-0"
             dangerouslySetInnerHTML={{ __html: highlightedHtml }}
           />
         )}

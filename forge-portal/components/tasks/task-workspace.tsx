@@ -70,7 +70,7 @@ function tryParseOutput<T>(step: TaskStep): T | null {
 
 function RunningState({ message }: { message: string }) {
   return (
-    <div className="flex flex-col items-center justify-center py-20 text-white/40">
+    <div className="flex flex-col items-center justify-center py-20 text-muted-foreground/60">
       <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
       <p className="text-sm">{message}</p>
     </div>
@@ -79,7 +79,7 @@ function RunningState({ message }: { message: string }) {
 
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center py-20 text-white/30">
+    <div className="flex flex-col items-center justify-center py-20 text-muted-foreground/50">
       <FileText className="h-10 w-10 mb-3" />
       <p className="text-sm">选择左侧步骤查看详情</p>
     </div>
@@ -89,7 +89,7 @@ function EmptyState() {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function ComingSoonState() {
   return (
-    <div className="flex flex-col items-center justify-center py-20 text-white/30">
+    <div className="flex flex-col items-center justify-center py-20 text-muted-foreground/50">
       <Rocket className="h-10 w-10 mb-3" />
       <p className="text-sm">即将上线</p>
     </div>
@@ -101,7 +101,7 @@ function TestStepCard({ output }: { output: TestStepOutput }) {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-white/10 bg-card p-5">
+      <div className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-center gap-3 mb-4">
           <FlaskConical className="h-5 w-5 text-primary" />
           <h3 className="text-sm font-medium">测试执行结果</h3>
@@ -127,56 +127,56 @@ function TestStepCard({ output }: { output: TestStepOutput }) {
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {output.total !== undefined && (
-            <div className="rounded-lg bg-white/[0.03] p-3">
-              <p className="text-xs text-white/40 mb-1">总用例</p>
+            <div className="rounded-lg bg-muted/30 p-3">
+              <p className="text-xs text-muted-foreground/60 mb-1">总用例</p>
               <p className="text-lg font-semibold">{output.total}</p>
             </div>
           )}
           {output.passed !== undefined && (
-            <div className="rounded-lg bg-white/[0.03] p-3">
-              <p className="text-xs text-white/40 mb-1">通过</p>
+            <div className="rounded-lg bg-muted/30 p-3">
+              <p className="text-xs text-muted-foreground/60 mb-1">通过</p>
               <p className="text-lg font-semibold text-emerald-400">{output.passed}</p>
             </div>
           )}
           {output.failed !== undefined && output.failed > 0 && (
-            <div className="rounded-lg bg-white/[0.03] p-3">
-              <p className="text-xs text-white/40 mb-1">失败</p>
+            <div className="rounded-lg bg-muted/30 p-3">
+              <p className="text-xs text-muted-foreground/60 mb-1">失败</p>
               <p className="text-lg font-semibold text-red-400">{output.failed}</p>
             </div>
           )}
           {output.framework && (
-            <div className="rounded-lg bg-white/[0.03] p-3">
-              <p className="text-xs text-white/40 mb-1">框架</p>
+            <div className="rounded-lg bg-muted/30 p-3">
+              <p className="text-xs text-muted-foreground/60 mb-1">框架</p>
               <p className="text-lg font-semibold">{output.framework}</p>
             </div>
           )}
           {output.coverage_pct !== undefined && output.coverage_pct > 0 && (
-            <div className="rounded-lg bg-white/[0.03] p-3">
-              <p className="text-xs text-white/40 mb-1">覆盖率</p>
+            <div className="rounded-lg bg-muted/30 p-3">
+              <p className="text-xs text-muted-foreground/60 mb-1">覆盖率</p>
               <p className="text-lg font-semibold">{output.coverage_pct.toFixed(1)}%</p>
             </div>
           )}
           {output.duration_ms !== undefined && output.duration_ms > 0 && (
-            <div className="rounded-lg bg-white/[0.03] p-3">
-              <p className="text-xs text-white/40 mb-1">耗时</p>
+            <div className="rounded-lg bg-muted/30 p-3">
+              <p className="text-xs text-muted-foreground/60 mb-1">耗时</p>
               <p className="text-lg font-semibold">{(output.duration_ms / 1000).toFixed(1)}s</p>
             </div>
           )}
         </div>
         {output.k8s_job && (
-          <div className="mt-3 text-xs text-white/40">
-            <span className="text-white/30">K8s Job:</span>{" "}
-            <span className="font-mono text-white/50">{output.k8s_job}</span>
+          <div className="mt-3 text-xs text-muted-foreground/60">
+            <span className="text-muted-foreground/50">K8s Job:</span>{" "}
+            <span className="font-mono text-muted-foreground">{output.k8s_job}</span>
           </div>
         )}
       </div>
 
       {/* Execution logs (collapsible) */}
       {output.logs && (
-        <div className="rounded-xl border border-white/10 bg-card overflow-hidden">
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
           <button
             onClick={() => setLogsOpen(!logsOpen)}
-            className="flex items-center gap-2 w-full px-4 py-3 text-sm font-medium text-white/70 hover:text-white/90 hover:bg-white/[0.02] transition-colors"
+            className="flex items-center gap-2 w-full px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground/90 hover:bg-muted/30 transition-colors"
           >
             {logsOpen ? (
               <ChevronDown className="h-4 w-4" />
@@ -187,7 +187,7 @@ function TestStepCard({ output }: { output: TestStepOutput }) {
             <span>执行日志</span>
           </button>
           {logsOpen && (
-            <div className="border-t border-white/5 bg-black/60 p-4 max-h-96 overflow-y-auto">
+            <div className="border-t border-border/50 bg-muted/20 p-4 max-h-96 overflow-y-auto">
               <pre className="text-xs font-mono text-emerald-400/80 whitespace-pre-wrap break-all leading-relaxed">
                 {output.logs}
               </pre>
@@ -212,17 +212,17 @@ export function TaskWorkspace({ selectedStep, steps, requirement, streamingToken
     const analysisOutput = tryParseOutput<{ summary?: string }>(selectedStep);
     return (
       <div className="space-y-4">
-        <div className="rounded-xl border border-white/10 bg-card p-5">
+        <div className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-medium mb-2">需求描述</h3>
-          <p className="text-sm text-white/70 whitespace-pre-wrap">{requirement}</p>
+          <p className="text-sm text-muted-foreground whitespace-pre-wrap">{requirement}</p>
         </div>
         {status === "RUNNING" && <RunningState message="AI 正在分析需求..." />}
         {status === "COMPLETED" && (
           <>
             {analysisOutput?.summary && (
-              <div className="rounded-xl border border-white/10 bg-card p-5">
+              <div className="rounded-xl border border-border bg-card p-5">
                 <h3 className="text-sm font-medium mb-2">分析摘要</h3>
-                <p className="text-sm text-white/60 whitespace-pre-wrap">{analysisOutput.summary}</p>
+                <p className="text-sm text-muted-foreground whitespace-pre-wrap">{analysisOutput.summary}</p>
               </div>
             )}
             <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5">
@@ -230,7 +230,7 @@ export function TaskWorkspace({ selectedStep, steps, requirement, streamingToken
                 <MessageSquareCheck className="h-4 w-4 text-emerald-400" />
                 <h3 className="text-sm font-medium text-emerald-400">需求确认</h3>
               </div>
-              <p className="text-sm text-white/50">
+              <p className="text-sm text-muted-foreground">
                 需求已通过对话确认，AI 已理解并准备执行后续步骤。
               </p>
             </div>
@@ -275,7 +275,7 @@ export function TaskWorkspace({ selectedStep, steps, requirement, streamingToken
             </div>
             <div className="space-y-3">
               {output.test_files.map((file, i) => (
-                <div key={i} className="rounded-xl border border-white/10 bg-card overflow-hidden">
+                <div key={i} className="rounded-xl border border-border bg-card overflow-hidden">
                   <ShikiCodeViewer
                     content={file.content}
                     fileName={file.path}
@@ -305,7 +305,6 @@ export function TaskWorkspace({ selectedStep, steps, requirement, streamingToken
       if (output?.files?.length) {
         return (
           <div>
-            <h3 className="text-sm font-medium mb-3">生成代码预览</h3>
             <CodePreviewPanel
               files={output.files}
               commitMessage={output.commit_message}
@@ -352,13 +351,13 @@ export function TaskWorkspace({ selectedStep, steps, requirement, streamingToken
       const output = tryParseOutput<{ branch_name?: string; pr_number?: number; pr_url?: string; preview_url?: string; skipped?: boolean; error?: string }>(selectedStep);
       if (output && !output.skipped) {
         return (
-          <div className="rounded-xl border border-white/10 bg-card p-5">
+          <div className="rounded-xl border border-border bg-card p-5">
             <div className="flex items-center gap-3 mb-3">
               <Rocket className="h-5 w-5 text-emerald-400" />
               <h3 className="text-sm font-medium">部署完成</h3>
             </div>
-            <div className="space-y-2 text-sm text-white/60">
-              {output.branch_name && <p>分支: <span className="text-white/80 font-mono">{output.branch_name}</span></p>}
+            <div className="space-y-2 text-sm text-muted-foreground">
+              {output.branch_name && <p>分支: <span className="text-foreground/80 font-mono">{output.branch_name}</span></p>}
               {output.pr_url && (
                 <p>PR: <a href={output.pr_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">#{output.pr_number}</a></p>
               )}
@@ -371,12 +370,12 @@ export function TaskWorkspace({ selectedStep, steps, requirement, streamingToken
       }
       if (output?.skipped) {
         return (
-          <div className="rounded-xl border border-white/10 bg-card p-5">
+          <div className="rounded-xl border border-border bg-card p-5">
             <div className="flex items-center gap-3 mb-3">
-              <Rocket className="h-5 w-5 text-white/30" />
-              <h3 className="text-sm font-medium text-white/50">部署已跳过</h3>
+              <Rocket className="h-5 w-5 text-muted-foreground/50" />
+              <h3 className="text-sm font-medium text-muted-foreground">部署已跳过</h3>
             </div>
-            {output.error && <p className="text-sm text-white/40">{output.error}</p>}
+            {output.error && <p className="text-sm text-muted-foreground/60">{output.error}</p>}
           </div>
         );
       }
