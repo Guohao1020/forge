@@ -2,6 +2,23 @@
 
 All notable changes to the Forge platform are documented here.
 
+## [0.3.5] — Webhooks + Security + UX Polish
+
+### Added
+- **Webhook System**: HMAC-SHA256 signed HTTP notifications for task events. 3 API endpoints + management UI.
+- **Security Headers**: nosniff, DENY, XSS, HSTS (conditional), Permissions-Policy on all responses.
+- **Request Body Limit**: 10MB max via MaxBytesReader middleware.
+- **CORS Hardening**: Configurable origins via CORS_ORIGINS env, preflight caching.
+- **Version Header**: X-Forge-Version injected via ldflags at build time.
+- **System Info**: GET /api/system/info (version, uptime, runtime).
+- **Error Pages**: Custom 404 and 500 error pages with Forge branding.
+- **Breadcrumb Navigation**: Auto-generated breadcrumbs on dashboard pages.
+- **Loading Bar**: Top-of-page purple progress indicator on route transitions.
+- **Reusable UI**: PageLoading, EmptyState, LoadingBar components.
+- **Deploy Dialog**: Proper version input replacing mock version string.
+- **CI Pipeline**: forge-bot in CI, race detection, version injection in docker.
+- **Slow Request Logging**: Frontend logs API calls > 2s in development.
+
 ## [0.3.2] — Platform Polish & Search
 
 ### Added
