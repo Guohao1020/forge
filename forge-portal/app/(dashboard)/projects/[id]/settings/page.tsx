@@ -19,8 +19,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import Link from "next/link";
 import { api } from "@/lib/api";
-import { AlertTriangle, Lock, Globe, ExternalLink, CheckCircle2, Shield, Activity, TrendingUp } from "lucide-react";
+import { AlertTriangle, Lock, Globe, ExternalLink, CheckCircle2, Shield, Activity, TrendingUp, Webhook, BookOpen } from "lucide-react";
 import { GitHubIcon } from "@/components/icons";
 
 interface TechStack {
@@ -136,7 +137,19 @@ export default function ProjectSettingsPage() {
 
   return (
     <div className="max-w-xl">
-      <h1 className="text-2xl font-semibold tracking-tight mb-6">项目设置</h1>
+      <h1 className="text-2xl font-semibold tracking-tight mb-4">项目设置</h1>
+
+      {/* Sub-page links */}
+      <div className="flex gap-2 mb-6">
+        <Link href={`/projects/${projectId}/settings/specs`}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors">
+          <BookOpen size={12} /> 规范配置
+        </Link>
+        <Link href={`/projects/${projectId}/settings/webhooks`}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors">
+          <Webhook size={12} /> Webhooks
+        </Link>
+      </div>
 
       <form onSubmit={handleSave} className="space-y-5">
         <div className="rounded-xl border border-border bg-card p-5 space-y-4">
