@@ -106,3 +106,106 @@ func TestSSEHubNoSubscribers(t *testing.T) {
 		Data:   "test",
 	})
 }
+
+func TestSSEHubMultipleSubscribers(t *testing.T) {
+	hub := NewSSEHub()
+
+	ch1 := hub.subscribe(10)
+	ch2 := hub.subscribe(10)
+
+	hub.Broadcast(10, TaskProgressEvent{
+		Type:   "progress",
+		TaskID: 10,
+		Data:   "50%",
+	})
+
+	// Both subscribers should receive
+	select {
+	case d := <-ch1:
+		if len(d) == 0 {
+			t.Error("ch1: empty data")
+		}
+	default:
+		t.Error("ch1: expected data")
+	}
+
+	select {
+	case d := <-ch2:
+		if len(d) == 0 {
+			t.Error("ch2: empty data")
+		}
+	default:
+		t.Error("ch2: expected data")
+	}
+
+	hub.unsubscribe(10, ch1)
+	hub.unsubscribe(10, ch2)
+}
+
+func TestSSEHubTaskIsolation(t *testing.T) {
+	hub := NewSSEHub()
+
+	ch1 := hub.subscribe(1)
+	ch2 := hub.subscribe(2)
+
+	// Broadcast to task 1 only
+	hub.Broadcast(1, TaskProgressEvent{
+		Type:   "status",
+		TaskID: 1,
+		Data:   "COMPLETED",
+	})
+
+	// ch1 should receive
+	select {
+	case <-ch1:
+		// good
+	default:
+		t.Error("task 1 subscriber should receive")
+	}
+
+	// ch2 should NOT receive
+	select {
+	case <-ch2:
+		t.Error("task 2 subscriber should NOT receive task 1 events")
+	default:
+		// good — no data
+	}
+
+	hub.unsubscribe(1, ch1)
+	hub.unsubscribe(2, ch2)
+}
+
+func TestSSEHubUnsubscribeCleanup(t *testing.T) {
+	hub := NewSSEHub()
+
+	ch := hub.subscribe(42)
+
+	hub.mu.RLock()
+	subsBefore := len(hub.clients[42])
+	hub.mu.RUnlock()
+
+	if subsBefore != 1 {
+		t.Errorf("expected 1 subscriber before unsubscribe, got %d", subsBefore)
+	}
+
+	hub.unsubscribe(42, ch)
+
+	hub.mu.RLock()
+	subsAfter := len(hub.clients[42])
+	hub.mu.RUnlock()
+
+	if subsAfter != 0 {
+		t.Errorf("expected 0 subscribers after unsubscribe, got %d", subsAfter)
+	}
+}
+
+func TestTaskProgressEventJSON(t *testing.T) {
+	evt := TaskProgressEvent{
+		Type:   "code_token",
+		TaskID: 42,
+		Data:   "func main() {",
+	}
+	if evt.Type != "code_token" {
+		t.Errorf("expected type code_token, got %s", evt.Type)
+	}
+}
