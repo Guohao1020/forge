@@ -56,3 +56,60 @@ func TestInvalidKeyLength(t *testing.T) {
 		t.Fatal("short key should fail")
 	}
 }
+
+func TestEncryptEmptyString(t *testing.T) {
+	key := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	encrypted, err := Encrypt(key, "")
+	if err != nil {
+		t.Fatalf("encrypt empty: %v", err)
+	}
+
+	decrypted, err := Decrypt(key, encrypted)
+	if err != nil {
+		t.Fatalf("decrypt empty: %v", err)
+	}
+	if decrypted != "" {
+		t.Fatalf("expected empty, got %q", decrypted)
+	}
+}
+
+func TestEncryptLargeData(t *testing.T) {
+	key := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	// 10KB of data
+	data := make([]byte, 10240)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+	plaintext := string(data)
+
+	encrypted, err := Encrypt(key, plaintext)
+	if err != nil {
+		t.Fatalf("encrypt large: %v", err)
+	}
+
+	decrypted, err := Decrypt(key, encrypted)
+	if err != nil {
+		t.Fatalf("decrypt large: %v", err)
+	}
+	if decrypted != plaintext {
+		t.Fatal("large data round-trip failed")
+	}
+}
+
+func TestDecryptInvalidBase64(t *testing.T) {
+	key := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	_, err := Decrypt(key, "not-valid-base64!!!")
+	if err == nil {
+		t.Fatal("invalid base64 should fail")
+	}
+}
+
+func TestDecryptTruncatedCiphertext(t *testing.T) {
+	key := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	_, err := Decrypt(key, "YWJj") // "abc" in base64, too short for nonce
+	if err == nil {
+		t.Fatal("truncated ciphertext should fail")
+	}
+}
