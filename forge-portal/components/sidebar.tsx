@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ForgeLogo } from "./forge-logo";
-import { FolderOpen, BookOpen, Settings, Users, KeyRound, BarChart3, Settings2 } from "lucide-react";
+import { FolderOpen, BookOpen, Settings, Users, KeyRound, BarChart3, Settings2, Info } from "lucide-react";
 
 const navItems = [
   { href: "/projects", label: "项目大厅", icon: FolderOpen },
@@ -15,6 +15,7 @@ const settingsItems = [
   { href: "/settings/users", label: "用户管理", icon: Users },
   { href: "/settings/platform", label: "平台配置", icon: Settings2 },
   { href: "/settings/account", label: "账户设置", icon: KeyRound },
+  { href: "/settings/about", label: "关于", icon: Info },
 ];
 
 export function Sidebar() {
