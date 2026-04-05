@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "@/lib/auth";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { LoadingBar } from "@/components/ui/loading-bar";
 import { Toaster } from "sonner";
 import "./globals.css";
 
@@ -38,6 +39,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN" className={`${geistSans.variable} ${geistMono.variable} dark`}>
       <body className="antialiased">
+        <LoadingBar />
         <ErrorBoundary>
           <AuthProvider>{children}</AuthProvider>
         </ErrorBoundary>
