@@ -23,27 +23,38 @@ Users (Web / IM / CLI)
 
 | Service | Stack | Port | Description |
 |---------|-------|------|-------------|
-| forge-core | Go + Gin + PostgreSQL | 8080 | Unified API server (auth, projects, tasks, versions, specs, pipeline) |
-| ai-worker | Python + LangGraph + Temporal | — | AI agents (analyze, plan, test, generate, review, profile scan) |
-| forge-portal | Next.js 15 + shadcn/ui + Tailwind | 3000 | Web workbench ("Deep Space Command Center" dark theme) |
+| forge-core | Go + Gin + PostgreSQL | 8080 | Unified API (~97 endpoints, 22 resource groups) |
+| ai-worker | Python + LangGraph + Temporal | — | AI agents (analyze, plan, test, generate, review, profile) |
+| forge-portal | Next.js 15 + shadcn/ui + Tailwind | 3000 | Web workbench (29 pages, 64 components) |
+| forge-bot | Go + Gin | 8085 | IM bot (DingTalk webhook, 6 card templates) |
+| Prometheus | — | 9090 | Metrics collection |
+| Grafana | — | 3001 | 3 dashboards (health, AI perf, tasks) |
+| Loki + Promtail | — | 3100 | Log aggregation |
 
 ## Quick Start
 
 ```bash
-# Prerequisites: Docker, Go 1.26+, Python 3.9+, Node.js 20+
+# Prerequisites: Docker, Go 1.26+, Python 3.12+, Node.js 20+
 
-# Option 1: Full stack via Docker
-make deploy
+# Start infrastructure (PostgreSQL, Redis, Temporal, Grafana, Prometheus, Loki)
+docker compose -f docker-compose.dev.yml up -d
 
-# Option 2: Local development
-make dev                    # Start infrastructure + all services
-make test                   # Run 190 tests + coverage
-bash scripts/health-check.sh  # Verify everything is healthy
+# Start services
+cd forge-core && go run ./cmd/forge-core    # API :8080
+cd forge-portal && npm run dev              # Frontend :3000
+cd forge-bot && go run ./cmd/forge-bot      # IM bot :8085
+
+# Run tests
+make test                   # 155 Go + 120 Python + TypeScript + ESLint
+make smoke-test             # 16 API endpoint smoke test
+make bench                  # 12 Go benchmarks
 
 # Login: admin / admin123
 # Web UI: http://localhost:3000
 # API: http://localhost:8080
+# Grafana: http://localhost:3001 (admin / forge_grafana_2026)
 # Temporal UI: http://localhost:8233
+# Health: http://localhost:8080/health
 ```
 
 ## Key Features
@@ -59,10 +70,12 @@ bash scripts/health-check.sh  # Verify everything is healthy
 ## Testing
 
 ```bash
-make test          # All 190 tests (76 Go + 103 Python + 11 API)
-make test-go       # Go unit tests only
-make test-python   # Python unit tests with coverage
-make test-api      # API integration tests (needs forge-core running)
+make test          # 155 Go + 120 Python + TypeScript + ESLint
+make test-go       # Go unit tests (155 tests, 18 packages)
+make test-python   # Python tests with coverage (120+ tests)
+make bench         # 12 Go benchmarks
+make smoke-test    # 16 API endpoint checks
+make coverage      # Go coverage report
 ```
 
 ## Documentation
@@ -82,5 +95,19 @@ make test-api      # API integration tests (needs forge-core running)
 
 | Version | Date | Description |
 |---------|------|-------------|
-| v0.2.0 | 2026-04-05 | Phase 2: Harness Engineering (50 commits, 190 tests) |
-| v0.1.0 | 2026-04-02 | Phase 1: Minimum Closed Loop (57 tasks, 7 slices) |
+| v0.4.2 | 2026-04-05 | Phase 3 Complete + Platform Hardening (155 tests, 97 endpoints) |
+| v0.3.0 | 2026-04-05 | Phase 3: RBAC + Metrics + Cost + Constraint Engine |
+| v0.2.0 | 2026-04-05 | Phase 2: Harness Engineering (ContextCache, Agent Loop, Tools) |
+| v0.1.0 | 2026-04-02 | Phase 1: Minimum Closed Loop |
+
+## Platform Stats
+
+```
+API Endpoints:    ~97 across 22 resource groups
+Go Tests:         155 (0 failures) + 12 benchmarks
+Frontend:         29 pages, 64 components
+Middleware:       11 layers (security, rate limit, timeout, metrics, etc.)
+Docker Services:  10 (infra + observability)
+Migrations:       21
+Release Tags:     12
+```
