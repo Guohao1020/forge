@@ -48,6 +48,9 @@ coverage:
 	cd forge-core && go tool cover -func=coverage.out | tail -1
 	@echo "Full report: cd forge-core && go tool cover -html=coverage.out"
 
+test-summary:
+	bash scripts/test-summary.sh
+
 # === Build ===
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
