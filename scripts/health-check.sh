@@ -29,16 +29,32 @@ check "Temporal" "docker exec forge-temporal tctl cluster health 2>/dev/null || 
 
 echo ""
 echo "Services:"
-check "forge-core API" "curl -s http://localhost:8080/api/auth/me 2>/dev/null | grep -q '登录\|code'"
+check "forge-core health" "curl -sf http://localhost:8080/health"
+check "forge-core metrics" "curl -sf http://localhost:8080/metrics | grep -q forge_http"
+check "forge-core system" "curl -sf http://localhost:8080/api/system/info | grep -q version"
 check "forge-core login" "curl -s -X POST http://localhost:8080/api/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"admin\",\"password\":\"admin123\"}' 2>/dev/null | grep -q token"
 
 echo ""
-echo "Frontend (optional — may not be running):"
+echo "Observability (optional):"
+check "Grafana" "curl -sf http://localhost:3001/api/health 2>/dev/null"
+check "Prometheus" "curl -sf http://localhost:9090/-/ready 2>/dev/null"
+
+echo ""
+echo "Frontend (optional):"
 if curl -s http://localhost:3000 -o /dev/null -w '%{http_code}' 2>/dev/null | grep -qE '200|307'; then
     echo "  OK: forge-portal"
     PASS=$((PASS + 1))
 else
-    echo "  SKIP: forge-portal (not running, start with: npm run dev)"
+    echo "  SKIP: forge-portal (start with: cd forge-portal && npm run dev)"
+fi
+
+echo ""
+echo "IM Bot (optional):"
+if curl -sf http://localhost:8085/health 2>/dev/null | grep -q ok; then
+    echo "  OK: forge-bot"
+    PASS=$((PASS + 1))
+else
+    echo "  SKIP: forge-bot (start with: cd forge-bot && go run ./cmd/forge-bot)"
 fi
 
 echo ""
