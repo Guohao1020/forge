@@ -51,6 +51,7 @@ async function request<T>(
     ? setTimeout(() => controller.abort(), timeout)
     : undefined;
 
+  const startTime = performance.now();
   let res: Response;
   try {
     res = await fetch(`${BASE_URL}${path}`, {
@@ -60,12 +61,22 @@ async function request<T>(
     });
   } catch (err) {
     if (timeoutId) clearTimeout(timeoutId);
+    const duration = Math.round(performance.now() - startTime);
     if (err instanceof DOMException && err.name === "AbortError") {
+      if (process.env.NODE_ENV === "development") {
+        console.warn(`[API] ${options.method || "GET"} ${path} TIMEOUT ${duration}ms`);
+      }
       throw new ApiError(-2, "请求超时，AI 分析可能需要更长时间。请刷新页面查看对话历史。");
     }
     throw err;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+  }
+
+  // Log slow requests in development
+  const duration = Math.round(performance.now() - startTime);
+  if (process.env.NODE_ENV === "development" && duration > 2000) {
+    console.warn(`[API] ${options.method || "GET"} ${path} SLOW ${duration}ms (${res.status})`);
   }
 
   const text = await res.text();
