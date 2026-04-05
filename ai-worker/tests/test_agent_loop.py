@@ -200,3 +200,47 @@ class TestAgentLoopWithTools:
 
         assert result.parse_failed is True
         assert result.structured == {}
+
+
+class TestExtractJSON:
+    """Tests for BaseAgent._parse_json edge cases."""
+
+    def setup_method(self):
+        router = MagicMock()
+        self.agent = BaseAgent(router)
+
+    def test_direct_json(self):
+        result = self.agent._parse_json('{"key": "value"}')
+        assert result == {"key": "value"}
+
+    def test_markdown_code_block(self):
+        text = 'Some explanation\n```json\n{"plan": "test"}\n```\nMore text'
+        result = self.agent._parse_json(text)
+        assert result == {"plan": "test"}
+
+    def test_greedy_brace_match(self):
+        text = 'Here is the output: {"result": 42} and some trailing text'
+        result = self.agent._parse_json(text)
+        assert result == {"result": 42}
+
+    def test_no_json_found(self):
+        result = self.agent._parse_json("This has no JSON at all")
+        assert result == {}
+
+    def test_invalid_json_in_braces(self):
+        result = self.agent._parse_json("{not valid json}")
+        assert result == {}
+
+    def test_nested_json(self):
+        text = '{"outer": {"inner": [1, 2, 3]}}'
+        result = self.agent._parse_json(text)
+        assert result["outer"]["inner"] == [1, 2, 3]
+
+    def test_empty_string(self):
+        result = self.agent._parse_json("")
+        assert result == {}
+
+    def test_code_block_without_json_tag(self):
+        text = '```\n{"data": true}\n```'
+        result = self.agent._parse_json(text)
+        assert result == {"data": True}
