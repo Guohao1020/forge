@@ -1,6 +1,6 @@
 # Forge API Reference
 
-> Auto-generated from router.go — 115 commits, 2026-04-05
+> Auto-generated from router.go — v0.4.2, 2026-04-05
 
 ## Authentication
 
@@ -56,6 +56,7 @@
 | DELETE | `/api/projects/:id/star` | Yes | Any | Unstar project |
 | POST | `/api/projects/:id/sync` | Yes | Any | Sync to GitHub |
 | GET | `/api/projects/:id/stats` | Yes | Any | Project stats overview |
+| GET | `/api/projects/:id/export` | Yes | PROJECT_ADMIN+ | Export project data (JSON) |
 | POST | `/api/projects/:id/detect` | Yes | Any | Detect tech stack |
 
 ## Code Browsing
@@ -200,7 +201,7 @@
 | POST | `/api/projects/:id/webhooks` | Yes | PROJECT_ADMIN+ | Register webhook |
 | DELETE | `/api/projects/:id/webhooks/:webhookId` | Yes | PROJECT_ADMIN+ | Delete webhook |
 
-**Total: ~93 endpoints across 21 resource groups**
+**Total: ~97 endpoints across 22 resource groups**
 
 ## Middleware Stack
 
