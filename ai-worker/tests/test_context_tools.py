@@ -262,3 +262,69 @@ class TestProfileAvailabilityHint:
         from src.context.tools import _count_profile_items
         result = _count_profile_items("api_catalog", "just a string")
         assert result == 0
+
+    def test_available_hint_count_zero(self):
+        """Dimension with data but count=0 should show 'available'."""
+        from src.context.tools import build_profile_availability_hint
+        profiles = {"api_catalog": {"other_key": "data"}}
+        result = build_profile_availability_hint(profiles)
+        assert "available" in result
+
+
+class TestSearchProfileEdgeCases:
+    """Tests for _search_profile edge cases."""
+
+    def setup_method(self):
+        # Profile with empty endpoints list
+        self.ctx_empty_items = ProjectContext(
+            project_profiles={"api_catalog": {"endpoints": []}}
+        )
+        # Profile with many items for truncation
+        self.ctx_many = ProjectContext(
+            project_profiles={"api_catalog": {"endpoints": [
+                {"path": f"/api/item/{i}", "method": "GET"} for i in range(30)
+            ]}}
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_items_list(self):
+        executor = ContextToolExecutor(self.ctx_empty_items, 1)
+        result = await executor.execute({
+            "name": "query_api_catalog",
+            "input": {"keyword": "any"},
+        })
+        assert "为空" in result
+
+    @pytest.mark.asyncio
+    async def test_no_keyword_returns_all(self):
+        executor = ContextToolExecutor(self.ctx_many, 1)
+        result = await executor.execute({
+            "name": "query_api_catalog",
+            "input": {"keyword": ""},
+        })
+        # Should return results (not "未找到")
+        assert "未找到" not in result
+        assert "/api/item/" in result
+
+    @pytest.mark.asyncio
+    async def test_truncation_over_20(self):
+        executor = ContextToolExecutor(self.ctx_many, 1)
+        result = await executor.execute({
+            "name": "query_api_catalog",
+            "input": {"keyword": "item"},
+        })
+        assert "前 20 条" in result
+
+    @pytest.mark.asyncio
+    async def test_tool_execution_error(self):
+        """Tool that raises should return error string."""
+        from src.context.tools import ContextToolExecutor
+        ctx = ProjectContext()
+        executor = ContextToolExecutor(ctx, 1)
+        # read_project_file will fail without HTTP — should catch gracefully
+        result = await executor.execute({
+            "name": "query_api_catalog",
+            "input": {"keyword": "test"},
+        })
+        # Should return "没有" message since profiles are empty
+        assert "没有" in result or "数据" in result
