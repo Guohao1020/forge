@@ -170,6 +170,7 @@ func Setup(deps *Deps) *gin.Engine {
 			protected.POST("/projects/:id/star", deps.ProjectHandler.Star)
 			protected.DELETE("/projects/:id/star", deps.ProjectHandler.Unstar)
 			protected.GET("/projects/:id/stats", deps.ProjectHandler.GetStats)
+			protected.GET("/projects/:id/export", middleware.RequireRole(middleware.RoleProjectAdmin), deps.ProjectHandler.ExportProject)
 			protected.POST("/projects/:id/sync", deps.ProjectHandler.SyncToRemote)
 			protected.POST("/projects/:id/detect", deps.ProjectHandler.DetectTechStack)
 
