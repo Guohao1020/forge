@@ -122,6 +122,17 @@ class TestTestWriterAgent:
         prompt = agent._build_system_prompt(ctx)
         assert "test" in prompt.lower()
 
+    def test_system_prompt_with_project_context(self):
+        agent = TestWriterAgent(MagicMock())
+        ctx = ProjectContext(
+            project_name="forge",
+            project_description="AI platform",
+            tech_stack={"languages": ["Go"], "frameworks": ["Gin"]},
+        )
+        prompt = agent._build_system_prompt(ctx)
+        assert "forge" in prompt
+        assert "Go" in prompt
+
     @pytest.mark.asyncio
     async def test_run_returns_test_files(self):
         router = MagicMock(spec=ModelRouter)
