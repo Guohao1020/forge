@@ -24,7 +24,7 @@ const ACTION_CONFIG: Record<string, { icon: typeof FileCode; color: string; labe
 function languageBadge(lang?: string) {
   if (!lang) return null;
   return (
-    <span className="px-1.5 py-0.5 rounded text-[10px] bg-white/5 text-white/40 border border-white/5 font-mono">
+    <span className="px-1.5 py-0.5 rounded text-[10px] bg-muted/50 text-muted-foreground/60 border border-border/50 font-mono">
       {lang}
     </span>
   );
@@ -33,14 +33,14 @@ function languageBadge(lang?: string) {
 export function ChangeFileList({ files, selectedPath, onSelectFile }: ChangeFileListProps) {
   if (files.length === 0) {
     return (
-      <div className="text-center py-8 text-sm text-white/30">
+      <div className="text-center py-8 text-sm text-muted-foreground/50">
         暂无变更文件
       </div>
     );
   }
 
   return (
-    <div className="divide-y divide-white/5">
+    <div className="divide-y divide-border/50">
       {files.map((file) => {
         const config = ACTION_CONFIG[file.action] || ACTION_CONFIG.create;
         const Icon = config.icon;
@@ -50,16 +50,16 @@ export function ChangeFileList({ files, selectedPath, onSelectFile }: ChangeFile
           <button
             key={file.path}
             onClick={() => onSelectFile(file.path)}
-            className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.03] ${
+            className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/30 ${
               isSelected ? "bg-primary/5 border-l-2 border-l-primary" : ""
             }`}
           >
             <Icon className={`h-4 w-4 shrink-0 ${config.color}`} />
-            <span className="flex-1 min-w-0 text-sm text-white/70 font-mono truncate">
+            <span className="flex-1 min-w-0 text-sm text-muted-foreground font-mono truncate">
               {file.path}
             </span>
             {languageBadge(file.language)}
-            <span className="text-xs text-white/30 shrink-0">
+            <span className="text-xs text-muted-foreground/60 shrink-0">
               {file.linesCount} 行
             </span>
           </button>

@@ -37,7 +37,7 @@ export function ActivityFeed() {
     return (
       <div className="space-y-2">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-12 rounded-lg bg-white/5 animate-pulse" />
+          <div key={i} className="h-12 rounded-lg bg-muted/50 animate-pulse" />
         ))}
       </div>
     );
@@ -62,7 +62,7 @@ export function ActivityFeed() {
           <Link
             key={idx}
             href={href}
-            className="flex items-start gap-3 px-3 py-2 rounded-lg hover:bg-white/5 transition-colors group"
+            className="flex items-start gap-3 px-3 py-2 rounded-lg hover:bg-muted/50 transition-colors group"
           >
             <Icon className={`h-4 w-4 mt-0.5 shrink-0 ${cfg.color}`} />
             <div className="flex-1 min-w-0">
@@ -71,11 +71,11 @@ export function ActivityFeed() {
               </p>
               <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5">
                 <span>{item.projectName}</span>
-                <span className="text-white/10">|</span>
+                <span className="text-muted-foreground/30">|</span>
                 <span>{formatRelativeTime(item.timestamp)}</span>
               </div>
             </div>
-            <span className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] ${cfg.color} bg-white/5`}>
+            <span className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] ${cfg.color} bg-muted/50`}>
               {cfg.label}
             </span>
           </Link>

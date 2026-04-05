@@ -51,20 +51,20 @@ function countLines(content: string): number {
 function LoadingSkeleton() {
   return (
     <div className="space-y-4 animate-pulse">
-      <div className="rounded-xl border border-white/10 bg-card p-5">
-        <div className="h-5 w-3/4 bg-white/5 rounded" />
+      <div className="rounded-xl border border-border bg-card p-5">
+        <div className="h-5 w-3/4 bg-muted/50 rounded" />
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="rounded-xl border border-white/10 bg-card p-4">
-            <div className="h-3 w-16 bg-white/5 rounded mb-3" />
-            <div className="h-7 w-12 bg-white/5 rounded" />
+          <div key={i} className="rounded-xl border border-border bg-card p-4">
+            <div className="h-3 w-16 bg-muted/50 rounded mb-3" />
+            <div className="h-7 w-12 bg-muted/50 rounded" />
           </div>
         ))}
       </div>
-      <div className="rounded-xl border border-white/10 bg-card p-4 space-y-3">
+      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
         {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="h-10 bg-white/5 rounded" />
+          <div key={i} className="h-10 bg-muted/50 rounded" />
         ))}
       </div>
     </div>
@@ -189,23 +189,23 @@ export default function ChangesPage() {
         />
 
         {/* Layer 2: File list */}
-        <div className="rounded-xl border border-white/10 bg-card overflow-hidden">
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
           <button
             onClick={() => setFilesExpanded(!filesExpanded)}
-            className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition-colors"
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/20 transition-colors"
           >
             <div className="flex items-center gap-2">
               {filesExpanded ? (
-                <ChevronDown className="h-4 w-4 text-white/40" />
+                <ChevronDown className="h-4 w-4 text-muted-foreground/60" />
               ) : (
-                <ChevronRight className="h-4 w-4 text-white/40" />
+                <ChevronRight className="h-4 w-4 text-muted-foreground/60" />
               )}
-              <span className="text-sm font-medium text-white/70">变更文件</span>
-              <span className="text-xs text-white/30">({files.length})</span>
+              <span className="text-sm font-medium text-muted-foreground">变更文件</span>
+              <span className="text-xs text-muted-foreground/60">({files.length})</span>
             </div>
           </button>
           {filesExpanded && (
-            <div className="border-t border-white/5">
+            <div className="border-t border-border/50">
               <ChangeFileList
                 files={files}
                 selectedPath={selectedPath}

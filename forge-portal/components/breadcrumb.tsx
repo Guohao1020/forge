@@ -60,7 +60,7 @@ export function Breadcrumb() {
       </Link>
       {crumbs.map((crumb, i) => (
         <span key={crumb.href} className="flex items-center gap-1">
-          <ChevronRight className="h-3 w-3 text-white/10" />
+          <ChevronRight className="h-3 w-3 text-muted-foreground/30" />
           {i === crumbs.length - 1 ? (
             <span className="text-foreground">{crumb.label}</span>
           ) : (

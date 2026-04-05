@@ -123,7 +123,7 @@ export default function CodeBrowserPage() {
           <p className="text-sm text-muted-foreground max-w-md text-center">
             请先在项目设置中关联 GitHub 仓库，或检查仓库访问权限
           </p>
-          <p className="text-xs text-white/20 mt-2">{error}</p>
+          <p className="text-xs text-muted-foreground/40 mt-2">{error}</p>
         </div>
       </div>
     );
@@ -132,9 +132,9 @@ export default function CodeBrowserPage() {
   return (
     <div className="flex flex-col h-full -m-6">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-white/10 bg-white/[0.02] shrink-0">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-muted/20 shrink-0">
         <div className="flex items-center gap-3">
-          <Code2 className="h-5 w-5 text-[#8B5CF6]" />
+          <Code2 className="h-5 w-5 text-accent" />
           <h1 className="text-lg font-semibold">代码浏览</h1>
         </div>
         <div className="flex items-center gap-2">
@@ -150,12 +150,12 @@ export default function CodeBrowserPage() {
       {/* Split pane: tree + code */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left: file tree */}
-        <div className="w-[260px] shrink-0 border-r border-white/10 overflow-y-auto bg-white/[0.01]">
+        <div className="w-[260px] shrink-0 border-r border-border overflow-y-auto bg-muted/10">
           {/* 仓库信息栏 */}
           {!treeLoading && files.length > 0 && (
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10 text-xs text-white/40">
-              <GitBranch className="h-3 w-3 text-[#8B5CF6]" />
-              <span className="font-mono text-white/60">{currentBranch}</span>
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-border text-xs text-muted-foreground/60">
+              <GitBranch className="h-3 w-3 text-accent" />
+              <span className="font-mono text-muted-foreground">{currentBranch}</span>
               <span className="mx-1">·</span>
               <FileCode className="h-3 w-3" />
               <span>{files.length} 个文件</span>
@@ -163,7 +163,7 @@ export default function CodeBrowserPage() {
           )}
           {treeLoading ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-5 w-5 animate-spin text-white/20" />
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/40" />
             </div>
           ) : (
             <RepoFileTree
@@ -185,7 +185,7 @@ export default function CodeBrowserPage() {
           <div className="flex-1 overflow-auto">
             {fileLoading ? (
               <div className="flex items-center justify-center h-full">
-                <Loader2 className="h-5 w-5 animate-spin text-white/20" />
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/40" />
               </div>
             ) : selectedPath ? (
               <ShikiCodeViewer
@@ -193,7 +193,7 @@ export default function CodeBrowserPage() {
                 fileName={selectedPath}
               />
             ) : (
-              <div className="flex flex-col items-center justify-center h-full text-white/20 gap-2">
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground/40 gap-2">
                 <Code2 className="h-8 w-8" />
                 <span className="text-sm">
                   从左侧文件树选择文件查看代码

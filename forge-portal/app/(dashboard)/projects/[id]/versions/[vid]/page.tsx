@@ -61,8 +61,8 @@ export default function VersionDetailPage() {
   if (loading || !detail) {
     return (
       <div className="space-y-4">
-        <div className="h-24 rounded-lg bg-white/5 animate-pulse" />
-        <div className="h-48 rounded-lg bg-white/5 animate-pulse" />
+        <div className="h-24 rounded-lg bg-muted/50 animate-pulse" />
+        <div className="h-48 rounded-lg bg-muted/50 animate-pulse" />
       </div>
     );
   }
@@ -97,7 +97,7 @@ export default function VersionDetailPage() {
             <button
               onClick={handleRelease}
               disabled={releasing}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-500 transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 bg-success text-success-foreground rounded-lg text-sm hover:bg-green-500 transition-colors disabled:opacity-50"
             >
               <Tag size={16} />
               {releasing ? "发布中..." : "发布版本"}
@@ -199,7 +199,7 @@ function TaskRow({
           ) : isWaiting ? (
             <Clock size={16} className="text-purple-400" />
           ) : (
-            <div className="w-4 h-4 rounded-full border-2 border-white/20" />
+            <div className="w-4 h-4 rounded-full border-2 border-border" />
           )}
           <span className="text-sm text-foreground">{task.title}</span>
 

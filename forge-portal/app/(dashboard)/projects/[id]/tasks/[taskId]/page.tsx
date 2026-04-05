@@ -452,7 +452,7 @@ export default function TaskDetailPage() {
   if (loading) {
     return (
       <div className="flex h-[calc(100vh-64px)]">
-        <div className="w-[240px] shrink-0 border-r border-white/10 p-4 space-y-4">
+        <div className="w-[240px] shrink-0 border-r border-border p-4 space-y-4">
           <div className="h-6 w-32 rounded bg-card animate-pulse" />
           <div className="space-y-3 mt-6">
             {[1, 2, 3, 4].map((i) => (
@@ -481,7 +481,7 @@ export default function TaskDetailPage() {
   return (
     <div className="flex h-[calc(100vh-64px)]">
       {/* Column 1: Step Timeline */}
-      <div className="w-[240px] shrink-0 border-r border-white/10 overflow-y-auto">
+      <div className="w-[240px] shrink-0 border-r border-border overflow-y-auto">
         <div className="p-4">
           <Link
             href={`/projects/${projectId}`}
@@ -526,7 +526,7 @@ export default function TaskDetailPage() {
           </div>
 
           <div className="mb-2">
-            <h2 className="text-xs text-white/30 uppercase tracking-wide mb-3">执行步骤</h2>
+            <h2 className="text-xs text-muted-foreground/60 uppercase tracking-wide mb-3">执行步骤</h2>
             <StepTimeline
               steps={steps || []}
               selectedStepId={selectedStep?.id}
@@ -542,7 +542,7 @@ export default function TaskDetailPage() {
         /* --- CONVERSATION PHASE: Chat + Action Panel --- */
         <div className="flex-1 flex min-w-0">
           {/* Column 2: Chat messages */}
-          <div className="flex-1 min-w-[300px] border-r border-white/10">
+          <div className="flex-1 min-w-[300px] border-r border-border">
             <ChatPanel
               messages={messages}
               onSend={handleChatSend}
@@ -558,7 +558,7 @@ export default function TaskDetailPage() {
           </div>
 
           {/* Column 3: Action Panel */}
-          <div className="w-[420px] shrink-0 bg-white/[0.01]">
+          <div className="w-[420px] shrink-0 bg-muted/10">
             <ActionPanel
               phase={phase === "error" ? "error" : phase === "confirming" ? "confirming" : phase === "plan_review" ? "plan_review" : phase === "planning" ? "planning" : "analyzing"}
               isLoading={chatLoading}

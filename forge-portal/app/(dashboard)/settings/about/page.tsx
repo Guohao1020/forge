@@ -33,7 +33,7 @@ export default function AboutPage() {
     return (
       <div className="space-y-4 max-w-lg">
         {[1, 2, 3].map(i => (
-          <div key={i} className="h-20 rounded-xl bg-white/5 animate-pulse" />
+          <div key={i} className="h-20 rounded-xl bg-muted/50 animate-pulse" />
         ))}
       </div>
     );
@@ -112,7 +112,7 @@ function InfoItem({
   value: string;
 }) {
   return (
-    <div className="flex items-center gap-2.5 bg-white/5 rounded-lg px-3 py-2">
+    <div className="flex items-center gap-2.5 bg-muted/50 rounded-lg px-3 py-2">
       <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
       <div>
         <p className="text-[10px] text-muted-foreground">{label}</p>
@@ -133,7 +133,7 @@ function StatusRow({
 }) {
   const isUp = status === "up";
   return (
-    <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-white/5">
+    <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/50">
       <div className="flex items-center gap-2">
         <Icon className="h-4 w-4 text-muted-foreground" />
         <span className="text-sm text-foreground">{label}</span>
@@ -148,7 +148,7 @@ function StatusRow({
 
 function StatItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between px-3 py-1.5 rounded bg-white/5">
+    <div className="flex items-center justify-between px-3 py-1.5 rounded bg-muted/50">
       <span className="text-muted-foreground">{label}</span>
       <span className="text-foreground font-mono">{value}</span>
     </div>

@@ -29,7 +29,7 @@ export function StreamingThinking({ text, isComplete, onCollapse }: StreamingThi
     return (
       <button
         onClick={() => setExpanded(true)}
-        className="flex items-center gap-1.5 text-xs text-white/20 hover:text-white/40 transition-colors mb-2"
+        className="flex items-center gap-1.5 text-xs text-muted-foreground/40 hover:text-muted-foreground/60 transition-colors mb-2"
       >
         <ChevronRight size={12} />
         <Brain size={12} />
@@ -43,14 +43,14 @@ export function StreamingThinking({ text, isComplete, onCollapse }: StreamingThi
       {isComplete && (
         <button
           onClick={() => { setExpanded(false); onCollapse?.(); }}
-          className="flex items-center gap-1.5 text-xs text-white/20 hover:text-white/40 transition-colors mb-1"
+          className="flex items-center gap-1.5 text-xs text-muted-foreground/40 hover:text-muted-foreground/60 transition-colors mb-1"
         >
           <ChevronDown size={12} />
           <Brain size={12} />
           <span>AI 思考过程</span>
         </button>
       )}
-      <div className={`bg-white/[0.02] border border-white/5 rounded-lg px-3 py-2 ${
+      <div className={`bg-muted/20 border border-border/50 rounded-lg px-3 py-2 ${
         isComplete ? "opacity-50" : ""
       }`}>
         {!isComplete && (
@@ -59,7 +59,7 @@ export function StreamingThinking({ text, isComplete, onCollapse }: StreamingThi
             <span className="text-[10px] text-purple-400/60 uppercase tracking-wider">思考中</span>
           </div>
         )}
-        <p className="text-xs text-white/30 font-mono whitespace-pre-wrap leading-relaxed">
+        <p className="text-xs text-muted-foreground/60 font-mono whitespace-pre-wrap leading-relaxed">
           {text}
           {!isComplete && <span className="animate-pulse">▊</span>}
         </p>

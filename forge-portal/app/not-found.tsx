@@ -11,7 +11,7 @@ export default function NotFound() {
         </p>
         <Link
           href="/projects"
-          className="inline-flex items-center px-6 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
+          className="inline-flex items-center px-6 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
         >
           返回项目大厅
         </Link>

@@ -65,7 +65,7 @@ export default function UsersPage() {
     return (
       <div className="space-y-3">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-16 rounded-lg bg-white/5 animate-pulse" />
+          <div key={i} className="h-16 rounded-lg bg-muted/50 animate-pulse" />
         ))}
       </div>
     );
@@ -80,7 +80,7 @@ export default function UsersPage() {
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 transition-colors"
         >
           <Plus size={16} />
           添加用户
@@ -97,7 +97,7 @@ export default function UsersPage() {
                 value={newUsername}
                 onChange={(e) => setNewUsername(e.target.value)}
                 placeholder="username"
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-white/30 focus:outline-none focus:border-primary/50"
+                className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50"
                 autoFocus
               />
             </div>
@@ -108,7 +108,7 @@ export default function UsersPage() {
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="至少6位"
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-white/30 focus:outline-none focus:border-primary/50"
+                className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50"
               />
             </div>
           </div>
@@ -120,7 +120,7 @@ export default function UsersPage() {
                 value={newDisplayName}
                 onChange={(e) => setNewDisplayName(e.target.value)}
                 placeholder="可选"
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-white/30 focus:outline-none focus:border-primary/50"
+                className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50"
               />
             </div>
             <div>
@@ -128,7 +128,7 @@ export default function UsersPage() {
               <select
                 value={newRole}
                 onChange={(e) => setNewRole(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
               >
                 {ALL_ROLES.map((r) => (
                   <option key={r} value={r}>
@@ -143,7 +143,7 @@ export default function UsersPage() {
             <button
               onClick={handleCreate}
               disabled={creating || !newUsername.trim() || !newPassword.trim()}
-              className="px-4 py-1.5 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50"
+              className="px-4 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50"
             >
               {creating ? "创建中..." : "创建用户"}
             </button>
@@ -174,7 +174,7 @@ export default function UsersPage() {
               <select
                 value={user.roles[0] || "VIEWER"}
                 onChange={(e) => handleRoleChange(user.id, e.target.value)}
-                className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-muted-foreground focus:outline-none"
+                className="bg-muted/50 border border-border rounded px-2 py-1 text-xs text-muted-foreground focus:outline-none"
               >
                 {ALL_ROLES.map((r) => (
                   <option key={r} value={r}>{ROLE_CONFIG[r]?.label || r}</option>

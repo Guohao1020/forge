@@ -91,7 +91,7 @@ export function DagVisualization({ tasks, touchedFiles, onTaskClick }: DagVisual
           {/* Level indicator */}
           {levelIdx > 0 && (
             <div className="flex justify-center py-1">
-              <div className="w-px h-4 bg-white/10" />
+              <div className="w-px h-4 bg-border" />
             </div>
           )}
 
@@ -142,7 +142,7 @@ export function DagVisualization({ tasks, touchedFiles, onTaskClick }: DagVisual
 
       {/* Touched files summary */}
       {touchedFiles && (
-        <div className="mt-4 pt-3 border-t border-white/5">
+        <div className="mt-4 pt-3 border-t border-border/50">
           <p className="text-[10px] text-muted-foreground mb-1.5 uppercase tracking-wider">
             涉及文件
           </p>

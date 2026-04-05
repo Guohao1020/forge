@@ -19,10 +19,10 @@ export function FileBreadcrumb({
   const segments = path ? path.split("/") : [];
 
   return (
-    <div className="flex items-center gap-1 px-4 py-2 text-sm border-b border-white/10 bg-white/[0.02] overflow-x-auto">
+    <div className="flex items-center gap-1 px-4 py-2 text-sm border-b border-border bg-muted/20 overflow-x-auto">
       <button
         onClick={() => onNavigate("")}
-        className="text-white/50 hover:text-[#8B5CF6] transition-colors shrink-0"
+        className="text-muted-foreground hover:text-accent transition-colors shrink-0"
       >
         {repoName}
       </button>
@@ -31,13 +31,13 @@ export function FileBreadcrumb({
         const isLast = i === segments.length - 1;
         return (
           <span key={partialPath} className="flex items-center gap-1 shrink-0">
-            <ChevronRight className="h-3 w-3 text-white/20" />
+            <ChevronRight className="h-3 w-3 text-muted-foreground/40" />
             {isLast ? (
-              <span className="text-white/80 font-medium">{segment}</span>
+              <span className="text-foreground/80 font-medium">{segment}</span>
             ) : (
               <button
                 onClick={() => onNavigate(partialPath)}
-                className="text-white/50 hover:text-[#8B5CF6] transition-colors"
+                className="text-muted-foreground hover:text-accent transition-colors"
               >
                 {segment}
               </button>

@@ -81,7 +81,7 @@ export default function QualityPage() {
     return (
       <div className="space-y-4 max-w-4xl">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-24 rounded-xl bg-white/5 animate-pulse" />
+          <div key={i} className="h-24 rounded-xl bg-muted/50 animate-pulse" />
         ))}
       </div>
     );
@@ -100,7 +100,7 @@ export default function QualityPage() {
         <button
           onClick={handleScan}
           disabled={scanning}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
           <Activity size={16} />
           {scanning ? "扫描中..." : "运行扫描"}
@@ -136,7 +136,7 @@ export default function QualityPage() {
             {Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => {
               const count = issues.filter(i => i.category === key).length;
               return (
-                <div key={key} className="bg-white/5 rounded-lg border border-white/10 px-3 py-2 text-center">
+                <div key={key} className="bg-muted/50 rounded-lg border border-border px-3 py-2 text-center">
                   <p className="text-lg font-bold text-foreground">{count}</p>
                   <p className="text-[10px] text-muted-foreground">{cfg.label}</p>
                 </div>
@@ -154,14 +154,14 @@ export default function QualityPage() {
             {issues.slice(0, 50).map((issue, idx) => {
               const sevCfg = SEVERITY_CONFIG[issue.severity] || SEVERITY_CONFIG.info;
               return (
-                <div key={idx} className="flex items-start gap-3 px-3 py-2 rounded-lg bg-white/5 border border-white/5">
+                <div key={idx} className="flex items-start gap-3 px-3 py-2 rounded-lg bg-muted/50 border border-border/50">
                   <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] border ${sevCfg.color}`}>
                     {sevCfg.label}
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-foreground">{issue.message}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {issue.file}:{issue.line} <span className="text-white/20 mx-1">|</span> {issue.rule}
+                      {issue.file}:{issue.line} <span className="text-muted-foreground/40 mx-1">|</span> {issue.rule}
                     </p>
                   </div>
                 </div>
@@ -177,7 +177,7 @@ export default function QualityPage() {
           <h2 className="text-sm font-medium text-foreground">扫描历史</h2>
           <div className="space-y-1.5">
             {history.map((s) => (
-              <div key={s.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-white/5">
+              <div key={s.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/50">
                 <div className="flex items-center gap-3">
                   <span className={`text-lg font-bold ${
                     s.score >= 80 ? "text-green-400" : s.score >= 60 ? "text-yellow-400" : "text-red-400"
@@ -222,7 +222,7 @@ export default function QualityPage() {
               <button
                 onClick={() => setConfigEnabled(!configEnabled)}
                 className={`relative w-10 h-5 rounded-full transition-colors ${
-                  configEnabled ? "bg-primary" : "bg-white/20"
+                  configEnabled ? "bg-primary" : "bg-muted-foreground/30"
                 }`}
               >
                 <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
@@ -236,7 +236,7 @@ export default function QualityPage() {
               <select
                 value={configSchedule}
                 onChange={(e) => setConfigSchedule(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
               >
                 <option value="daily">每天</option>
                 <option value="weekly">每周</option>
@@ -252,7 +252,7 @@ export default function QualityPage() {
               <button
                 onClick={() => setConfigAutoFix(!configAutoFix)}
                 className={`relative w-10 h-5 rounded-full transition-colors ${
-                  configAutoFix ? "bg-primary" : "bg-white/20"
+                  configAutoFix ? "bg-primary" : "bg-muted-foreground/30"
                 }`}
               >
                 <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
@@ -278,7 +278,7 @@ export default function QualityPage() {
                     setConfigSaving(false);
                   }
                 }}
-                className="px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
               >
                 {configSaving ? "保存中..." : "保存配置"}
               </button>
@@ -304,7 +304,7 @@ function ScoreCard({
   small?: boolean;
 }) {
   return (
-    <div className="bg-white/5 rounded-xl border border-white/10 px-4 py-3 text-center">
+    <div className="bg-muted/50 rounded-xl border border-border px-4 py-3 text-center">
       <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{label}</p>
       <p className={`${large ? "text-3xl" : small ? "text-sm mt-1" : "text-2xl"} font-bold ${color}`}>{value}</p>
     </div>

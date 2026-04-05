@@ -62,8 +62,8 @@ export function StepTimeline({ steps, selectedStepId, onStepClick, taskTerminal 
           <div
             key={step.id}
             className={`flex gap-3 rounded-lg transition-colors ${
-              isClickable ? "cursor-pointer hover:bg-white/[0.03]" : ""
-            } ${step.status === "PENDING" && !taskTerminal ? "opacity-40" : ""} ${isSelected ? "bg-white/[0.03] border-l-2 border-primary pl-2" : "pl-[10px]"}`}
+              isClickable ? "cursor-pointer hover:bg-muted/30" : ""
+            } ${step.status === "PENDING" && !taskTerminal ? "opacity-40" : ""} ${isSelected ? "bg-muted/30 border-l-2 border-primary pl-2" : "pl-[10px]"}`}
             onClick={() => isClickable && onStepClick?.(step)}
           >
             {/* Timeline line + icon */}
@@ -87,7 +87,7 @@ export function StepTimeline({ steps, selectedStepId, onStepClick, taskTerminal 
                 )}
               </div>
               {summary && (
-                <p className="text-xs text-white/40 mt-0.5">{summary}</p>
+                <p className="text-xs text-muted-foreground/60 mt-0.5">{summary}</p>
               )}
               {!summary && step.started_at && (
                 <p className="text-xs text-muted-foreground mt-0.5">

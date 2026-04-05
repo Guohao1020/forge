@@ -72,7 +72,7 @@ function CallbackContent() {
             <p className="text-lg text-destructive">{message}</p>
             <button
               onClick={() => router.push("/projects")}
-              className="mt-4 rounded-md bg-primary px-4 py-2 text-sm text-white hover:opacity-90 transition-opacity"
+              className="mt-4 rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90 transition-opacity"
             >
               返回项目大厅
             </button>

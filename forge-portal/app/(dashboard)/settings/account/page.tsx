@@ -58,7 +58,7 @@ export default function AccountSettingsPage() {
             value={oldPassword}
             onChange={(e) => setOldPassword(e.target.value)}
             placeholder="输入当前密码"
-            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-white/30 focus:outline-none focus:border-primary/50"
+            className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50"
             required
           />
         </div>
@@ -70,7 +70,7 @@ export default function AccountSettingsPage() {
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             placeholder="至少 6 位"
-            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-white/30 focus:outline-none focus:border-primary/50"
+            className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50"
             required
             minLength={6}
           />
@@ -83,7 +83,7 @@ export default function AccountSettingsPage() {
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             placeholder="再次输入新密码"
-            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-white/30 focus:outline-none focus:border-primary/50"
+            className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50"
             required
             minLength={6}
           />
@@ -103,7 +103,7 @@ export default function AccountSettingsPage() {
           <button
             type="submit"
             disabled={saving || !oldPassword || !newPassword || !confirmPassword}
-            className="px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
           >
             {saving ? "修改中..." : "修改密码"}
           </button>

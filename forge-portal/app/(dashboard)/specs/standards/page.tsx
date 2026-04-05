@@ -65,7 +65,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 const SCOPE_COLORS: Record<string, string> = {
-  COMPANY: "bg-[#8B5CF6]/10 text-[#8B5CF6]",
+  COMPANY: "bg-accent/10 text-accent",
   TEAM: "bg-blue-500/10 text-blue-400",
   PROJECT: "bg-green-500/10 text-green-400",
 };
@@ -163,7 +163,7 @@ export default function StandardsPage() {
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <Select value={category || "all"} onValueChange={(v) => { setCategory(!v || v === "all" ? "" : v); setPage(1); }}>
-            <SelectTrigger className="w-[160px] bg-white/5 border-white/10 text-white">
+            <SelectTrigger className="w-[160px] bg-muted border-border">
               <SelectValue placeholder="全部分类" />
             </SelectTrigger>
             <SelectContent>
@@ -175,17 +175,17 @@ export default function StandardsPage() {
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={openCreate} className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white">
+        <Button onClick={openCreate} className="bg-accent hover:bg-accent/90 text-accent-foreground">
           <Plus className="h-4 w-4 mr-2" />
           新建规范
         </Button>
       </div>
 
       {/* Table */}
-      <div className="bg-white/[0.03] border border-white/10 rounded-lg overflow-hidden">
+      <div className="bg-muted/30 border border-border rounded-lg overflow-hidden">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-white/10 text-white/50 text-sm">
+            <tr className="border-b border-border text-muted-foreground text-sm">
               <th className="text-left px-4 py-3 font-medium">名称</th>
               <th className="text-left px-4 py-3 font-medium">分类</th>
               <th className="text-left px-4 py-3 font-medium">作用域</th>
@@ -197,13 +197,13 @@ export default function StandardsPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="text-center py-12 text-white/30">
+                <td colSpan={6} className="text-center py-12 text-muted-foreground">
                   加载中...
                 </td>
               </tr>
             ) : standards.length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-center py-12 text-white/30">
+                <td colSpan={6} className="text-center py-12 text-muted-foreground">
                   暂无编码规范，点击&ldquo;新建规范&rdquo;添加
                 </td>
               </tr>
@@ -211,13 +211,13 @@ export default function StandardsPage() {
               standards.map((std) => (
                 <tr
                   key={std.id}
-                  className="border-b border-white/5 hover:bg-white/[0.02] transition-colors"
+                  className="border-b border-border hover:bg-muted/20 transition-colors"
                 >
-                  <td className="px-4 py-3 text-white font-medium">{std.name}</td>
+                  <td className="px-4 py-3 font-medium">{std.name}</td>
                   <td className="px-4 py-3">
                     <span
                       className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-                        CATEGORY_COLORS[std.category] || "bg-white/10 text-white/70"
+                        CATEGORY_COLORS[std.category] || "bg-muted text-muted-foreground"
                       }`}
                     >
                       {std.category}
@@ -226,14 +226,14 @@ export default function StandardsPage() {
                   <td className="px-4 py-3">
                     <span
                       className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-                        SCOPE_COLORS[std.scope] || "bg-white/10 text-white/70"
+                        SCOPE_COLORS[std.scope] || "bg-muted text-muted-foreground"
                       }`}
                     >
                       {SCOPES.find((s) => s.value === std.scope)?.label || std.scope}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-white/50 text-sm">v{std.version}</td>
-                  <td className="px-4 py-3 text-white/50 text-sm">
+                  <td className="px-4 py-3 text-muted-foreground text-sm">v{std.version}</td>
+                  <td className="px-4 py-3 text-muted-foreground text-sm">
                     {new Date(std.updatedAt).toLocaleDateString("zh-CN")}
                   </td>
                   <td className="px-4 py-3 text-right">
@@ -241,7 +241,7 @@ export default function StandardsPage() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 text-white/50 hover:text-white"
+                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
                         onClick={() => openEdit(std)}
                       >
                         <Edit2 className="h-4 w-4" />
@@ -249,7 +249,7 @@ export default function StandardsPage() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 text-white/50 hover:text-red-400"
+                        className="h-8 w-8 text-muted-foreground hover:text-red-500"
                         onClick={() => handleDelete(std.id)}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -265,7 +265,7 @@ export default function StandardsPage() {
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between text-sm text-white/50">
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
           <span>
             共 {total} 条，第 {page}/{totalPages} 页
           </span>
@@ -294,7 +294,7 @@ export default function StandardsPage() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="bg-[#0A0A12] border-white/10 text-white max-w-[75vw] sm:max-w-[75vw] max-h-[85vh] flex flex-col">
+        <DialogContent className="bg-background border-border text-foreground max-w-[75vw] sm:max-w-[75vw] max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>
               {editingStandard ? "编辑编码规范" : "新建编码规范"}
@@ -307,7 +307,7 @@ export default function StandardsPage() {
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="如：Java 编码规范"
-                className="bg-white/5 border-white/10"
+                className="bg-muted border-border"
               />
             </div>
             {!editingStandard && (
@@ -318,7 +318,7 @@ export default function StandardsPage() {
                     value={form.category}
                     onValueChange={(v) => v && setForm({ ...form, category: v })}
                   >
-                    <SelectTrigger className="bg-white/5 border-white/10">
+                    <SelectTrigger className="bg-muted border-border">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -336,7 +336,7 @@ export default function StandardsPage() {
                     value={form.scope}
                     onValueChange={(v) => v && setForm({ ...form, scope: v })}
                   >
-                    <SelectTrigger className="bg-white/5 border-white/10">
+                    <SelectTrigger className="bg-muted border-border">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -354,17 +354,17 @@ export default function StandardsPage() {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <Label>规范内容（Markdown）</Label>
-                <span className="text-xs text-white/30">左侧编辑 · 右侧预览</span>
+                <span className="text-xs text-muted-foreground">左侧编辑 · 右侧预览</span>
               </div>
               <div className="grid grid-cols-2 gap-4" style={{ height: "calc(85vh - 260px)" }}>
                 <Textarea
                   value={form.content}
                   onChange={(e) => setForm({ ...form, content: e.target.value })}
                   placeholder="输入编码规范内容，支持 Markdown 格式..."
-                  className="bg-[#0A0A12] border-white/10 font-mono text-sm resize-none overflow-y-auto"
+                  className="bg-[#FAFAFA] border-border font-mono text-sm resize-none overflow-y-auto"
                   style={{ height: "100%", minHeight: "unset", fieldSizing: "fixed" }}
                 />
-                <div className="border border-white/10 rounded-lg bg-[#0A0A12] p-4 overflow-y-auto">
+                <div className="border border-border rounded-lg bg-[#FAFAFA] p-4 overflow-y-auto">
                   <MarkdownPreview content={form.content} />
                 </div>
               </div>
@@ -374,13 +374,13 @@ export default function StandardsPage() {
             <Button
               variant="ghost"
               onClick={() => setDialogOpen(false)}
-              className="text-white/50"
+              className="text-muted-foreground"
             >
               取消
             </Button>
             <Button
               onClick={handleSave}
-              className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+              className="bg-accent hover:bg-accent/90 text-accent-foreground"
               disabled={!form.name || !form.content}
             >
               {editingStandard ? "保存修改" : "创建"}

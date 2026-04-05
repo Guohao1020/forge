@@ -58,7 +58,7 @@ export default function VersionListPage() {
     return (
       <div className="space-y-3">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-20 rounded-lg bg-white/5 animate-pulse" />
+          <div key={i} className="h-20 rounded-lg bg-muted/50 animate-pulse" />
         ))}
       </div>
     );
@@ -70,7 +70,7 @@ export default function VersionListPage() {
         <h1 className="text-xl font-semibold text-foreground">版本管理</h1>
         <button
           onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 transition-colors"
         >
           <Plus size={16} />
           创建版本
@@ -87,7 +87,7 @@ export default function VersionListPage() {
               value={newVersion}
               onChange={(e) => setNewVersion(e.target.value)}
               placeholder="v1.2.0"
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-white/30 focus:outline-none focus:border-primary/50"
+              className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50"
               autoFocus
             />
           </div>
@@ -98,7 +98,7 @@ export default function VersionListPage() {
               value={newDesc}
               onChange={(e) => setNewDesc(e.target.value)}
               placeholder="用户积分功能 + 订单优化"
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-white/30 focus:outline-none focus:border-primary/50"
+              className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50"
             />
           </div>
           <div className="flex gap-2 justify-end">
@@ -111,7 +111,7 @@ export default function VersionListPage() {
             <button
               onClick={handleCreate}
               disabled={creating || !newVersion.trim()}
-              className="px-4 py-1.5 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50"
+              className="px-4 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50"
             >
               {creating ? "创建中..." : "创建"}
             </button>
@@ -165,7 +165,7 @@ export default function VersionListPage() {
 
                 <div className="flex items-center gap-4">
                   <div className="flex-1">
-                    <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                    <div className="h-1.5 bg-muted/50 rounded-full overflow-hidden">
                       <div
                         className="h-full bg-primary rounded-full transition-all duration-300"
                         style={{ width: `${progress}%` }}

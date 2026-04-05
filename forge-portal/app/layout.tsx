@@ -38,7 +38,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className={`${geistSans.variable} ${geistMono.variable} dark`}>
+    <html lang="zh-CN" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="antialiased">
         <LoadingBar />
         <KeyboardShortcutsDialog />
@@ -47,7 +47,7 @@ export default function RootLayout({
         </ErrorBoundary>
         <Toaster
           position="top-right"
-          theme="dark"
+          theme="light"
           richColors
         />
       </body>

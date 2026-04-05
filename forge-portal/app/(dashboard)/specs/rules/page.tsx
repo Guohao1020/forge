@@ -228,7 +228,7 @@ export default function ReviewRulesPage() {
               setPage(1);
             }}
           >
-            <SelectTrigger className="w-[160px] bg-white/5 border-white/10 text-white">
+            <SelectTrigger className="w-[160px] bg-muted border-border">
               <SelectValue placeholder="全部分类" />
             </SelectTrigger>
             <SelectContent>
@@ -246,7 +246,7 @@ export default function ReviewRulesPage() {
               setPage(1);
             }}
           >
-            <SelectTrigger className="w-[160px] bg-white/5 border-white/10 text-white">
+            <SelectTrigger className="w-[160px] bg-muted border-border">
               <SelectValue placeholder="全部严重度" />
             </SelectTrigger>
             <SelectContent>
@@ -260,7 +260,7 @@ export default function ReviewRulesPage() {
         </div>
         <Button
           onClick={openCreate}
-          className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+          className="bg-accent hover:bg-accent/90 text-accent-foreground"
         >
           <Plus className="h-4 w-4 mr-2" />
           新建规则
@@ -268,10 +268,10 @@ export default function ReviewRulesPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white/[0.03] border border-white/10 rounded-lg overflow-hidden">
+      <div className="bg-muted/30 border border-border rounded-lg overflow-hidden">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-white/10 text-white/50 text-sm">
+            <tr className="border-b border-border text-muted-foreground text-sm">
               <th className="text-left px-4 py-3 font-medium">名称</th>
               <th className="text-left px-4 py-3 font-medium">分类</th>
               <th className="text-left px-4 py-3 font-medium">严重度</th>
@@ -283,13 +283,13 @@ export default function ReviewRulesPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="text-center py-12 text-white/30">
+                <td colSpan={6} className="text-center py-12 text-muted-foreground">
                   加载中...
                 </td>
               </tr>
             ) : rules.length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-center py-12 text-white/30">
+                <td colSpan={6} className="text-center py-12 text-muted-foreground">
                   暂无审查规则，点击&ldquo;新建规则&rdquo;添加
                 </td>
               </tr>
@@ -297,16 +297,16 @@ export default function ReviewRulesPage() {
               rules.map((rule) => (
                 <tr
                   key={rule.id}
-                  className="border-b border-white/5 hover:bg-white/[0.02] transition-colors"
+                  className="border-b border-border hover:bg-muted/20 transition-colors"
                 >
-                  <td className="px-4 py-3 text-white font-medium">
+                  <td className="px-4 py-3 text-foreground font-medium">
                     {rule.name}
                   </td>
                   <td className="px-4 py-3">
                     <span
                       className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
                         CATEGORY_COLORS[rule.category] ||
-                        "bg-white/10 text-white/70"
+                        "bg-muted text-muted-foreground"
                       }`}
                     >
                       {CATEGORY_LABELS[rule.category] || rule.category}
@@ -316,13 +316,13 @@ export default function ReviewRulesPage() {
                     <span
                       className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
                         SEVERITY_COLORS[rule.severity] ||
-                        "bg-white/10 text-white/70"
+                        "bg-muted text-muted-foreground"
                       }`}
                     >
                       {rule.severity}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-white/50 text-sm">
+                  <td className="px-4 py-3 text-muted-foreground text-sm">
                     {rule.ruleType}
                   </td>
                   <td className="px-4 py-3">
@@ -335,7 +335,7 @@ export default function ReviewRulesPage() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8 text-white/50 hover:text-white"
+                      className="h-8 w-8 text-muted-foreground hover:text-foreground"
                       onClick={() => openEdit(rule)}
                     >
                       <Edit2 className="h-4 w-4" />
@@ -350,7 +350,7 @@ export default function ReviewRulesPage() {
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between text-sm text-white/50">
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
           <span>
             共 {total} 条，第 {page}/{totalPages} 页
           </span>
@@ -379,7 +379,7 @@ export default function ReviewRulesPage() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="bg-[#0A0A12] border-white/10 text-white max-w-2xl">
+        <DialogContent className="bg-background border-border max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {editingRule ? "编辑审查规则" : "新建审查规则"}
@@ -392,7 +392,7 @@ export default function ReviewRulesPage() {
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="如：禁止使用 SELECT *"
-                className="bg-white/5 border-white/10"
+                className="bg-muted border-border"
               />
             </div>
 
@@ -404,7 +404,7 @@ export default function ReviewRulesPage() {
                     value={form.category}
                     onValueChange={(v) => v && setForm({ ...form, category: v })}
                   >
-                    <SelectTrigger className="bg-white/5 border-white/10">
+                    <SelectTrigger className="bg-muted border-border">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -422,7 +422,7 @@ export default function ReviewRulesPage() {
                     value={form.scope}
                     onValueChange={(v) => v && setForm({ ...form, scope: v })}
                   >
-                    <SelectTrigger className="bg-white/5 border-white/10">
+                    <SelectTrigger className="bg-muted border-border">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -444,7 +444,7 @@ export default function ReviewRulesPage() {
                   value={form.ruleType}
                   onValueChange={(v) => v && setForm({ ...form, ruleType: v })}
                 >
-                  <SelectTrigger className="bg-white/5 border-white/10">
+                  <SelectTrigger className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -462,7 +462,7 @@ export default function ReviewRulesPage() {
                   value={form.severity}
                   onValueChange={(v) => v && setForm({ ...form, severity: v })}
                 >
-                  <SelectTrigger className="bg-white/5 border-white/10">
+                  <SelectTrigger className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -484,7 +484,7 @@ export default function ReviewRulesPage() {
                   setForm({ ...form, definition: e.target.value })
                 }
                 placeholder='{"pattern": "SELECT \\\\*", "message": "禁止使用 SELECT *"}'
-                className="bg-[#0A0A12] border-white/10 font-mono text-sm min-h-[160px]"
+                className="bg-[#FAFAFA] border-border font-mono text-sm min-h-[160px]"
               />
             </div>
 
@@ -507,7 +507,7 @@ export default function ReviewRulesPage() {
                     setForm({ ...form, fixTemplate: e.target.value })
                   }
                   placeholder="输入自动修复模板..."
-                  className="bg-[#0A0A12] border-white/10 font-mono text-sm min-h-[120px]"
+                  className="bg-[#FAFAFA] border-border font-mono text-sm min-h-[120px]"
                 />
               </div>
             )}
@@ -516,13 +516,13 @@ export default function ReviewRulesPage() {
             <Button
               variant="ghost"
               onClick={() => setDialogOpen(false)}
-              className="text-white/50"
+              className="text-muted-foreground"
             >
               取消
             </Button>
             <Button
               onClick={handleSave}
-              className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+              className="bg-accent hover:bg-accent/90 text-accent-foreground"
               disabled={!form.name || !form.definition}
             >
               {editingRule ? "保存修改" : "创建"}

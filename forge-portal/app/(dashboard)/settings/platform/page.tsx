@@ -79,7 +79,7 @@ export default function PlatformSettingsPage() {
     return (
       <div className="space-y-4 max-w-2xl">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-24 rounded-xl bg-white/5 animate-pulse" />
+          <div key={i} className="h-24 rounded-xl bg-muted/50 animate-pulse" />
         ))}
       </div>
     );
@@ -105,7 +105,7 @@ export default function PlatformSettingsPage() {
         <button
           onClick={handleSave}
           disabled={saving || Object.keys(changes).length === 0}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
           <Save size={14} />
           {saving ? "保存中..." : `保存 (${Object.keys(changes).length})`}
@@ -143,7 +143,7 @@ export default function PlatformSettingsPage() {
                     <button
                       onClick={() => handleChange(s.key, currentValue === "true" ? "false" : "true")}
                       className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${
-                        currentValue === "true" ? "bg-primary" : "bg-white/20"
+                        currentValue === "true" ? "bg-primary" : "bg-muted-foreground/30"
                       }`}
                     >
                       <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
@@ -155,7 +155,7 @@ export default function PlatformSettingsPage() {
                       type="text"
                       value={currentValue}
                       onChange={(e) => handleChange(s.key, e.target.value)}
-                      className="w-56 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50 shrink-0"
+                      className="w-56 bg-muted/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50 shrink-0"
                     />
                   )}
                 </div>

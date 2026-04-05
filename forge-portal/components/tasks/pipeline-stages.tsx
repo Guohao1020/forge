@@ -38,7 +38,7 @@ export function PipelineStages({
           <div key={stage.key} className="flex items-center">
             {i > 0 && (
               <div className={`w-4 h-px mx-0.5 ${
-                isCompleted ? "bg-green-500/50" : "bg-white/10"
+                isCompleted ? "bg-green-500/50" : "bg-border"
               }`} />
             )}
             <div className="flex flex-col items-center gap-0.5" title={stage.label}>
@@ -52,13 +52,13 @@ export function PipelineStages({
                 <XCircle className="h-4 w-4 text-red-400" />
               )}
               {isPending && (
-                <Circle className="h-4 w-4 text-white/20" />
+                <Circle className="h-4 w-4 text-muted-foreground/40" />
               )}
               <span className={`text-[8px] ${
                 isCompleted ? "text-green-400/70" :
                 isCurrent ? stage.color :
                 isFailed ? "text-red-400/70" :
-                "text-white/20"
+                "text-muted-foreground/40"
               }`}>
                 {stage.label}
               </span>

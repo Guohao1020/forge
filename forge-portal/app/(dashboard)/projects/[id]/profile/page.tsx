@@ -38,16 +38,16 @@ function LoadingSkeleton() {
       {Array.from({ length: 4 }).map((_, i) => (
         <div
           key={i}
-          className="rounded-xl border border-white/10 bg-white/5 p-5"
+          className="rounded-xl border border-border bg-muted/50 p-5"
         >
           <div className="flex items-center justify-between mb-3">
-            <div className="h-5 w-32 bg-white/5 rounded" />
+            <div className="h-5 w-32 bg-muted/50 rounded" />
             <div className="flex items-center gap-2">
-              <div className="h-4 w-12 bg-white/5 rounded" />
-              <div className="h-4 w-20 bg-white/5 rounded" />
+              <div className="h-4 w-12 bg-muted/50 rounded" />
+              <div className="h-4 w-20 bg-muted/50 rounded" />
             </div>
           </div>
-          <div className="h-20 w-full bg-white/5 rounded" />
+          <div className="h-20 w-full bg-muted/50 rounded" />
         </div>
       ))}
     </div>
@@ -80,7 +80,7 @@ function ProfileCard({
   const label = DIMENSION_LABELS[entry.profileKey] || entry.profileKey;
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 hover:bg-white/[0.07] transition-colors">
+    <div className="rounded-xl border border-border bg-muted/50 hover:bg-muted/70 transition-colors">
       <button
         type="button"
         onClick={onToggle}
@@ -88,11 +88,11 @@ function ProfileCard({
       >
         <div className="flex items-center gap-3">
           {isExpanded ? (
-            <ChevronDown className="h-4 w-4 text-white/40 shrink-0" />
+            <ChevronDown className="h-4 w-4 text-muted-foreground/60 shrink-0" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-white/40 shrink-0" />
+            <ChevronRight className="h-4 w-4 text-muted-foreground/60 shrink-0" />
           )}
-          <span className="text-sm font-medium text-white/90">{label}</span>
+          <span className="text-sm font-medium text-foreground/90">{label}</span>
         </div>
         <div className="flex items-center gap-3">
           <Badge
@@ -101,7 +101,7 @@ function ProfileCard({
           >
             v{entry.version}
           </Badge>
-          <span className="flex items-center gap-1 text-xs text-white/30">
+          <span className="flex items-center gap-1 text-xs text-muted-foreground/60">
             <Clock className="h-3 w-3" />
             {relativeTime(entry.scannedAt)}
           </span>
@@ -110,7 +110,7 @@ function ProfileCard({
 
       {isExpanded && (
         <div className="px-5 pb-5 pt-0">
-          <pre className="text-xs text-white/60 bg-white/5 rounded-lg p-4 overflow-auto max-h-96 font-mono whitespace-pre-wrap">
+          <pre className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-4 overflow-auto max-h-96 font-mono whitespace-pre-wrap">
             {JSON.stringify(entry.profileValue, null, 2)}
           </pre>
         </div>
@@ -185,7 +185,7 @@ export default function ProfilePage() {
         <Button
           onClick={handleScan}
           disabled={scanning}
-          className="bg-primary hover:bg-primary/90 text-white"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           <RefreshCw
             className={`h-4 w-4 mr-2 ${scanning ? "animate-spin" : ""}`}

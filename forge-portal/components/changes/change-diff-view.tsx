@@ -8,9 +8,9 @@ const DiffEditor = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="h-[500px] flex items-center justify-center bg-[#1e1e1e] rounded-b-lg">
-        <div className="flex items-center gap-2 text-white/30 text-sm">
-          <div className="h-4 w-4 border-2 border-white/20 border-t-primary rounded-full animate-spin" />
+      <div className="h-[500px] flex items-center justify-center bg-muted rounded-b-lg">
+        <div className="flex items-center gap-2 text-muted-foreground text-sm">
+          <div className="h-4 w-4 border-2 border-muted-foreground/20 border-t-primary rounded-full animate-spin" />
           加载编辑器...
         </div>
       </div>
@@ -63,13 +63,13 @@ export function ChangeDiffView({
   onClose,
 }: ChangeDiffViewProps) {
   return (
-    <div className="rounded-xl border border-white/10 bg-[#0A0A12] overflow-hidden">
+    <div className="rounded-xl border border-border bg-background overflow-hidden">
       {/* Header bar */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/10 bg-white/[0.02]">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/20">
         <div className="flex items-center gap-2 min-w-0">
           <FileCode className="h-4 w-4 text-primary shrink-0" />
-          <span className="text-sm text-white/70 font-mono truncate">{fileName}</span>
-          <span className="px-1.5 py-0.5 rounded text-[10px] bg-white/5 text-white/40 border border-white/5 font-mono shrink-0">
+          <span className="text-sm text-foreground/70 font-mono truncate">{fileName}</span>
+          <span className="px-1.5 py-0.5 rounded text-[10px] bg-muted text-muted-foreground border border-border font-mono shrink-0">
             {language}
           </span>
           {isNewFile && (
@@ -80,7 +80,7 @@ export function ChangeDiffView({
         </div>
         <button
           onClick={onClose}
-          className="p-1 rounded hover:bg-white/10 transition-colors text-white/40 hover:text-white/70"
+          className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground/70"
         >
           <X className="h-4 w-4" />
         </button>

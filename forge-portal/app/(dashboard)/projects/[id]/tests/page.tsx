@@ -65,7 +65,7 @@ function TestResultSummary({ results }: { results: TestResult[] }) {
   const allPassed = results.every((r) => r.status === "PASSED");
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5 mb-6">
+    <div className="rounded-xl border border-border bg-muted/20 p-5 mb-6">
       <div className="flex items-center gap-3 mb-4">
         {allPassed ? (
           <CheckCircle2 className="h-5 w-5 text-emerald-400" />
@@ -77,29 +77,29 @@ function TestResultSummary({ results }: { results: TestResult[] }) {
         </h2>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="rounded-lg bg-white/[0.03] p-3">
-          <p className="text-xs text-white/40 mb-1">总用例</p>
+        <div className="rounded-lg bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground/60 mb-1">总用例</p>
           <p className="text-xl font-semibold">{totalCases}</p>
         </div>
-        <div className="rounded-lg bg-white/[0.03] p-3">
-          <p className="text-xs text-white/40 mb-1">通过</p>
+        <div className="rounded-lg bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground/60 mb-1">通过</p>
           <p className="text-xl font-semibold text-emerald-400">{totalPassed}</p>
         </div>
-        <div className="rounded-lg bg-white/[0.03] p-3">
-          <p className="text-xs text-white/40 mb-1">失败</p>
+        <div className="rounded-lg bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground/60 mb-1">失败</p>
           <p className="text-xl font-semibold text-red-400">{totalFailed}</p>
         </div>
-        <div className="rounded-lg bg-white/[0.03] p-3">
-          <p className="text-xs text-white/40 mb-1">覆盖率</p>
+        <div className="rounded-lg bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground/60 mb-1">覆盖率</p>
           <p className="text-xl font-semibold">{avgCoverage.toFixed(1)}%</p>
         </div>
       </div>
-      <div className="flex items-center gap-2 mt-3 text-xs text-white/40">
+      <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground/60">
         <Clock size={12} />
         <span>耗时 {(totalDuration / 1000).toFixed(1)}s</span>
         {results[0]?.framework && (
           <>
-            <span className="text-white/20">|</span>
+            <span className="text-muted-foreground/40">|</span>
             <span>框架: {results[0].framework}</span>
           </>
         )}
@@ -171,9 +171,9 @@ export default function TestsPage() {
         <h1 className="text-2xl font-semibold tracking-tight mb-6">
           测试报告
         </h1>
-        <div className="flex flex-col items-center justify-center py-20 rounded-xl border border-white/10 bg-white/[0.02]">
-          <Loader2 className="h-6 w-6 text-white/30 animate-spin mb-3" />
-          <p className="text-sm text-white/40">加载中...</p>
+        <div className="flex flex-col items-center justify-center py-20 rounded-xl border border-border bg-muted/20">
+          <Loader2 className="h-6 w-6 text-muted-foreground/60 animate-spin mb-3" />
+          <p className="text-sm text-muted-foreground/60">加载中...</p>
         </div>
       </div>
     );
@@ -185,7 +185,7 @@ export default function TestsPage() {
         <h1 className="text-2xl font-semibold tracking-tight mb-6">
           测试报告
         </h1>
-        <div className="flex flex-col items-center justify-center py-20 rounded-xl border border-white/10 bg-white/[0.02]">
+        <div className="flex flex-col items-center justify-center py-20 rounded-xl border border-border bg-muted/20">
           <p className="text-sm text-red-400">{error}</p>
         </div>
       </div>

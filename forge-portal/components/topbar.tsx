@@ -79,7 +79,7 @@ export function Topbar() {
     <header className="h-14 flex items-center justify-between px-6 border-b border-[var(--border)] bg-[var(--card)]">
       {/* Search */}
       <div ref={searchRef} className="relative w-80">
-        <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5">
+        <div className="flex items-center gap-2 bg-muted/50 border border-border rounded-lg px-3 py-1.5">
           <Search size={14} className="text-[var(--muted-foreground)] shrink-0" />
           <input
             ref={inputRef}
@@ -91,9 +91,9 @@ export function Topbar() {
             }}
             onFocus={() => setShowResults(true)}
             placeholder="搜索项目和任务..."
-            className="bg-transparent text-sm text-[var(--foreground)] placeholder:text-white/30 focus:outline-none w-full"
+            className="bg-transparent text-sm text-[var(--foreground)] placeholder:text-muted-foreground/50 focus:outline-none w-full"
           />
-          <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-white/30 bg-white/5 rounded border border-white/10 shrink-0">
+          <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-muted-foreground/60 bg-muted/50 rounded border border-border shrink-0">
             <span className="text-[9px]">⌘</span>K
           </kbd>
           {searching && (
@@ -112,7 +112,7 @@ export function Topbar() {
                   setShowResults(false);
                   setSearchQuery("");
                 }}
-                className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors border-b border-white/5 last:border-0"
+                className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/50 last:border-0"
               >
                 <div className="flex items-center gap-2">
                   <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-medium ${

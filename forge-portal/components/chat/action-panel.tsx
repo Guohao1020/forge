@@ -102,8 +102,8 @@ export function ActionPanel({
             <AlertCircle className="h-6 w-6 text-red-400" />
           </div>
           <div>
-            <h3 className="text-sm font-medium text-white mb-1">操作失败</h3>
-            <p className="text-xs text-white/50 leading-relaxed">
+            <h3 className="text-sm font-medium text-foreground mb-1">操作失败</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
               {errorMessage || "发生未知错误，请重试"}
             </p>
           </div>
@@ -111,7 +111,7 @@ export function ActionPanel({
             <Button
               onClick={onRetry}
               variant="ghost"
-              className="text-[#8B5CF6] hover:text-[#8B5CF6]/80 hover:bg-[#8B5CF6]/10"
+              className="text-accent hover:text-accent/80 hover:bg-accent/10"
             >
               <RefreshCw className="h-4 w-4 mr-2" />
               重试
@@ -121,7 +121,7 @@ export function ActionPanel({
             <Button
               onClick={onCancel}
               variant="ghost"
-              className="text-white/40 hover:text-white/60 text-xs"
+              className="text-muted-foreground/60 hover:text-muted-foreground text-xs"
             >
               取消任务
             </Button>
@@ -166,12 +166,12 @@ export function ActionPanel({
     return (
       <div className="h-full flex items-center justify-center p-6">
         <div className="text-center space-y-4 max-w-sm">
-          <div className="mx-auto w-12 h-12 rounded-xl bg-[#8B5CF6]/10 flex items-center justify-center">
-            <ListTree className="h-6 w-6 text-[#8B5CF6] animate-pulse" />
+          <div className="mx-auto w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center">
+            <ListTree className="h-6 w-6 text-accent animate-pulse" />
           </div>
           <div>
-            <h3 className="text-sm font-medium text-white mb-1">正在生成方案</h3>
-            <p className="text-xs text-white/40 leading-relaxed">
+            <h3 className="text-sm font-medium text-foreground mb-1">正在生成方案</h3>
+            <p className="text-xs text-muted-foreground/60 leading-relaxed">
               AI 正在分析项目结构、读取代码文件，并生成实施方案...
             </p>
           </div>
@@ -202,12 +202,12 @@ export function ActionPanel({
         {isLoading && !isAnalyzing && !currentQuestion && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center space-y-3">
-              <div className="mx-auto w-10 h-10 rounded-xl bg-[#8B5CF6]/10 flex items-center justify-center">
-                <Brain className="h-5 w-5 text-[#8B5CF6] animate-pulse" />
+              <div className="mx-auto w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center">
+                <Brain className="h-5 w-5 text-accent animate-pulse" />
               </div>
               <div>
-                <p className="text-sm text-white/50">AI 正在分析需求...</p>
-                <p className="text-xs text-white/30 mt-1">通常需要 15-45 秒</p>
+                <p className="text-sm text-muted-foreground">AI 正在分析需求...</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">通常需要 15-45 秒</p>
               </div>
             </div>
           </div>
@@ -215,18 +215,18 @@ export function ActionPanel({
 
         {/* Current understanding + question */}
         {currentUnderstanding && !isLoading && (
-          <div className="bg-white/[0.03] border border-white/10 rounded-xl p-4 space-y-3">
+          <div className="bg-muted/30 border border-border rounded-xl p-4 space-y-3">
             {currentPhaseLabel && (
               <div className="flex items-center gap-2">
-                <Sparkles className="h-3.5 w-3.5 text-[#8B5CF6]" />
-                <span className="text-[10px] text-[#8B5CF6] uppercase tracking-wider font-medium">
+                <Sparkles className="h-3.5 w-3.5 text-accent" />
+                <span className="text-[10px] text-accent uppercase tracking-wider font-medium">
                   {currentPhaseLabel}
                 </span>
               </div>
             )}
-            <p className="text-sm text-white/70 leading-relaxed">{currentUnderstanding}</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">{currentUnderstanding}</p>
             {currentQuestion && (
-              <p className="text-sm font-medium text-white">{currentQuestion}</p>
+              <p className="text-sm font-medium text-foreground">{currentQuestion}</p>
             )}
           </div>
         )}
@@ -261,8 +261,8 @@ export function ActionPanel({
         {!currentQuestion && !isLoading && !analyzeThinking && latestOptions.length === 0 && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center space-y-2">
-              <Brain className="h-8 w-8 text-white/10 mx-auto" />
-              <p className="text-sm text-white/20">等待 AI 分析结果</p>
+              <Brain className="h-8 w-8 text-muted-foreground/30 mx-auto" />
+              <p className="text-sm text-muted-foreground/40">等待 AI 分析结果</p>
             </div>
           </div>
         )}
@@ -274,8 +274,8 @@ export function ActionPanel({
   return (
     <div className="h-full flex items-center justify-center">
       <div className="text-center space-y-2">
-        <CheckCircle2 className="h-8 w-8 text-white/10 mx-auto" />
-        <p className="text-sm text-white/20">选择左侧步骤查看详情</p>
+        <CheckCircle2 className="h-8 w-8 text-muted-foreground/30 mx-auto" />
+        <p className="text-sm text-muted-foreground/40">选择左侧步骤查看详情</p>
       </div>
     </div>
   );
@@ -287,11 +287,11 @@ function ProgressStep({ label, done, active }: { label: string; done?: boolean; 
       {done ? (
         <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
       ) : active ? (
-        <Loader2 className="h-4 w-4 text-[#8B5CF6] animate-spin shrink-0" />
+        <Loader2 className="h-4 w-4 text-accent animate-spin shrink-0" />
       ) : (
-        <div className="h-4 w-4 rounded-full border border-white/20 shrink-0" />
+        <div className="h-4 w-4 rounded-full border border-border shrink-0" />
       )}
-      <span className={`text-xs ${done ? "text-white/50" : active ? "text-white" : "text-white/30"}`}>
+      <span className={`text-xs ${done ? "text-muted-foreground" : active ? "text-foreground" : "text-muted-foreground/60"}`}>
         {label}
       </span>
     </div>

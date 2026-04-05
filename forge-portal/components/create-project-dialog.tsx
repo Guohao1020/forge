@@ -129,7 +129,7 @@ export function CreateProjectDialog({
             <button
               onClick={() => { setSelectedTemplate(null); setStep("details"); }}
               className={`w-full text-left px-3 py-2.5 rounded-lg border transition-colors hover:border-primary/30 ${
-                !selectedTemplate ? "border-primary/50 bg-primary/5" : "border-white/10 bg-white/5"
+                !selectedTemplate ? "border-primary/50 bg-primary/5" : "border-border bg-muted/50"
               }`}
             >
               <p className="text-sm font-medium text-foreground">空白项目</p>
@@ -145,12 +145,12 @@ export function CreateProjectDialog({
                     setDescription(tmpl.description);
                     setStep("details");
                   }}
-                  className="w-full text-left px-3 py-2.5 rounded-lg border border-white/10 bg-white/5 hover:border-primary/30 transition-colors"
+                  className="w-full text-left px-3 py-2.5 rounded-lg border border-border bg-muted/50 hover:border-primary/30 transition-colors"
                 >
                   <div className="flex items-center gap-2">
                     <Icon className="h-4 w-4 text-primary shrink-0" />
                     <p className="text-sm font-medium text-foreground">{tmpl.name}</p>
-                    <span className="text-[9px] text-muted-foreground px-1.5 py-0.5 bg-white/5 rounded">{tmpl.language}</span>
+                    <span className="text-[9px] text-muted-foreground px-1.5 py-0.5 bg-muted rounded">{tmpl.language}</span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5 pl-6">{tmpl.description}</p>
                 </button>

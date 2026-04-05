@@ -147,7 +147,7 @@ export default function NewTaskPage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-64px)]">
-      <div className="px-4 py-3 border-b border-white/10">
+      <div className="px-4 py-3 border-b border-border">
         <Link
           href={`/projects/${projectId}`}
           className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -163,13 +163,7 @@ export default function NewTaskPage() {
       <ChatPanel
         messages={messages}
         onSend={handleSend}
-        onConfirm={handleConfirm}
-        onModify={handleModify}
-        onCancel={handleCancel}
         isLoading={isLoading}
-        confirmationData={confirmationData}
-        isConfirming={isConfirming}
-        risks={latestRisks}
       />
     </div>
   );

@@ -49,7 +49,7 @@ export function ConnectPlatformDialog({
             className="flex w-full items-center gap-4 rounded-xl border border-border bg-secondary/50 p-4 transition-colors hover:border-primary/50 hover:bg-secondary disabled:opacity-50"
           >
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#24292e]">
-              <GitHubIcon className="h-5 w-5 text-white" />
+              <GitHubIcon className="h-5 w-5 text-foreground" />
             </div>
             <div className="text-left flex-1">
               <p className="text-sm font-medium text-foreground">GitHub</p>

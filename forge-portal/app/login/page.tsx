@@ -43,9 +43,9 @@ export default function LoginPage() {
           shake ? "animate-shake" : ""
         }`}
         style={{
-          background: "rgba(15, 15, 26, 0.8)",
-          borderColor: "rgba(255, 255, 255, 0.08)",
-          borderTopColor: "rgba(255, 255, 255, 0.12)",
+          background: "rgba(255, 255, 255, 0.9)",
+          borderColor: "rgba(10, 10, 10, 0.08)",
+          borderTopColor: "rgba(10, 10, 10, 0.12)",
         }}
       >
         <div className="text-center mb-8">
@@ -96,7 +96,7 @@ export default function LoginPage() {
           <Button
             type="submit"
             disabled={loading || !username || !password}
-            className="w-full h-11 text-base font-medium rounded-lg transition-all active:scale-[0.97] bg-[var(--primary)] hover:bg-[#7C3AED] text-white"
+            className="w-full h-11 text-base font-medium rounded-lg transition-all active:scale-[0.97] bg-primary hover:bg-primary/90 text-primary-foreground"
             style={{
               boxShadow: "0 0 20px rgba(139, 92, 246, 0.3)",
             }}

@@ -63,10 +63,10 @@ export function RecommendationCard({
   };
 
   return (
-    <div className="border border-white/10 rounded-xl bg-white/[0.03] p-4 my-3">
+    <div className="border border-border rounded-xl bg-muted/30 p-4 my-3">
       <div className="flex items-center gap-2 mb-3">
-        <Sparkles className="h-4 w-4 text-[#8B5CF6]" />
-        <span className="text-xs font-medium text-white/60">AI 方案推荐</span>
+        <Sparkles className="h-4 w-4 text-accent" />
+        <span className="text-xs font-medium text-muted-foreground">AI 方案推荐</span>
       </div>
 
       {/* Option cards */}
@@ -83,10 +83,10 @@ export function RecommendationCard({
               className={`
                 text-left p-3 rounded-lg border transition-all relative
                 ${isSelected
-                  ? "border-[#8B5CF6] bg-[#8B5CF6]/10"
+                  ? "border-accent bg-accent/10"
                   : isRecommended
-                  ? "border-[#8B5CF6]/40 bg-white/[0.03]"
-                  : "border-white/10 bg-white/[0.02] hover:border-white/20"
+                  ? "border-accent/40 bg-muted/30"
+                  : "border-border bg-muted/20 hover:border-border/80"
                 }
                 ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
               `}
@@ -94,20 +94,20 @@ export function RecommendationCard({
               {/* AI Recommended badge */}
               {isRecommended && (
                 <div className="flex items-center gap-1 mb-2">
-                  <Sparkles className="h-3 w-3 text-[#8B5CF6]" />
-                  <span className="text-[10px] font-medium text-[#8B5CF6]">AI 推荐</span>
+                  <Sparkles className="h-3 w-3 text-accent" />
+                  <span className="text-[10px] font-medium text-accent">AI 推荐</span>
                 </div>
               )}
 
               {/* Selected check */}
               {isSelected && (
                 <div className="absolute top-2 right-2">
-                  <Check className="h-4 w-4 text-[#8B5CF6]" />
+                  <Check className="h-4 w-4 text-accent" />
                 </div>
               )}
 
               {/* Title */}
-              <p className="text-sm font-medium text-white mb-2 pr-5">{opt.title}</p>
+              <p className="text-sm font-medium text-foreground mb-2 pr-5">{opt.title}</p>
 
               {/* Pros */}
               {opt.pros.length > 0 && (
@@ -140,7 +140,7 @@ export function RecommendationCard({
 
               {/* Recommendation reason */}
               {isRecommended && opt.reason && (
-                <p className="text-[10px] text-[#8B5CF6]/60 mt-2 italic">
+                <p className="text-[10px] text-accent/60 mt-2 italic">
                   {opt.reason}
                 </p>
               )}
@@ -154,7 +154,7 @@ export function RecommendationCard({
         <div className="mt-3">
           <button
             onClick={() => setShowContext(!showContext)}
-            className="flex items-center gap-1 text-[10px] text-white/30 hover:text-white/50 transition-colors"
+            className="flex items-center gap-1 text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
           >
             {showContext ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             AI 推荐依据 ({contextFactors.length})
@@ -162,7 +162,7 @@ export function RecommendationCard({
           {showContext && (
             <div className="mt-1.5 pl-4 space-y-0.5">
               {contextFactors.map((f, i) => (
-                <p key={i} className="text-[10px] text-white/25">{f}</p>
+                <p key={i} className="text-[10px] text-muted-foreground/50">{f}</p>
               ))}
             </div>
           )}
@@ -175,7 +175,7 @@ export function RecommendationCard({
           <button
             onClick={handleConfirm}
             disabled={disabled}
-            className="px-4 py-1.5 bg-[#8B5CF6] text-white rounded-lg text-xs hover:bg-[#7C3AED] transition-colors disabled:opacity-50"
+            className="px-4 py-1.5 bg-accent text-accent-foreground rounded-lg text-xs hover:bg-accent/90 transition-colors disabled:opacity-50"
           >
             按此方案继续
           </button>

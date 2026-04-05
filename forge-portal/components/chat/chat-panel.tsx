@@ -1,81 +1,43 @@
 "use client";
 
+/**
+ * ChatPanel — Simplified message list + input.
+ *
+ * In the 3-column layout, this only shows conversation messages and the input box.
+ * Action cards (confirmation, plan review, options) are rendered in the ActionPanel.
+ */
+
 import { useState, useRef, useEffect } from "react";
 import { Send, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MessageBubble } from "./message-bubble";
-import { OptionButtons } from "./option-buttons";
-import { ConfirmationCard } from "./confirmation-card";
-import { PlanReviewCard } from "./plan-review-card";
-import { RiskAlert, Risk } from "./risk-alert";
-import { Conversation, PlanConfirmResponse } from "@/lib/conversation";
-import { RecommendationCard } from "./recommendation-card";
-import { StreamingThinking } from "./streaming-thinking";
-
-interface RecommendationData {
-  options: Array<{ id: string; title: string; pros: string[]; cons: string[]; risk: "LOW" | "MEDIUM" | "HIGH"; recommended: boolean; reason: string }>;
-  aiRecommendation: string;
-  contextFactors?: string[];
-}
+import { Conversation } from "@/lib/conversation";
 
 interface ChatPanelProps {
   messages: Conversation[];
   onSend: (content: string) => Promise<void>;
-  onConfirm: () => void;
-  onModify: () => void;
-  onCancel: () => void;
   isLoading: boolean;
-  confirmationData?: {
-    summary: string;
-    taskTitle: string;
-    affectedModules?: string[];
-    riskLevel?: string;
-    estimatedComplexity?: string;
-    risks?: Risk[];
-    nonFunctional?: string[];
-    functionalRequirements?: string[];
-    acceptanceCriteria?: string[];
-    outOfScope?: string[];
-  } | null;
-  isConfirming?: boolean;
-  risks?: Risk[];
-  planReviewData?: PlanConfirmResponse["planData"] | null;
-  onApprovePlan?: () => void;
-  isPlanApproving?: boolean;
-  latestOptions?: string[];
-  recommendation?: RecommendationData | null;
-  analyzeThinking?: string;
-  isAnalyzing?: boolean;
+  disabled?: boolean;
+  placeholder?: string;
 }
 
 export function ChatPanel({
   messages,
   onSend,
-  onConfirm,
-  onModify,
-  onCancel,
   isLoading,
-  confirmationData,
-  isConfirming = false,
-  risks = [],
-  planReviewData,
-  onApprovePlan,
-  isPlanApproving = false,
-  latestOptions = [],
-  recommendation,
-  analyzeThinking = "",
-  isAnalyzing = false,
+  disabled = false,
+  placeholder = "描述你的需求...（Shift+Enter 换行）",
 }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, confirmationData, planReviewData]);
+  }, [messages]);
 
   const handleSubmit = async () => {
     const content = input.trim();
-    if (!content || isLoading) return;
+    if (!content || isLoading || disabled) return;
     setInput("");
     await onSend(content);
   };
@@ -87,14 +49,12 @@ export function ChatPanel({
     }
   };
 
-  const hasActiveCard = !!confirmationData || !!planReviewData;
-
   return (
     <div className="flex flex-col h-full">
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-1">
         {messages.length === 0 && !isLoading && (
-          <div className="flex items-center justify-center h-full text-white/20 text-sm">
+          <div className="flex items-center justify-center h-full text-muted-foreground/40 text-sm">
             描述你的需求，AI 会进行分析和拆解
           </div>
         )}
@@ -107,61 +67,12 @@ export function ChatPanel({
             metadata={msg.metadata as Record<string, unknown> | undefined}
           />
         ))}
-        {/* AI recommendation cards (SP-2) */}
-        {recommendation && !isLoading && !confirmationData && !planReviewData && (
-          <RecommendationCard
-            options={recommendation.options}
-            aiRecommendation={recommendation.aiRecommendation}
-            contextFactors={recommendation.contextFactors}
-            onSelect={(selection) => onSend(selection)}
-            disabled={isLoading}
-          />
-        )}
-        {/* Clickable option buttons from AI clarify response */}
-        {latestOptions.length > 0 && !isLoading && !confirmationData && !planReviewData && !recommendation && (
-          <OptionButtons
-            options={latestOptions}
-            onSelect={(opt) => onSend(opt)}
-            disabled={isLoading}
-          />
-        )}
-        {risks.length > 0 && !confirmationData && !planReviewData && (
-          <RiskAlert risks={risks} />
-        )}
-        {confirmationData && (
-          <ConfirmationCard
-            {...confirmationData}
-            onConfirm={onConfirm}
-            onModify={onModify}
-            onCancel={onCancel}
-            isLoading={isConfirming}
-          />
-        )}
-        {planReviewData && onApprovePlan && (
-          <PlanReviewCard
-            planData={planReviewData}
-            onApprove={onApprovePlan}
-            onRequestChanges={onModify}
-            onCancel={onCancel}
-            isLoading={isPlanApproving}
-          />
-        )}
-        {/* AI thinking process (streaming via SSE) */}
-        {analyzeThinking && (
-          <StreamingThinking
-            text={analyzeThinking}
-            isComplete={!isAnalyzing}
-          />
-        )}
-        {isLoading && !isAnalyzing && (
+        {isLoading && (
           <div className="flex justify-start mb-4">
-            <div className="bg-white/5 rounded-2xl rounded-bl-md px-4 py-3 max-w-[80%]">
-              <div className="flex items-center gap-2 text-white/50 text-sm">
-                <Loader2 className="h-4 w-4 animate-spin text-[#8B5CF6]" />
-                <span className="animate-pulse">AI 正在分析你的需求...</span>
-              </div>
-              <div className="mt-1.5 text-white/30 text-xs">
-                通常需要 15-45 秒，取决于需求复杂度
+            <div className="bg-muted/50 rounded-2xl rounded-bl-md px-4 py-3 max-w-[80%]">
+              <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                <Loader2 className="h-4 w-4 animate-spin text-accent" />
+                <span className="animate-pulse">AI 正在分析...</span>
               </div>
             </div>
           </div>
@@ -170,21 +81,21 @@ export function ChatPanel({
       </div>
 
       {/* Input */}
-      <div className="border-t border-white/10 p-4">
+      <div className="border-t border-border p-3">
         <div className="flex gap-2">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="描述你的需求...（Shift+Enter 换行）"
+            placeholder={placeholder}
             rows={2}
-            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-white/30 resize-none focus:outline-none focus:border-[#8B5CF6]/50"
-            disabled={isLoading || hasActiveCard}
+            className="flex-1 bg-muted/50 border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:border-accent/50"
+            disabled={isLoading || disabled}
           />
           <Button
             onClick={handleSubmit}
-            disabled={!input.trim() || isLoading || hasActiveCard}
-            className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white self-end h-10 w-10 p-0"
+            disabled={!input.trim() || isLoading || disabled}
+            className="bg-accent hover:bg-accent/90 text-accent-foreground self-end h-10 w-10 p-0"
           >
             <Send className="h-4 w-4" />
           </Button>

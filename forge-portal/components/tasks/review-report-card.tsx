@@ -49,7 +49,7 @@ function ScoreRing({ score }: { score: number }) {
           cy="44"
           r={radius}
           fill="none"
-          stroke="rgba(255,255,255,0.05)"
+          stroke="rgba(0,0,0,0.08)"
           strokeWidth="6"
         />
         <circle
@@ -86,7 +86,7 @@ function FindingRow({ f }: { f: ReviewFinding }) {
   );
 
   return (
-    <div className="flex items-start gap-2 p-2.5 rounded-lg bg-white/[0.02] border border-white/5">
+    <div className="flex items-start gap-2 p-2.5 rounded-lg bg-muted/30 border border-border">
       {icon}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
@@ -104,16 +104,16 @@ function FindingRow({ f }: { f: ReviewFinding }) {
             </span>
           )}
           {f.rule && (
-            <span className="text-[10px] text-white/30 font-mono">{f.rule}</span>
+            <span className="text-[10px] text-muted-foreground font-mono">{f.rule}</span>
           )}
-          <span className="text-xs text-white/50 font-mono truncate">
+          <span className="text-xs text-muted-foreground font-mono truncate">
             {f.file}
             {f.line != null && `:${f.line}`}
           </span>
         </div>
-        <p className="text-sm text-white/70 mt-1">{f.message}</p>
+        <p className="text-sm text-foreground/70 mt-1">{f.message}</p>
         {f.suggestion && (
-          <p className="text-xs text-white/40 mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             建议: {f.suggestion}
           </p>
         )}
@@ -137,7 +137,7 @@ export function ReviewReportCard({ reviewOutput }: ReviewReportCardProps) {
   const warningCount = findings.filter((f) => f.severity === "WARNING").length;
 
   return (
-    <div className="rounded-xl border border-white/10 bg-card p-5 space-y-5">
+    <div className="rounded-xl border border-border bg-card p-5 space-y-5">
       {/* Score + Status */}
       <div className="flex items-center gap-5">
         <ScoreRing score={score} />
@@ -152,7 +152,7 @@ export function ReviewReportCard({ reviewOutput }: ReviewReportCardProps) {
           >
             {passed ? "审查通过" : "审查未通过"}
           </Badge>
-          <div className="flex items-center gap-3 text-xs text-white/40">
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
             {lintFindings.length > 0 && (
               <span className="text-amber-400 flex items-center gap-1">
                 <Wrench className="h-3 w-3" />
@@ -174,13 +174,13 @@ export function ReviewReportCard({ reviewOutput }: ReviewReportCardProps) {
 
       {/* Summary */}
       {summary && (
-        <p className="text-sm text-white/60">{summary}</p>
+        <p className="text-sm text-foreground/60">{summary}</p>
       )}
 
       {/* Lint findings */}
       {lintFindings.length > 0 && (
         <div className="space-y-2">
-          <h4 className="text-xs text-white/30 uppercase tracking-wide flex items-center gap-1.5">
+          <h4 className="text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
             <Wrench className="h-3 w-3 text-amber-400/60" />
             Lint 问题
           </h4>
@@ -193,7 +193,7 @@ export function ReviewReportCard({ reviewOutput }: ReviewReportCardProps) {
       {/* Review findings */}
       {reviewFindings.length > 0 && (
         <div className="space-y-2">
-          <h4 className="text-xs text-white/30 uppercase tracking-wide">Review 问题</h4>
+          <h4 className="text-xs text-muted-foreground uppercase tracking-wide">Review 问题</h4>
           {reviewFindings.map((f, i) => (
             <FindingRow key={`review-${i}`} f={f} />
           ))}

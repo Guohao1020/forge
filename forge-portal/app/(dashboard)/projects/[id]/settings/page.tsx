@@ -59,6 +59,10 @@ export default function ProjectSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
   const [archiving, setArchiving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [archiveConfirmName, setArchiveConfirmName] = useState("");
+  const [deleteConfirmName, setDeleteConfirmName] = useState("");
+  const [deleteRemoteRepo, setDeleteRemoteRepo] = useState(true);
 
   // Sync to remote state
   const [syncing, setSyncing] = useState(false);
@@ -122,10 +126,23 @@ export default function ProjectSettingsPage() {
   async function handleArchive() {
     setArchiving(true);
     try {
-      await api.delete(`/projects/${projectId}`);
+      await api.post(`/projects/${projectId}/archive`, { confirmName: archiveConfirmName });
       router.push("/projects");
     } catch {
       setArchiving(false);
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      await api.delete(`/projects/${projectId}`, {
+        confirmName: deleteConfirmName,
+        deleteRemoteRepo,
+      });
+      router.push("/projects");
+    } catch {
+      setDeleting(false);
     }
   }
 
@@ -142,15 +159,15 @@ export default function ProjectSettingsPage() {
       {/* Sub-page links */}
       <div className="flex gap-2 mb-6">
         <Link href={`/projects/${projectId}/settings/specs`}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors">
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-muted/50 border border-border text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors">
           <BookOpen size={12} /> 规范配置
         </Link>
         <Link href={`/projects/${projectId}/settings/webhooks`}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors">
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-muted/50 border border-border text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors">
           <Webhook size={12} /> Webhooks
         </Link>
         <a href={`/api/projects/${projectId}/export`}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-muted/50 border border-border text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
           download>
           <Download size={12} /> 导出备份
         </a>
@@ -351,7 +368,7 @@ export default function ProjectSettingsPage() {
 
         {entropyScan ? (
           <div className="grid grid-cols-3 gap-3">
-            <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-3 text-center">
+            <div className="bg-muted/50 rounded-lg border border-border px-3 py-3 text-center">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">质量分数</p>
               <p className={`text-2xl font-bold ${
                 entropyScan.score >= 80 ? "text-green-400" :
@@ -360,11 +377,11 @@ export default function ProjectSettingsPage() {
                 {entropyScan.score}
               </p>
             </div>
-            <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-3 text-center">
+            <div className="bg-muted/50 rounded-lg border border-border px-3 py-3 text-center">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">问题数量</p>
               <p className="text-2xl font-bold text-foreground">{entropyScan.issueCount}</p>
             </div>
-            <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-3 text-center">
+            <div className="bg-muted/50 rounded-lg border border-border px-3 py-3 text-center">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">上次��描</p>
               <p className="text-sm text-foreground mt-1">
                 {new Date(entropyScan.scannedAt).toLocaleDateString("zh-CN")}
@@ -372,7 +389,7 @@ export default function ProjectSettingsPage() {
             </div>
           </div>
         ) : (
-          <div className="rounded-lg border border-white/10 bg-white/5 p-4 text-center">
+          <div className="rounded-lg border border-border bg-muted/50 p-4 text-center">
             <TrendingUp className="h-8 w-8 text-muted-foreground mx-auto mb-2 opacity-30" />
             <p className="text-sm text-muted-foreground">尚未运行过质量扫描</p>
             <p className="text-xs text-muted-foreground mt-1">点击「运行扫描」开始首次代码质量检测</p>
@@ -383,33 +400,122 @@ export default function ProjectSettingsPage() {
       <Separator className="my-8" />
 
       {/* Danger zone */}
-      <div className="rounded-xl border border-destructive/30 bg-card p-5">
-        <h2 className="text-sm font-medium text-destructive mb-1">危险区域</h2>
-        <p className="text-sm text-muted-foreground mb-4">
-          归档后项目将不再显示在项目大厅，但数据不会删除。
-        </p>
-        <AlertDialog>
-          <AlertDialogTrigger
-            disabled={archiving}
-            className="inline-flex items-center justify-center rounded-md bg-destructive px-4 py-2 text-sm font-medium text-white hover:bg-destructive/90 transition-colors disabled:opacity-50"
-          >
-            {archiving ? "归档中..." : "归档项目"}
-          </AlertDialogTrigger>
-          <AlertDialogContent className="bg-card border-border">
-            <AlertDialogHeader>
-              <AlertDialogTitle>确认归档项目？</AlertDialogTitle>
-              <AlertDialogDescription>
-                项目 <strong>{project.name}</strong> 将被归档，从项目大厅移除。此操作可以通过数据库恢复。
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>取消</AlertDialogCancel>
-              <AlertDialogAction onClick={handleArchive} className="bg-destructive hover:bg-destructive/90">
-                确认归档
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+      <div className="rounded-xl border border-destructive/30 bg-card p-5 space-y-6">
+        <h2 className="text-sm font-medium text-destructive">危险区域</h2>
+
+        {/* Archive */}
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">
+            归档后项目将不再显示在项目大厅，数据保留但不可访问。
+          </p>
+          <AlertDialog onOpenChange={() => setArchiveConfirmName("")}>
+            <AlertDialogTrigger
+              disabled={archiving}
+              className="inline-flex items-center justify-center rounded-md border border-destructive/50 px-4 py-2 text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+            >
+              {archiving ? "归档中..." : "归档项目"}
+            </AlertDialogTrigger>
+            <AlertDialogContent className="bg-card border-border">
+              <AlertDialogHeader>
+                <AlertDialogTitle>确认归档项目？</AlertDialogTitle>
+                <AlertDialogDescription>
+                  项目 <strong>{project.name}</strong> 将被归档，从项目大厅移除。
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <div className="space-y-1.5 px-1">
+                <Label htmlFor="archive-confirm" className="text-xs text-muted-foreground">
+                  请输入项目名称 <strong className="text-foreground">{project.name}</strong> 以确认
+                </Label>
+                <Input
+                  id="archive-confirm"
+                  value={archiveConfirmName}
+                  onChange={(e) => setArchiveConfirmName(e.target.value)}
+                  placeholder={project.name}
+                  className="bg-input border-border"
+                />
+              </div>
+              <AlertDialogFooter>
+                <AlertDialogCancel>取消</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={handleArchive}
+                  disabled={archiveConfirmName !== project.name || archiving}
+                  className="bg-destructive hover:bg-destructive/90 disabled:opacity-50"
+                >
+                  确认归档
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+
+        <Separator />
+
+        {/* Delete */}
+        <div className="space-y-2">
+          <p className="text-sm text-destructive font-medium">
+            永久删除项目，此操作不可恢复。项目数据、任务记录、代码版本将被永久删除。
+          </p>
+          <AlertDialog onOpenChange={() => { setDeleteConfirmName(""); setDeleteRemoteRepo(true); }}>
+            <AlertDialogTrigger
+              disabled={deleting}
+              className="inline-flex items-center justify-center rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
+            >
+              {deleting ? "删除中..." : "永久删除项目"}
+            </AlertDialogTrigger>
+            <AlertDialogContent className="bg-card border-border">
+              <AlertDialogHeader>
+                <AlertDialogTitle className="text-destructive">永久删除项目</AlertDialogTitle>
+                <AlertDialogDescription>
+                  此操作不可恢复。项目的所有数据（任务、版本、规范、代码记录）将被永久删除。
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <div className="space-y-3 px-1">
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                    <p className="text-sm text-destructive">
+                      删除后无法恢复，请谨慎操作。
+                    </p>
+                  </div>
+                </div>
+                {hasRepo && (
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="delete-remote" className="text-sm text-muted-foreground cursor-pointer">
+                      同时删除 GitHub 远程仓库
+                    </label>
+                    <Switch
+                      id="delete-remote"
+                      checked={deleteRemoteRepo}
+                      onCheckedChange={setDeleteRemoteRepo}
+                    />
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label htmlFor="delete-confirm" className="text-xs text-muted-foreground">
+                    请输入项目名称 <strong className="text-foreground">{project.name}</strong> 以确认
+                  </Label>
+                  <Input
+                    id="delete-confirm"
+                    value={deleteConfirmName}
+                    onChange={(e) => setDeleteConfirmName(e.target.value)}
+                    placeholder={project.name}
+                    className="bg-input border-border"
+                  />
+                </div>
+              </div>
+              <AlertDialogFooter>
+                <AlertDialogCancel>取消</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={handleDelete}
+                  disabled={deleteConfirmName !== project.name || deleting}
+                  className="bg-destructive hover:bg-destructive/90 disabled:opacity-50"
+                >
+                  永久删除
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
       </div>
     </div>
   );
@@ -417,7 +523,7 @@ export default function ProjectSettingsPage() {
 
 function InfoCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-2">
+    <div className="bg-muted/50 rounded-lg border border-border px-3 py-2">
       <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">{label}</p>
       <p className="text-sm text-foreground">{value}</p>
     </div>

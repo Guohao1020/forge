@@ -50,10 +50,10 @@ function LoadingSkeleton() {
       {Array.from({ length: 3 }).map((_, i) => (
         <div
           key={i}
-          className="rounded-xl border border-white/10 bg-white/5 p-5"
+          className="rounded-xl border border-border bg-muted/50 p-5"
         >
-          <div className="h-4 w-40 bg-white/5 rounded mb-3" />
-          <div className="h-3 w-60 bg-white/5 rounded" />
+          <div className="h-4 w-40 bg-muted rounded mb-3" />
+          <div className="h-3 w-60 bg-muted rounded" />
         </div>
       ))}
     </div>
@@ -122,7 +122,7 @@ export default function ArtifactsPage() {
       <div className="rounded-xl border border-border overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-border bg-white/5">
+            <tr className="border-b border-border bg-muted/50">
               <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                 名称
               </th>
@@ -150,18 +150,18 @@ export default function ArtifactsPage() {
             {artifacts.map((art) => (
               <tr
                 key={art.id}
-                className="border-b border-border last:border-0 hover:bg-white/[0.03] transition-colors"
+                className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
               >
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <Package className="h-4 w-4 text-white/40 shrink-0" />
+                    <Package className="h-4 w-4 text-muted-foreground/60 shrink-0" />
                     <span className="font-medium text-foreground">
                       {art.name}
                     </span>
                   </div>
                 </td>
                 <td className="px-4 py-3">
-                  <code className="text-xs font-mono text-white/60 bg-white/5 px-1.5 py-0.5 rounded">
+                  <code className="text-xs font-mono text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">
                     {art.version}
                   </code>
                 </td>
@@ -177,21 +177,21 @@ export default function ArtifactsPage() {
                 <td className="px-4 py-3">
                   <Badge
                     variant="secondary"
-                    className={`text-[10px] ${STATUS_STYLES[art.status] || "bg-white/10 text-white/60"}`}
+                    className={`text-[10px] ${STATUS_STYLES[art.status] || "bg-muted text-muted-foreground"}`}
                   >
                     {STATUS_LABELS[art.status] || art.status}
                   </Badge>
                 </td>
                 <td className="px-4 py-3">
                   {art.registryUrl ? (
-                    <div className="flex items-center gap-1.5 text-xs text-white/40 max-w-[200px]">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground/60 max-w-[200px]">
                       <ExternalLink className="h-3 w-3 shrink-0" />
                       <span className="truncate font-mono">
                         {art.registryUrl}
                       </span>
                     </div>
                   ) : (
-                    <span className="text-white/20">—</span>
+                    <span className="text-muted-foreground/40">—</span>
                   )}
                 </td>
                 <td className="px-4 py-3 text-muted-foreground text-xs">
@@ -211,7 +211,7 @@ export default function ArtifactsPage() {
             .map((a) => (
               <div
                 key={a.id}
-                className="flex items-center gap-2 text-xs text-white/20"
+                className="flex items-center gap-2 text-xs text-muted-foreground/40"
               >
                 <Hash className="h-3 w-3" />
                 <span className="font-mono">

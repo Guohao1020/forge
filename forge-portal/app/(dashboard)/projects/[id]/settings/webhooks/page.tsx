@@ -81,7 +81,7 @@ export default function WebhooksPage() {
     return (
       <div className="space-y-3">
         {[1, 2].map(i => (
-          <div key={i} className="h-16 rounded-lg bg-white/5 animate-pulse" />
+          <div key={i} className="h-16 rounded-lg bg-muted/50 animate-pulse" />
         ))}
       </div>
     );
@@ -99,7 +99,7 @@ export default function WebhooksPage() {
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 transition-colors"
         >
           <Plus size={16} />
           添加 Webhook
@@ -115,7 +115,7 @@ export default function WebhooksPage() {
               value={newUrl}
               onChange={(e) => setNewUrl(e.target.value)}
               placeholder="https://example.com/webhook"
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-white/30 focus:outline-none focus:border-primary/50"
+              className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50"
               autoFocus
             />
           </div>
@@ -126,7 +126,7 @@ export default function WebhooksPage() {
               value={newSecret}
               onChange={(e) => setNewSecret(e.target.value)}
               placeholder="用于 HMAC-SHA256 签名验证"
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-white/30 focus:outline-none focus:border-primary/50"
+              className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50"
             />
           </div>
           <div>
@@ -134,7 +134,7 @@ export default function WebhooksPage() {
             <select
               value={newEvents}
               onChange={(e) => setNewEvents(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+              className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
             >
               {EVENT_OPTIONS.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -146,7 +146,7 @@ export default function WebhooksPage() {
             <button
               onClick={handleCreate}
               disabled={creating || !newUrl.trim()}
-              className="px-4 py-1.5 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50"
+              className="px-4 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50"
             >
               {creating ? "创建中..." : "创建"}
             </button>

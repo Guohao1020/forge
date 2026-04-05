@@ -51,7 +51,7 @@ export default function AdminDashboardPage() {
     return (
       <div className="space-y-4 max-w-5xl">
         {[1, 2, 3].map(i => (
-          <div key={i} className="h-32 rounded-xl bg-white/5 animate-pulse" />
+          <div key={i} className="h-32 rounded-xl bg-muted/50 animate-pulse" />
         ))}
       </div>
     );
@@ -136,15 +136,15 @@ export default function AdminDashboardPage() {
             本月成本
           </h2>
           <div className="grid grid-cols-3 gap-4">
-            <div className="bg-white/5 rounded-lg border border-white/10 px-4 py-3 text-center">
+            <div className="bg-muted/50 rounded-lg border border-border px-4 py-3 text-center">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">预估费用</p>
               <p className="text-2xl font-bold text-foreground">${costs.estimatedCost.toFixed(2)}</p>
             </div>
-            <div className="bg-white/5 rounded-lg border border-white/10 px-4 py-3 text-center">
+            <div className="bg-muted/50 rounded-lg border border-border px-4 py-3 text-center">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">API 调用</p>
               <p className="text-2xl font-bold text-foreground">{formatNumber(costs.totalCalls)}</p>
             </div>
-            <div className="bg-white/5 rounded-lg border border-white/10 px-4 py-3 text-center">
+            <div className="bg-muted/50 rounded-lg border border-border px-4 py-3 text-center">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Token 总量</p>
               <p className="text-2xl font-bold text-foreground">{formatNumber(costs.totalTokens)}</p>
             </div>
@@ -153,7 +153,7 @@ export default function AdminDashboardPage() {
             <div className="space-y-1.5">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider">模型费用明细</p>
               {costs.models.map((m) => (
-                <div key={m.model} className="flex items-center justify-between text-xs bg-white/5 rounded px-3 py-1.5">
+                <div key={m.model} className="flex items-center justify-between text-xs bg-muted/50 rounded px-3 py-1.5">
                   <span className="text-muted-foreground font-mono">{m.model}</span>
                   <div className="flex items-center gap-4">
                     <span className="text-muted-foreground">{m.calls} 次</span>
@@ -213,7 +213,7 @@ function MiniStat({
   color?: string;
 }) {
   return (
-    <div className="bg-white/5 rounded-lg px-3 py-2">
+    <div className="bg-muted/50 rounded-lg px-3 py-2">
       <p className="text-[10px] text-muted-foreground">{label}</p>
       <p className={`text-sm font-semibold ${color}`}>{value}</p>
     </div>

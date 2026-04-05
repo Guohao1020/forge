@@ -37,7 +37,7 @@ const ENV_TYPE_STYLES: Record<string, string> = {
 };
 
 const DEPLOY_STATUS_ICON: Record<string, React.ReactNode> = {
-  PENDING: <Clock className="h-3 w-3 text-white/40" />,
+  PENDING: <Clock className="h-3 w-3 text-muted-foreground/60" />,
   DEPLOYING: <Loader2 className="h-3 w-3 text-blue-400 animate-spin" />,
   DEPLOYED: <CheckCircle2 className="h-3 w-3 text-emerald-400" />,
   FAILED: <XCircle className="h-3 w-3 text-red-400" />,
@@ -67,10 +67,10 @@ function LoadingSkeleton() {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-pulse">
       {Array.from({ length: 3 }).map((_, i) => (
-        <div key={i} className="rounded-xl border border-white/10 bg-white/5 p-5">
-          <div className="h-4 w-20 bg-white/5 rounded mb-4" />
-          <div className="h-6 w-32 bg-white/5 rounded mb-3" />
-          <div className="h-3 w-24 bg-white/5 rounded" />
+        <div key={i} className="rounded-xl border border-border bg-muted/50 p-5">
+          <div className="h-4 w-20 bg-muted rounded mb-4" />
+          <div className="h-6 w-32 bg-muted rounded mb-3" />
+          <div className="h-3 w-24 bg-muted rounded" />
         </div>
       ))}
     </div>
@@ -112,32 +112,32 @@ function DeployHistory({ projectId, envId }: { projectId: string; envId: number 
 
   if (loading) {
     return (
-      <div className="mt-3 pt-3 border-t border-white/5 animate-pulse">
-        <div className="h-3 w-24 bg-white/5 rounded mb-2" />
-        <div className="h-3 w-40 bg-white/5 rounded" />
+      <div className="mt-3 pt-3 border-t border-border/50 animate-pulse">
+        <div className="h-3 w-24 bg-muted rounded mb-2" />
+        <div className="h-3 w-40 bg-muted rounded" />
       </div>
     );
   }
 
   if (records.length === 0) {
     return (
-      <div className="mt-3 pt-3 border-t border-white/5">
-        <p className="text-xs text-white/20">暂无部署记录</p>
+      <div className="mt-3 pt-3 border-t border-border/50">
+        <p className="text-xs text-muted-foreground/40">暂无部署记录</p>
       </div>
     );
   }
 
   return (
-    <div className="mt-3 pt-3 border-t border-white/5 space-y-2">
-      <p className="text-xs text-white/30 mb-2">部署历史</p>
+    <div className="mt-3 pt-3 border-t border-border/50 space-y-2">
+      <p className="text-xs text-muted-foreground/60 mb-2">部署历史</p>
       {records.slice(0, 5).map((rec) => (
         <div key={rec.id} className="flex items-center gap-2 text-xs">
-          {DEPLOY_STATUS_ICON[rec.status] || <Clock className="h-3 w-3 text-white/20" />}
-          <code className="font-mono text-white/50">{rec.version}</code>
-          <span className="text-white/20">
+          {DEPLOY_STATUS_ICON[rec.status] || <Clock className="h-3 w-3 text-muted-foreground/40" />}
+          <code className="font-mono text-muted-foreground">{rec.version}</code>
+          <span className="text-muted-foreground/40">
             {DEPLOY_STATUS_LABELS[rec.status] || rec.status}
           </span>
-          <span className="text-white/15 ml-auto">{formatTime(rec.startedAt)}</span>
+          <span className="text-muted-foreground/30 ml-auto">{formatTime(rec.startedAt)}</span>
         </div>
       ))}
     </div>
@@ -219,19 +219,19 @@ export default function DeployPage() {
           return (
             <div
               key={env.id}
-              className="rounded-xl border border-white/10 bg-white/5 p-5 hover:bg-white/[0.07] transition-colors"
+              className="rounded-xl border border-border bg-muted/50 p-5 hover:bg-muted/70 transition-colors"
             >
               {/* Header: name + type badge */}
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <Server className="h-4 w-4 text-white/40" />
-                  <span className="text-sm font-medium text-white/80">
+                  <Server className="h-4 w-4 text-muted-foreground/60" />
+                  <span className="text-sm font-medium text-foreground/80">
                     {env.name}
                   </span>
                 </div>
                 <Badge
                   variant="secondary"
-                  className={`text-[10px] ${ENV_TYPE_STYLES[env.env_type] || "bg-white/10 text-white/60 border-white/20"}`}
+                  className={`text-[10px] ${ENV_TYPE_STYLES[env.env_type] || "bg-muted text-muted-foreground border-border"}`}
                 >
                   {ENV_TYPE_LABELS[env.env_type] || env.env_type}
                 </Badge>
@@ -240,10 +240,10 @@ export default function DeployPage() {
               {/* Status indicator */}
               <div className="flex items-center gap-2 mb-3">
                 <span
-                  className={`w-2 h-2 rounded-full ${isActive ? "bg-emerald-400" : "bg-white/20"}`}
+                  className={`w-2 h-2 rounded-full ${isActive ? "bg-emerald-400" : "bg-muted-foreground/30"}`}
                 />
                 <span
-                  className={`text-xs ${isActive ? "text-emerald-400" : "text-white/30"}`}
+                  className={`text-xs ${isActive ? "text-emerald-400" : "text-muted-foreground/60"}`}
                 >
                   {isActive ? "运行中" : "未激活"}
                 </span>
@@ -251,14 +251,14 @@ export default function DeployPage() {
 
               {/* Version */}
               <div className="mb-2">
-                <p className="text-xs text-white/30 mb-1">当前版本</p>
-                <p className="text-sm font-mono text-white/60">
+                <p className="text-xs text-muted-foreground/60 mb-1">当前版本</p>
+                <p className="text-sm font-mono text-muted-foreground">
                   {env.current_version || "—"}
                 </p>
               </div>
 
               {/* Last deploy time */}
-              <div className="flex items-center gap-1.5 text-xs text-white/30 mb-3">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground/60 mb-3">
                 <Clock className="h-3 w-3" />
                 <span>
                   {env.last_deploy_at
@@ -279,7 +279,7 @@ export default function DeployPage() {
                     value={deployVersion}
                     onChange={(e) => setDeployVersion(e.target.value)}
                     placeholder="例如: v1.0.0"
-                    className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-foreground placeholder:text-white/30 focus:outline-none focus:border-primary/50"
+                    className="w-full bg-muted/50 border border-border rounded px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
                     autoFocus
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleDeploy(env.id);

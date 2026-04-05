@@ -56,14 +56,14 @@ export function PlanReviewCard({
   const [viewMode, setViewMode] = useState<"dag" | "list">("dag");
 
   return (
-    <div className="border border-white/10 rounded-xl bg-white/[0.03] p-5 my-4">
+    <div className="border border-border rounded-xl bg-muted/30 p-5 my-4">
       <div className="flex items-center gap-2 mb-3">
-        <ListTree className="h-5 w-5 text-[#8B5CF6]" />
-        <h3 className="text-sm font-semibold text-white">方案审查</h3>
+        <ListTree className="h-5 w-5 text-accent" />
+        <h3 className="text-sm font-semibold text-foreground">方案审查</h3>
       </div>
 
       {planData.title && (
-        <h4 className="text-base font-medium text-white mb-3">{planData.title}</h4>
+        <h4 className="text-base font-medium text-foreground mb-3">{planData.title}</h4>
       )}
 
       {/* Summary badges */}
@@ -74,18 +74,18 @@ export function PlanReviewCard({
           </span>
         )}
         {total_estimate_hours != null && (
-          <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-white/5 text-white/50 border border-white/10">
+          <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-muted/50 text-muted-foreground border border-border">
             <Clock className="h-3 w-3" />
             {total_estimate_hours}h
           </span>
         )}
         {parallel_tracks != null && (
-          <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-white/5 text-white/50 border border-white/10">
+          <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-muted/50 text-muted-foreground border border-border">
             <Layers className="h-3 w-3" />
             {parallel_tracks} 条并行通道
           </span>
         )}
-        <span className="px-2 py-0.5 rounded text-xs bg-white/5 text-white/50 border border-white/10">
+        <span className="px-2 py-0.5 rounded text-xs bg-muted/50 text-muted-foreground border border-border">
           {tasks.length} 个子任务
         </span>
       </div>
@@ -98,7 +98,7 @@ export function PlanReviewCard({
             className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
               viewMode === "dag"
                 ? "bg-primary/20 text-primary"
-                : "text-white/40 hover:text-white/60"
+                : "text-muted-foreground/60 hover:text-muted-foreground"
             }`}
           >
             <GitBranch size={12} />
@@ -109,7 +109,7 @@ export function PlanReviewCard({
             className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
               viewMode === "list"
                 ? "bg-primary/20 text-primary"
-                : "text-white/40 hover:text-white/60"
+                : "text-muted-foreground/60 hover:text-muted-foreground"
             }`}
           >
             <ListTree size={12} />
@@ -120,7 +120,7 @@ export function PlanReviewCard({
 
       {/* DAG visualization */}
       {tasks.length > 0 && viewMode === "dag" && (
-        <div className="mb-4 border border-white/5 rounded-lg bg-white/[0.02] p-3">
+        <div className="mb-4 border border-border/50 rounded-lg bg-muted/20 p-3">
           <DagVisualization
             tasks={tasks}
             touchedFiles={(planData as Record<string, unknown>).touched_files as { create?: string[]; modify?: string[] } | undefined}
@@ -134,36 +134,36 @@ export function PlanReviewCard({
           {tasks.map((t) => (
             <div
               key={t.order}
-              className="border border-white/5 rounded-lg bg-white/[0.02] p-3"
+              className="border border-border/50 rounded-lg bg-muted/20 p-3"
             >
               <div className="flex items-start gap-2">
-                <span className="text-xs text-white/30 font-mono mt-0.5 shrink-0 w-5">
+                <span className="text-xs text-muted-foreground/60 font-mono mt-0.5 shrink-0 w-5">
                   {t.order}.
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium text-white">{t.title}</span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] border ${typeColors[t.type] || "text-white/50 bg-white/5 border-white/10"}`}>
+                    <span className="text-sm font-medium text-foreground">{t.title}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] border ${typeColors[t.type] || "text-muted-foreground bg-muted/50 border-border"}`}>
                       {t.type}
                     </span>
                     {t.estimate_hours != null && (
-                      <span className="text-[10px] text-white/30">{t.estimate_hours}h</span>
+                      <span className="text-[10px] text-muted-foreground/60">{t.estimate_hours}h</span>
                     )}
                   </div>
                   {t.description && (
-                    <p className="text-xs text-white/40 mt-1">{t.description}</p>
+                    <p className="text-xs text-muted-foreground/60 mt-1">{t.description}</p>
                   )}
                   {t.files && t.files.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-1.5">
                       {t.files.map((f) => (
-                        <span key={f} className="text-[10px] text-white/30 font-mono bg-white/5 px-1.5 py-0.5 rounded">
+                        <span key={f} className="text-[10px] text-muted-foreground/60 font-mono bg-muted/50 px-1.5 py-0.5 rounded">
                           {f}
                         </span>
                       ))}
                     </div>
                   )}
                   {t.depends_on && t.depends_on.length > 0 && (
-                    <span className="text-[10px] text-white/20 mt-1 block">
+                    <span className="text-[10px] text-muted-foreground/40 mt-1 block">
                       依赖: {t.depends_on.map((d) => `#${d}`).join(", ")}
                     </span>
                   )}
@@ -176,14 +176,14 @@ export function PlanReviewCard({
 
       {/* Risk factors */}
       {risk_factors.length > 0 && (
-        <div className="border border-white/5 rounded-lg bg-white/[0.02] p-2.5 mb-4">
+        <div className="border border-border/50 rounded-lg bg-muted/20 p-2.5 mb-4">
           <div className="flex items-center gap-1.5 mb-1.5">
             <AlertTriangle className="h-3.5 w-3.5 text-yellow-500/60" />
-            <span className="text-xs font-medium text-white/50">风险因素</span>
+            <span className="text-xs font-medium text-muted-foreground">风险因素</span>
           </div>
           <ul className="space-y-1">
             {risk_factors.map((factor, idx) => (
-              <li key={idx} className="text-xs text-white/40 pl-5 relative before:content-[''] before:absolute before:left-2 before:top-[7px] before:w-1 before:h-1 before:rounded-full before:bg-white/20">
+              <li key={idx} className="text-xs text-muted-foreground/60 pl-5 relative before:content-[''] before:absolute before:left-2 before:top-[7px] before:w-1 before:h-1 before:rounded-full before:bg-muted-foreground/40">
                 {factor}
               </li>
             ))}
@@ -196,12 +196,12 @@ export function PlanReviewCard({
         <Button
           onClick={onApprove}
           disabled={isLoading}
-          className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+          className="bg-accent hover:bg-accent/90 text-accent-foreground"
         >
           <CheckCircle className="h-4 w-4 mr-1.5" />
           {isLoading ? "正在启动..." : "批准方案并执行"}
         </Button>
-        <Button variant="ghost" onClick={onRequestChanges} className="text-white/50">
+        <Button variant="ghost" onClick={onRequestChanges} className="text-muted-foreground">
           <Edit3 className="h-4 w-4 mr-1.5" />
           修改方案
         </Button>

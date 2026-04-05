@@ -28,21 +28,21 @@ export function RiskAlert({ risks }: RiskAlertProps) {
   const hasHigh = highCount > 0;
 
   return (
-    <div className="border border-white/10 rounded-lg bg-white/[0.03] my-2 overflow-hidden">
+    <div className="border border-border rounded-lg bg-muted/30 my-2 overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
       >
         <AlertTriangle className={`h-4 w-4 ${hasHigh ? "text-red-400" : "text-yellow-400"}`} />
-        <span className="text-white/80 font-medium">风险识别</span>
-        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/10 text-white/60">
+        <span className="text-foreground/80 font-medium">风险识别</span>
+        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground">
           {risks.length}
         </span>
         <span className="flex-1" />
         {expanded ? (
-          <ChevronDown className="h-3.5 w-3.5 text-white/30" />
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/60" />
         ) : (
-          <ChevronRight className="h-3.5 w-3.5 text-white/30" />
+          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" />
         )}
       </button>
 
@@ -53,7 +53,7 @@ export function RiskAlert({ risks }: RiskAlertProps) {
             return (
               <div
                 key={idx}
-                className="rounded-md border border-white/5 bg-white/[0.02] p-2.5"
+                className="rounded-md border border-border/50 bg-muted/20 p-2.5"
               >
                 <div className="flex items-start gap-2">
                   <span
@@ -61,15 +61,15 @@ export function RiskAlert({ risks }: RiskAlertProps) {
                   >
                     {config.label}
                   </span>
-                  <p className="text-xs text-white/70 leading-relaxed">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
                     {risk.description}
                   </p>
                 </div>
                 {risk.mitigation && (
                   <div className="flex items-start gap-1.5 mt-1.5 ml-1">
-                    <Shield className="h-3 w-3 text-[#8B5CF6] shrink-0 mt-0.5" />
-                    <p className="text-xs text-white/50 leading-relaxed">
-                      <span className="text-[#8B5CF6]/80 font-medium">规避方案: </span>
+                    <Shield className="h-3 w-3 text-accent shrink-0 mt-0.5" />
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      <span className="text-accent/80 font-medium">规避方案: </span>
                       {risk.mitigation}
                     </p>
                   </div>

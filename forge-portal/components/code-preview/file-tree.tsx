@@ -73,7 +73,7 @@ function TreeNodeItem({
       <div>
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1 w-full px-2 py-1 text-xs text-white/50 hover:text-white/70"
+          className="flex items-center gap-1 w-full px-2 py-1 text-xs text-muted-foreground hover:text-foreground/70"
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
           {expanded ? (
@@ -106,8 +106,8 @@ function TreeNodeItem({
       className={cn(
         "flex items-center gap-1.5 w-full px-2 py-1 text-xs transition-colors",
         isSelected
-          ? "bg-[#8B5CF6]/10 text-white"
-          : "text-white/60 hover:text-white/80 hover:bg-white/5"
+          ? "bg-accent/10 text-foreground"
+          : "text-muted-foreground hover:text-foreground/80 hover:bg-muted/50"
       )}
       style={{ paddingLeft: `${depth * 12 + 8}px` }}
     >

@@ -4,8 +4,14 @@ import { useState } from "react";
 import { Send, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+export interface OptionDetail {
+  label: string;
+  reason: string;
+}
+
 interface OptionButtonsProps {
   options: string[];
+  optionDetails?: OptionDetail[];
   onSelect: (selectedOptions: string) => void;
   disabled?: boolean;
 }
@@ -15,7 +21,7 @@ interface OptionButtonsProps {
  * User selects one or more options → clicks confirm → sends combined selection.
  * Supports both single-click quick-select and multi-select + confirm.
  */
-export function OptionButtons({ options, onSelect, disabled = false }: OptionButtonsProps) {
+export function OptionButtons({ options, optionDetails, onSelect, disabled = false }: OptionButtonsProps) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [sent, setSent] = useState(false);
   const labels = "ABCDEFGH";
@@ -59,23 +65,28 @@ export function OptionButtons({ options, onSelect, disabled = false }: OptionBut
                 group flex items-start gap-3 text-left px-4 py-3
                 rounded-xl border transition-all duration-200
                 ${isSelected
-                  ? "bg-[#8B5CF6]/15 border-[#8B5CF6]/40 text-white"
+                  ? "bg-accent/15 border-accent/40 text-foreground"
                   : sent
-                    ? "bg-white/[0.02] border-white/5 text-white/30 cursor-not-allowed"
-                    : "bg-white/[0.03] border-white/10 text-white/70 hover:bg-[#8B5CF6]/10 hover:border-[#8B5CF6]/30 hover:text-white cursor-pointer"
+                    ? "bg-muted/20 border-border/50 text-muted-foreground/40 cursor-not-allowed"
+                    : "bg-muted/30 border-border text-muted-foreground hover:bg-accent/10 hover:border-accent/30 hover:text-foreground cursor-pointer"
                 }
               `}
             >
               <span className={`
                 shrink-0 w-6 h-6 rounded-md flex items-center justify-center text-xs font-semibold transition-all
                 ${isSelected
-                  ? "bg-[#8B5CF6] text-white"
-                  : "bg-white/10 text-white/50 group-hover:bg-[#8B5CF6]/30 group-hover:text-white/80"
+                  ? "bg-accent text-accent-foreground"
+                  : "bg-muted text-muted-foreground group-hover:bg-accent/30 group-hover:text-foreground/80"
                 }
               `}>
                 {isSelected ? <Check className="h-3.5 w-3.5" /> : label}
               </span>
-              <span className="text-sm leading-relaxed">{opt}</span>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-sm leading-relaxed">{opt}</span>
+                {optionDetails?.[i]?.reason && (
+                  <span className="text-xs text-muted-foreground/60 leading-relaxed">{optionDetails[i].reason}</span>
+                )}
+              </div>
             </button>
           );
         })}
@@ -88,12 +99,12 @@ export function OptionButtons({ options, onSelect, disabled = false }: OptionBut
             onClick={handleConfirm}
             disabled={disabled}
             size="sm"
-            className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+            className="bg-accent hover:bg-accent/90 text-accent-foreground"
           >
             <Send className="h-3.5 w-3.5 mr-1.5" />
             确认选择{selected.size > 1 ? `（${selected.size}项）` : ""}
           </Button>
-          <span className="text-xs text-white/30">可多选</span>
+          <span className="text-xs text-muted-foreground/60">可多选</span>
         </div>
       )}
     </div>

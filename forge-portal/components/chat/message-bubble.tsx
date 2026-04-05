@@ -41,7 +41,7 @@ export function MessageBubble({ role, content, createdAt, metadata }: MessageBub
   if (role === "system") {
     return (
       <div className="flex justify-center py-2">
-        <span className="text-xs text-white/30">{content}</span>
+        <span className="text-xs text-muted-foreground/60">{content}</span>
       </div>
     );
   }
@@ -53,8 +53,8 @@ export function MessageBubble({ role, content, createdAt, metadata }: MessageBub
       <div
         className={`max-w-[75%] rounded-2xl px-4 py-3 ${
           isUser
-            ? "bg-[#8B5CF6]/10 text-white rounded-br-md"
-            : "bg-white/5 text-white/80 rounded-bl-md"
+            ? "bg-accent/10 text-foreground rounded-br-md"
+            : "bg-muted/50 text-foreground/80 rounded-bl-md"
         }`}
       >
         {isUser ? (
@@ -64,12 +64,12 @@ export function MessageBubble({ role, content, createdAt, metadata }: MessageBub
         )}
         <div className="flex items-center gap-2 mt-2">
           {!isUser && metadata && typeof metadata.model === "string" && (
-            <span className="text-[10px] text-white/15 font-mono">
+            <span className="text-[10px] text-muted-foreground/30 font-mono">
               {metadata.model.replace(/^(claude|gpt|qwen)/i, (m) => m.charAt(0).toUpperCase() + m.slice(1))}
             </span>
           )}
           {createdAt && (
-            <span className="text-[10px] text-white/15">
+            <span className="text-[10px] text-muted-foreground/30">
               {new Date(createdAt).toLocaleTimeString()}
             </span>
           )}

@@ -44,9 +44,9 @@ function StatusIcon({ status }: { status?: string }) {
     case "READY":
       return <Circle className="w-4 h-4 text-violet-400" />;
     case "SKIPPED":
-      return <Circle className="w-4 h-4 text-white/20" />;
+      return <Circle className="w-4 h-4 text-muted-foreground/40" />;
     default:
-      return <Circle className="w-4 h-4 text-white/20" />;
+      return <Circle className="w-4 h-4 text-muted-foreground/40" />;
   }
 }
 
@@ -96,12 +96,12 @@ export function DagTaskList({ tasks, totalEstimateHours, parallelTracks }: DagTa
             <div className="relative">
               {/* Vertical connector line */}
               {!isLast && (
-                <div className="absolute left-[15px] top-[32px] bottom-0 w-px bg-white/10" />
+                <div className="absolute left-[15px] top-[32px] bottom-0 w-px bg-border" />
               )}
 
               {/* Main row */}
               <CollapsibleTrigger
-                className={`w-full text-left flex items-start gap-3 p-3 rounded-lg bg-white/[0.02] border border-white/5 hover:border-white/10 transition-colors ${
+                className={`w-full text-left flex items-start gap-3 p-3 rounded-lg bg-muted/20 border border-border/50 hover:border-border transition-colors ${
                   hasDetails ? "cursor-pointer" : "cursor-default"
                 }`}
               >
@@ -113,10 +113,10 @@ export function DagTaskList({ tasks, totalEstimateHours, parallelTracks }: DagTa
                 {/* Content */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <p className="text-sm text-white/80 truncate">{task.title}</p>
+                    <p className="text-sm text-foreground/80 truncate">{task.title}</p>
                     {hasDetails && (
                       <ChevronRight
-                        className={`w-3 h-3 text-white/30 transition-transform shrink-0 ${
+                        className={`w-3 h-3 text-muted-foreground/60 transition-transform shrink-0 ${
                           isExpanded ? "rotate-90" : ""
                         }`}
                       />
@@ -126,13 +126,13 @@ export function DagTaskList({ tasks, totalEstimateHours, parallelTracks }: DagTa
                   {/* Dependency + requirement info */}
                   <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
                     {task.depends_on && task.depends_on.length > 0 && (
-                      <span className="text-[11px] text-white/30 flex items-center gap-1">
+                      <span className="text-[11px] text-muted-foreground/60 flex items-center gap-1">
                         <GitBranch className="w-3 h-3" />
                         依赖: [{task.depends_on.join(", ")}]
                       </span>
                     )}
                     {task.requirement_ref && (
-                      <span className="text-[11px] text-white/30">
+                      <span className="text-[11px] text-muted-foreground/60">
                         需求: {task.requirement_ref}
                       </span>
                     )}
@@ -152,7 +152,7 @@ export function DagTaskList({ tasks, totalEstimateHours, parallelTracks }: DagTa
                     </Badge>
                   )}
                   {task.estimate_hours != null && (
-                    <span className="text-[11px] text-white/30 flex items-center gap-0.5">
+                    <span className="text-[11px] text-muted-foreground/60 flex items-center gap-0.5">
                       <Clock className="w-3 h-3" />
                       {task.estimate_hours}h
                     </span>
@@ -166,13 +166,13 @@ export function DagTaskList({ tasks, totalEstimateHours, parallelTracks }: DagTa
                 <CollapsibleContent className="pl-10 pr-3 pb-1">
                   <div className="pt-2 space-y-2">
                     {task.description && (
-                      <p className="text-xs text-white/40 leading-relaxed">
+                      <p className="text-xs text-muted-foreground/60 leading-relaxed">
                         {task.description}
                       </p>
                     )}
                     {task.files && task.files.length > 0 && (
                       <div className="space-y-1">
-                        <p className="text-[11px] text-white/30 flex items-center gap-1">
+                        <p className="text-[11px] text-muted-foreground/60 flex items-center gap-1">
                           <FileCode2 className="w-3 h-3" />
                           涉及文件
                         </p>
@@ -180,7 +180,7 @@ export function DagTaskList({ tasks, totalEstimateHours, parallelTracks }: DagTa
                           {task.files.map((file, fi) => (
                             <li
                               key={fi}
-                              className="text-[11px] text-white/30 font-mono pl-4"
+                              className="text-[11px] text-muted-foreground/60 font-mono pl-4"
                             >
                               {file}
                             </li>
@@ -197,12 +197,12 @@ export function DagTaskList({ tasks, totalEstimateHours, parallelTracks }: DagTa
       })}
 
       {/* Bottom stats */}
-      <div className="flex items-center gap-4 pt-3 border-t border-white/5">
-        <span className="text-xs text-white/40 flex items-center gap-1">
+      <div className="flex items-center gap-4 pt-3 border-t border-border/50">
+        <span className="text-xs text-muted-foreground/60 flex items-center gap-1">
           <Clock className="w-3.5 h-3.5" />
           总工时 {computedTotal} 小时
         </span>
-        <span className="text-xs text-white/40 flex items-center gap-1">
+        <span className="text-xs text-muted-foreground/60 flex items-center gap-1">
           <GitBranch className="w-3.5 h-3.5" />
           可并行 {computedParallel} 条
         </span>

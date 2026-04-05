@@ -215,7 +215,7 @@ export default function PromptsPage() {
               setPage(1);
             }}
           >
-            <SelectTrigger className="w-[160px] bg-white/5 border-white/10 text-white">
+            <SelectTrigger className="w-[160px] bg-muted border-border">
               <SelectValue placeholder="全部用途" />
             </SelectTrigger>
             <SelectContent>
@@ -229,7 +229,7 @@ export default function PromptsPage() {
         </div>
         <Button
           onClick={openCreate}
-          className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+          className="bg-accent hover:bg-accent/90 text-accent-foreground"
         >
           <Plus className="h-4 w-4 mr-2" />
           新建模板
@@ -237,10 +237,10 @@ export default function PromptsPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white/[0.03] border border-white/10 rounded-lg overflow-hidden">
+      <div className="bg-muted/30 border border-border rounded-lg overflow-hidden">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-white/10 text-white/50 text-sm">
+            <tr className="border-b border-border text-muted-foreground text-sm">
               <th className="text-left px-4 py-3 font-medium">名称</th>
               <th className="text-left px-4 py-3 font-medium">用途</th>
               <th className="text-left px-4 py-3 font-medium">版本</th>
@@ -252,13 +252,13 @@ export default function PromptsPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="text-center py-12 text-white/30">
+                <td colSpan={6} className="text-center py-12 text-muted-foreground">
                   加载中...
                 </td>
               </tr>
             ) : templates.length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-center py-12 text-white/30">
+                <td colSpan={6} className="text-center py-12 text-muted-foreground">
                   暂无 Prompt 模板，点击&ldquo;新建模板&rdquo;添加
                 </td>
               </tr>
@@ -266,22 +266,22 @@ export default function PromptsPage() {
               templates.map((tpl) => (
                 <tr
                   key={tpl.id}
-                  className="border-b border-white/5 hover:bg-white/[0.02] transition-colors"
+                  className="border-b border-border hover:bg-muted/20 transition-colors"
                 >
-                  <td className="px-4 py-3 text-white font-medium">
+                  <td className="px-4 py-3 text-foreground font-medium">
                     {tpl.name}
                   </td>
                   <td className="px-4 py-3">
                     <span
                       className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
                         PURPOSE_COLORS[tpl.purpose] ||
-                        "bg-white/10 text-white/70"
+                        "bg-muted text-muted-foreground"
                       }`}
                     >
                       {PURPOSE_LABELS[tpl.purpose] || tpl.purpose}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-white/50 text-sm">
+                  <td className="px-4 py-3 text-muted-foreground text-sm">
                     v{tpl.version}
                   </td>
                   <td className="px-4 py-3">
@@ -289,11 +289,11 @@ export default function PromptsPage() {
                       className={`h-4 w-4 ${
                         tpl.isDefault
                           ? "fill-yellow-400 text-yellow-400"
-                          : "text-white/20"
+                          : "text-muted-foreground/30"
                       }`}
                     />
                   </td>
-                  <td className="px-4 py-3 text-white/50 text-sm">
+                  <td className="px-4 py-3 text-muted-foreground text-sm">
                     {new Date(tpl.updatedAt).toLocaleDateString("zh-CN")}
                   </td>
                   <td className="px-4 py-3 text-right">
@@ -301,7 +301,7 @@ export default function PromptsPage() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 text-white/50 hover:text-white"
+                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
                         onClick={() => openEdit(tpl)}
                       >
                         <Edit2 className="h-4 w-4" />
@@ -309,7 +309,7 @@ export default function PromptsPage() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 text-white/50 hover:text-red-400"
+                        className="h-8 w-8 text-muted-foreground hover:text-red-500"
                         onClick={() => handleDelete(tpl.id)}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -325,7 +325,7 @@ export default function PromptsPage() {
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between text-sm text-white/50">
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
           <span>
             共 {total} 条，第 {page}/{totalPages} 页
           </span>
@@ -354,7 +354,7 @@ export default function PromptsPage() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="bg-[#0A0A12] border-white/10 text-white max-w-[75vw] sm:max-w-[75vw] max-h-[85vh] overflow-y-auto">
+        <DialogContent className="bg-background border-border max-w-[75vw] sm:max-w-[75vw] max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingTemplate ? "编辑 Prompt 模板" : "新建 Prompt 模板"}
@@ -368,7 +368,7 @@ export default function PromptsPage() {
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="如：代码生成默认模板"
-                className="bg-white/5 border-white/10"
+                className="bg-muted border-border"
               />
             </div>
 
@@ -379,7 +379,7 @@ export default function PromptsPage() {
                 value={form.purpose}
                 onValueChange={(v) => v && setForm({ ...form, purpose: v })}
               >
-                <SelectTrigger className="bg-white/5 border-white/10">
+                <SelectTrigger className="bg-muted border-border">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -396,7 +396,7 @@ export default function PromptsPage() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>System Prompt</Label>
-                <span className="text-xs text-white/30">左侧编辑 · 右侧预览</span>
+                <span className="text-xs text-muted-foreground">左侧编辑 · 右侧预览</span>
               </div>
               <div className="grid grid-cols-2 gap-3 min-h-[180px]">
                 <Textarea
@@ -405,9 +405,9 @@ export default function PromptsPage() {
                     setForm({ ...form, systemPrompt: e.target.value })
                   }
                   placeholder="输入系统提示词..."
-                  className="bg-[#0A0A12] border-white/10 font-mono text-sm resize-none h-full overflow-y-auto"
+                  className="bg-[#FAFAFA] border-border font-mono text-sm resize-none h-full overflow-y-auto"
                 />
-                <div className="border border-white/10 rounded-lg bg-[#0A0A12] p-3 overflow-y-auto">
+                <div className="border border-border rounded-lg bg-[#FAFAFA] p-3 overflow-y-auto">
                   <MarkdownPreview content={form.systemPrompt} />
                 </div>
               </div>
@@ -417,7 +417,7 @@ export default function PromptsPage() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>User Template</Label>
-                <span className="text-xs text-white/30">左侧编辑 · 右侧预览</span>
+                <span className="text-xs text-muted-foreground">左侧编辑 · 右侧预览</span>
               </div>
               <div className="grid grid-cols-2 gap-3 min-h-[180px]">
                 <Textarea
@@ -426,9 +426,9 @@ export default function PromptsPage() {
                     setForm({ ...form, userTemplate: e.target.value })
                   }
                   placeholder="输入用户模板，使用 {{variable}} 引用变量..."
-                  className="bg-[#0A0A12] border-white/10 font-mono text-sm resize-none h-full overflow-y-auto"
+                  className="bg-[#FAFAFA] border-border font-mono text-sm resize-none h-full overflow-y-auto"
                 />
-                <div className="border border-white/10 rounded-lg bg-[#0A0A12] p-3 overflow-y-auto">
+                <div className="border border-border rounded-lg bg-[#FAFAFA] p-3 overflow-y-auto">
                   <MarkdownPreview content={form.userTemplate} />
                 </div>
               </div>
@@ -443,13 +443,13 @@ export default function PromptsPage() {
                   onChange={(e) => setVariableInput(e.target.value)}
                   onKeyDown={handleVariableKeyDown}
                   placeholder="输入变量名，回车添加"
-                  className="bg-white/5 border-white/10 flex-1"
+                  className="bg-muted border-border flex-1"
                 />
                 <Button
                   type="button"
                   variant="ghost"
                   onClick={addVariable}
-                  className="text-[#8B5CF6] hover:text-[#7C3AED] shrink-0"
+                  className="text-accent hover:text-[#7C3AED] shrink-0"
                   disabled={!variableInput.trim()}
                 >
                   添加
@@ -460,7 +460,7 @@ export default function PromptsPage() {
                   {form.variables.map((v) => (
                     <span
                       key={v}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#8B5CF6]/10 text-[#8B5CF6] text-xs font-medium"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-accent/10 text-accent text-xs font-medium"
                     >
                       {v}
                       <button
@@ -477,10 +477,10 @@ export default function PromptsPage() {
             </div>
 
             {/* Is Default */}
-            <div className="flex items-center justify-between rounded-lg border border-white/10 px-4 py-3">
+            <div className="flex items-center justify-between rounded-lg border border-border px-4 py-3">
               <div className="space-y-0.5">
                 <Label className="text-sm font-medium">设为默认模板</Label>
-                <p className="text-xs text-white/40">
+                <p className="text-xs text-muted-foreground">
                   同用途下仅一个默认模板，新设默认将替换旧默认
                 </p>
               </div>
@@ -492,7 +492,7 @@ export default function PromptsPage() {
                   setForm({ ...form, isDefault: !form.isDefault })
                 }
                 className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8B5CF6] ${
-                  form.isDefault ? "bg-[#8B5CF6]" : "bg-white/10"
+                  form.isDefault ? "bg-accent" : "bg-muted"
                 }`}
               >
                 <span
@@ -507,13 +507,13 @@ export default function PromptsPage() {
             <Button
               variant="ghost"
               onClick={() => setDialogOpen(false)}
-              className="text-white/50"
+              className="text-muted-foreground"
             >
               取消
             </Button>
             <Button
               onClick={handleSave}
-              className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+              className="bg-accent hover:bg-accent/90 text-accent-foreground"
               disabled={!form.name || !form.systemPrompt}
             >
               {editingTemplate ? "保存修改" : "创建"}

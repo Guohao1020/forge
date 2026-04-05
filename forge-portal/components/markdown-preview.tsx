@@ -11,7 +11,7 @@ interface MarkdownPreviewProps {
 export function MarkdownPreview({ content, className = "" }: MarkdownPreviewProps) {
   if (!content?.trim()) {
     return (
-      <div className={`flex items-center justify-center h-full text-white/20 text-sm ${className}`}>
+      <div className={`flex items-center justify-center h-full text-muted-foreground/40 text-sm ${className}`}>
         在左侧输入 Markdown 内容，这里会实时预览
       </div>
     );

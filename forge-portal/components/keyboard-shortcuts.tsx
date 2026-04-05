@@ -52,8 +52,8 @@ export function KeyboardShortcutsDialog() {
               <div className="flex items-center gap-1">
                 {shortcut.keys.map((key, j) => (
                   <span key={j}>
-                    {j > 0 && <span className="text-white/20 mx-0.5">+</span>}
-                    <kbd className="inline-flex items-center px-2 py-0.5 text-xs bg-white/5 border border-white/10 rounded text-foreground font-mono">
+                    {j > 0 && <span className="text-muted-foreground/40 mx-0.5">+</span>}
+                    <kbd className="inline-flex items-center px-2 py-0.5 text-xs bg-muted/50 border border-border rounded text-foreground font-mono">
                       {key}
                     </kbd>
                   </span>
@@ -63,7 +63,7 @@ export function KeyboardShortcutsDialog() {
           ))}
         </div>
 
-        <div className="mt-4 pt-3 border-t border-white/10 text-center">
+        <div className="mt-4 pt-3 border-t border-border text-center">
           <p className="text-[10px] text-muted-foreground">按 Escape 或 ? 关闭</p>
         </div>
       </div>

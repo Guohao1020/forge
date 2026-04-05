@@ -18,9 +18,9 @@ export default function SpecsLayout({ children }: { children: React.ReactNode })
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="border-b border-white/10 px-6 pt-6 pb-0">
-        <h1 className="text-2xl font-bold text-white mb-1">规范中心</h1>
-        <p className="text-sm text-white/50 mb-4">
+      <div className="border-b border-border px-6 pt-6 pb-0">
+        <h1 className="text-2xl font-bold text-foreground mb-1">规范中心</h1>
+        <p className="text-sm text-muted-foreground mb-4">
           管理编码规范、Prompt 模板、Review 规则和脚手架模板
         </p>
 
@@ -35,8 +35,8 @@ export default function SpecsLayout({ children }: { children: React.ReactNode })
                 className={cn(
                   "flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-lg transition-colors",
                   isActive
-                    ? "bg-white/10 text-white border-b-2 border-[#8B5CF6]"
-                    : "text-white/50 hover:text-white/70 hover:bg-white/5"
+                    ? "bg-muted text-foreground border-b-2 border-accent"
+                    : "text-muted-foreground hover:text-muted-foreground hover:bg-muted/50"
                 )}
               >
                 <tab.icon className="h-4 w-4" />

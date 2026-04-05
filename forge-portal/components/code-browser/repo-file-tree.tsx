@@ -132,18 +132,18 @@ function TreeNodeItem({
       <div>
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1.5 w-full px-2 py-1 text-xs text-white/50 hover:text-white/70 hover:bg-white/5 transition-colors"
+          className="flex items-center gap-1.5 w-full px-2 py-1 text-xs text-muted-foreground hover:text-foreground/70 hover:bg-muted/50 transition-colors"
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
           {expanded ? (
-            <ChevronDown className="h-3 w-3 shrink-0 text-white/30" />
+            <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/60" />
           ) : (
-            <ChevronRight className="h-3 w-3 shrink-0 text-white/30" />
+            <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/60" />
           )}
           {expanded ? (
-            <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[#8B5CF6]/70" />
+            <FolderOpen className="h-3.5 w-3.5 shrink-0 text-accent/70" />
           ) : (
-            <Folder className="h-3.5 w-3.5 shrink-0 text-[#8B5CF6]/70" />
+            <Folder className="h-3.5 w-3.5 shrink-0 text-accent/70" />
           )}
           <span className="truncate">{node.name}</span>
         </button>
@@ -170,13 +170,13 @@ function TreeNodeItem({
       className={cn(
         "flex items-center gap-1.5 w-full px-2 py-1 text-xs transition-colors",
         isSelected
-          ? "bg-[#8B5CF6]/10 text-white"
-          : "text-white/60 hover:text-white/80 hover:bg-white/5"
+          ? "bg-accent/10 text-foreground"
+          : "text-muted-foreground hover:text-foreground/80 hover:bg-muted/50"
       )}
       style={{ paddingLeft: `${depth * 12 + 8}px` }}
     >
       <span className="w-3 shrink-0" />
-      <Icon className="h-3.5 w-3.5 shrink-0 text-white/30" />
+      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
       <span className="truncate">{node.name}</span>
     </button>
   );
@@ -187,7 +187,7 @@ export function RepoFileTree({ files, selectedPath, onSelect }: RepoFileTreeProp
 
   if (files.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-white/20 text-xs py-8">
+      <div className="flex items-center justify-center h-full text-muted-foreground/40 text-xs py-8">
         暂无文件
       </div>
     );

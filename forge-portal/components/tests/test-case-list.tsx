@@ -11,20 +11,20 @@ export function TestCaseList({ files }: TestCaseListProps) {
   if (!files.length) {
     return (
       <div className="px-4 py-8 text-center">
-        <p className="text-sm text-white/30">暂无测试文件</p>
+        <p className="text-sm text-muted-foreground/50">暂无测试文件</p>
       </div>
     );
   }
 
   return (
-    <div className="divide-y divide-white/5">
+    <div className="divide-y divide-border/50">
       {files.map((file) => {
         const fileName = file.path.split("/").pop() || file.path;
         return (
           <div key={file.path}>
-            <div className="flex items-center gap-2 px-4 py-2 bg-white/[0.02]">
-              <FileCode2 size={14} className="text-white/40 shrink-0" />
-              <span className="text-xs font-mono text-white/60 truncate">
+            <div className="flex items-center gap-2 px-4 py-2 bg-muted/20">
+              <FileCode2 size={14} className="text-muted-foreground/60 shrink-0" />
+              <span className="text-xs font-mono text-muted-foreground truncate">
                 {file.path}
               </span>
             </div>
@@ -39,8 +39,8 @@ export function TestCaseList({ files }: TestCaseListProps) {
         );
       })}
 
-      <div className="px-4 py-3 bg-white/[0.01]">
-        <p className="text-xs text-white/30 italic">
+      <div className="px-4 py-3 bg-muted/10">
+        <p className="text-xs text-muted-foreground/50 italic">
           Phase 1: 仅展示 AI 生成的测试代码，运行结果将在后续版本支持
         </p>
       </div>

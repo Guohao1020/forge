@@ -19,16 +19,16 @@ export function TechStackBadge({ techStack }: TechStackBadgeProps) {
   if (!hasLanguages && !hasFrameworks) return null;
 
   return (
-    <div className="flex items-center gap-1.5 flex-wrap px-4 py-2 border-b border-white/5">
-      <Code2 className="h-3.5 w-3.5 text-white/30 shrink-0" />
-      <span className="text-[10px] text-white/30 uppercase tracking-wide mr-1">技术栈</span>
+    <div className="flex items-center gap-1.5 flex-wrap px-4 py-2 border-b border-border/50">
+      <Code2 className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
+      <span className="text-[10px] text-muted-foreground/60 uppercase tracking-wide mr-1">技术栈</span>
       {hasLanguages &&
         Object.entries(languages)
           .sort(([, a], [, b]) => b - a)
           .map(([lang, pct]) => (
             <span
               key={lang}
-              className="px-1.5 py-0.5 rounded text-[10px] bg-[#8B5CF6]/10 text-[#8B5CF6]/80 border border-[#8B5CF6]/15"
+              className="px-1.5 py-0.5 rounded text-[10px] bg-accent/10 text-accent/80 border border-accent/15"
             >
               {lang} {pct}%
             </span>
@@ -37,7 +37,7 @@ export function TechStackBadge({ techStack }: TechStackBadgeProps) {
         frameworks.map((fw) => (
           <span
             key={fw}
-            className="px-1.5 py-0.5 rounded text-[10px] bg-white/5 text-white/50 border border-white/10"
+            className="px-1.5 py-0.5 rounded text-[10px] bg-muted/50 text-muted-foreground border border-border"
           >
             {fw}
           </span>
