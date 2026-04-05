@@ -1,6 +1,6 @@
 # Forge API Reference
 
-> Auto-generated from router.go — v0.4.2, 2026-04-05
+> Auto-generated from router.go — v0.5.1, 2026-04-05
 
 ## Authentication
 
@@ -201,7 +201,7 @@
 | POST | `/api/projects/:id/webhooks` | Yes | PROJECT_ADMIN+ | Register webhook |
 | DELETE | `/api/projects/:id/webhooks/:webhookId` | Yes | PROJECT_ADMIN+ | Delete webhook |
 
-**Total: ~97 endpoints across 22 resource groups**
+**Total: ~99 endpoints across 22 resource groups**
 
 ## Middleware Stack
 
