@@ -54,9 +54,11 @@ func Setup(deps *Deps) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.VersionHeader())
 	r.Use(middleware.RequestID())
 	r.Use(middleware.CORS())
+	r.Use(middleware.MaxBodySize(10 << 20)) // 10MB
 	r.Use(middleware.AccessLog())
 	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(middleware.MetricsMiddleware())
