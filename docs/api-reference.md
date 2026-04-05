@@ -192,7 +192,15 @@
 | GET | `/api/admin/metrics` | No | — | JSON metrics snapshot |
 | GET | `/api/system/info` | No | — | Version, uptime, runtime info |
 
-**Total: ~90 endpoints across 20 resource groups**
+## Webhooks
+
+| Method | Path | Auth | RBAC | Description |
+|--------|------|------|------|-------------|
+| GET | `/api/projects/:id/webhooks` | Yes | Any | List webhooks |
+| POST | `/api/projects/:id/webhooks` | Yes | PROJECT_ADMIN+ | Register webhook |
+| DELETE | `/api/projects/:id/webhooks/:webhookId` | Yes | PROJECT_ADMIN+ | Delete webhook |
+
+**Total: ~93 endpoints across 21 resource groups**
 
 ## Middleware Stack
 
