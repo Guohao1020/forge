@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/shulex/forge/forge-core/internal/config"
 	"github.com/shulex/forge/forge-core/internal/k8s"
 	"go.temporal.io/sdk/client"
@@ -39,6 +40,14 @@ import (
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
+	// Load .env from project root (forge-core/../.env) if present
+	for _, p := range []string{".env", "../.env"} {
+		if err := godotenv.Load(p); err == nil {
+			slog.Info("loaded env file", "path", p)
+			break
+		}
+	}
 
 	cfg := config.Load()
 	cfg.Validate()
@@ -116,7 +125,7 @@ func main() {
 	if temporalClient != nil {
 		temporalInner = temporalClient.Inner()
 	}
-	convService := conversation.NewService(convRepo, taskRepo, temporalInner)
+	convService := conversation.NewService(convRepo, taskRepo, temporalInner, sseHub)
 	convHandler := conversation.NewHandler(convService)
 
 	// Wire Temporal client to project service for auto-profile-scan on import

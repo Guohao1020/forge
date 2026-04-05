@@ -181,8 +181,52 @@ func (s *Service) SyncProjectToRemote(ctx context.Context, id, tenantID, userID 
 	return updated, nil
 }
 
-func (s *Service) Archive(ctx context.Context, id, tenantID int64) error {
+func (s *Service) Archive(ctx context.Context, id, tenantID int64, req *ArchiveProjectRequest) error {
+	p, err := s.repo.GetByID(ctx, id, tenantID, 0)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errors.New("项目不存在")
+	}
+	if err != nil {
+		return err
+	}
+	if req.ConfirmName != p.Name {
+		return errors.New("项目名称不匹配")
+	}
 	return s.repo.Archive(ctx, id, tenantID)
+}
+
+// Delete permanently removes a project and optionally deletes the associated GitHub repository.
+func (s *Service) Delete(ctx context.Context, id, tenantID, userID int64, req *DeleteProjectRequest) error {
+	p, err := s.repo.GetByIDIncludingArchived(ctx, id, tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errors.New("项目不存在")
+	}
+	if err != nil {
+		return err
+	}
+	if req.ConfirmName != p.Name {
+		return errors.New("项目名称不匹配")
+	}
+
+	// Optionally delete the associated GitHub repo
+	if req.DeleteRemoteRepo && p.CodeRepoURL != "" {
+		owner, repo := parseOwnerRepo(p.CodeRepoURL)
+		if owner != "" && repo != "" {
+			token, tokenErr := s.authSvc.GetGitHubToken(ctx, userID)
+			if tokenErr != nil || token == "" {
+				slog.Warn("cannot delete GitHub repo: no token", "project_id", id, "error", tokenErr)
+			} else {
+				ghClient := ghAdapter.NewClient(token)
+				if ghErr := ghClient.DeleteRepo(ctx, owner, repo); ghErr != nil {
+					slog.Warn("failed to delete GitHub repo", "project_id", id, "repo", owner+"/"+repo, "error", ghErr)
+				} else {
+					slog.Info("deleted GitHub repo", "project_id", id, "repo", owner+"/"+repo)
+				}
+			}
+		}
+	}
+
+	return s.repo.HardDelete(ctx, id, tenantID)
 }
 
 func (s *Service) Star(ctx context.Context, projectID, tenantID, userID int64) error {

@@ -444,14 +444,18 @@ func PlanOnlyWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) (m
 		return nil, err
 	}
 
-	// Call AI planning activity
-	var planResult map[string]interface{}
-	err = workflow.ExecuteActivity(aiCtx, "plan_task", map[string]interface{}{
+	// Call AI planning activity with confirmed requirements as structured context
+	planInput := map[string]interface{}{
 		"task_id":             input.TaskID,
 		"tenant_id":           input.TenantID,
 		"project_id":          input.ProjectID,
 		"requirement_summary": input.Requirement,
-	}).Get(ctx, &planResult)
+	}
+	if input.ConfirmedRequirements != nil {
+		planInput["confirmed_requirements"] = input.ConfirmedRequirements
+	}
+	var planResult map[string]interface{}
+	err = workflow.ExecuteActivity(aiCtx, "plan_task", planInput).Get(ctx, &planResult)
 	if err != nil {
 		logger.Error("AI plan failed", "error", err)
 		_ = workflow.ExecuteActivity(localCtx, "FailTask", input.TaskID, err.Error()).Get(ctx, nil)

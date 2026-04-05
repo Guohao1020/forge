@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 
 export interface TaskStreamEvent {
-  type: "connected" | "FULL_STATE" | "TASK_PROGRESS" | "STEPS_UPDATE" | "TASK_COMPLETE" | "code_token" | "analyze_token";
+  type: "connected" | "FULL_STATE" | "TASK_PROGRESS" | "STEPS_UPDATE" | "TASK_COMPLETE" | "code_token" | "analyze_token" | "ANALYSIS_COMPLETE" | "PLAN_COMPLETE";
   task_id: number;
   status?: string;
   step_type?: string;
@@ -18,6 +18,10 @@ interface UseTaskStreamOptions {
   enabled?: boolean;
 }
 
+// Flush interval for batching streaming tokens into state updates (ms).
+// Reduces React re-renders from ~50/s to ~7/s during AI streaming.
+const TOKEN_FLUSH_INTERVAL = 150;
+
 export function useTaskStream({ taskId, onEvent, enabled = true }: UseTaskStreamOptions) {
   const [connected, setConnected] = useState(false);
   const [streamingTokens, setStreamingTokens] = useState("");
@@ -30,10 +34,19 @@ export function useTaskStream({ taskId, onEvent, enabled = true }: UseTaskStream
     onEventRef.current = onEvent;
   });
 
+  // Token accumulation refs — batch updates via interval instead of per-token setState
+  const thinkingBufferRef = useRef("");
+  const codeBufferRef = useRef("");
+  const flushIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const disconnect = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
+    }
+    if (flushIntervalRef.current) {
+      clearInterval(flushIntervalRef.current);
+      flushIntervalRef.current = null;
     }
     setConnected(false);
     setIsStreaming(false);
@@ -46,14 +59,29 @@ export function useTaskStream({ taskId, onEvent, enabled = true }: UseTaskStream
     const token = localStorage.getItem("forge_token");
     if (!token) return;
 
-    // SSE must connect directly to Go backend — Next.js rewrites buffer the response
     const sseBase = process.env.NEXT_PUBLIC_SSE_URL || "http://localhost:8080";
     const url = `${sseBase}/api/stream/tasks/${taskId}?token=${encodeURIComponent(token)}`;
     const es = new EventSource(url);
     eventSourceRef.current = es;
 
+    // Start flush interval for batching token updates
+    flushIntervalRef.current = setInterval(() => {
+      if (thinkingBufferRef.current) {
+        const buf = thinkingBufferRef.current;
+        thinkingBufferRef.current = "";
+        setAnalyzeThinking((prev) => prev + buf);
+      }
+      if (codeBufferRef.current) {
+        const buf = codeBufferRef.current;
+        codeBufferRef.current = "";
+        setStreamingTokens((prev) => prev + buf);
+      }
+    }, TOKEN_FLUSH_INTERVAL);
+
     es.onopen = () => {
       setConnected(true);
+      // Reconnect catch-up: notify parent to re-fetch state in case events were missed
+      onEventRef.current?.({ type: "connected", task_id: Number(taskId) });
     };
 
     es.onmessage = (e) => {
@@ -63,31 +91,36 @@ export function useTaskStream({ taskId, onEvent, enabled = true }: UseTaskStream
           setConnected(true);
         }
 
-        // Handle analyze_token events (AI thinking process)
+        // Handle analyze_token events — accumulate in ref, flush via interval
         if (event.type === "analyze_token") {
           const payload = event.data ?? "";
           try {
             const parsed = JSON.parse(payload);
             if (parsed.event === "thinking_start") {
               setAnalyzeThinking("");
+              thinkingBufferRef.current = "";
               setIsAnalyzing(true);
             } else if (parsed.event === "thinking_end") {
+              // Flush remaining buffer
+              if (thinkingBufferRef.current) {
+                const buf = thinkingBufferRef.current;
+                thinkingBufferRef.current = "";
+                setAnalyzeThinking((prev) => prev + buf);
+              }
               setIsAnalyzing(false);
             } else {
-              // Raw text chunk
-              setAnalyzeThinking((prev) => prev + payload);
+              thinkingBufferRef.current += payload;
+              setIsAnalyzing(true);
             }
           } catch {
-            // Not JSON — treat as raw text chunk
-            setAnalyzeThinking((prev) => prev + payload);
+            thinkingBufferRef.current += payload;
             setIsAnalyzing(true);
           }
         }
 
-        // Handle code_token events
+        // Handle code_token events — accumulate in ref, flush via interval
         if (event.type === "code_token") {
-          const chunk = event.data ?? "";
-          setStreamingTokens((prev) => prev + chunk);
+          codeBufferRef.current += (event.data ?? "");
           setIsStreaming(true);
         }
 
@@ -98,6 +131,7 @@ export function useTaskStream({ taskId, onEvent, enabled = true }: UseTaskStream
           event.status === "RUNNING"
         ) {
           setStreamingTokens("");
+          codeBufferRef.current = "";
           setIsStreaming(false);
         }
 
@@ -107,12 +141,37 @@ export function useTaskStream({ taskId, onEvent, enabled = true }: UseTaskStream
           event.step_type === "GENERATE" &&
           event.status === "COMPLETED"
         ) {
+          // Flush remaining
+          if (codeBufferRef.current) {
+            const buf = codeBufferRef.current;
+            codeBufferRef.current = "";
+            setStreamingTokens((prev) => prev + buf);
+          }
           setIsStreaming(false);
         }
 
-        // Stop streaming on task complete
+        // Clear analyzing state when analysis completes
+        if (event.type === "ANALYSIS_COMPLETE") {
+          if (thinkingBufferRef.current) {
+            const buf = thinkingBufferRef.current;
+            thinkingBufferRef.current = "";
+            setAnalyzeThinking((prev) => prev + buf);
+          }
+          setIsAnalyzing(false);
+        }
+
+        // Stop streaming on task complete — frontend closes SSE
         if (event.type === "TASK_COMPLETE") {
           setIsStreaming(false);
+          setIsAnalyzing(false);
+          // Frontend-initiated close to avoid reconnect loop
+          es.close();
+          eventSourceRef.current = null;
+          if (flushIntervalRef.current) {
+            clearInterval(flushIntervalRef.current);
+            flushIntervalRef.current = null;
+          }
+          setConnected(false);
         }
 
         onEventRef.current?.(event);
@@ -124,24 +183,30 @@ export function useTaskStream({ taskId, onEvent, enabled = true }: UseTaskStream
     es.onerror = () => {
       setConnected(false);
       setIsStreaming(false);
-      // EventSource auto-reconnects; close only if readyState is CLOSED
       if (es.readyState === EventSource.CLOSED) {
         es.close();
         eventSourceRef.current = null;
-        // Retry after 3 seconds
-        setTimeout(() => {
-          // Will be re-established by effect re-run if still mounted
-        }, 3000);
+        // Will be re-established by effect re-run if still mounted
       }
     };
 
     return () => {
       es.close();
       eventSourceRef.current = null;
+      if (flushIntervalRef.current) {
+        clearInterval(flushIntervalRef.current);
+        flushIntervalRef.current = null;
+      }
       setConnected(false);
       setIsStreaming(false);
     };
   }, [taskId, enabled]);
 
-  return { connected, disconnect, streamingTokens, isStreaming, analyzeThinking, isAnalyzing };
+  const resetAnalyzing = useCallback(() => {
+    setAnalyzeThinking("");
+    thinkingBufferRef.current = "";
+    setIsAnalyzing(false);
+  }, []);
+
+  return { connected, disconnect, streamingTokens, isStreaming, analyzeThinking, isAnalyzing, resetAnalyzing };
 }

@@ -90,6 +90,7 @@ func (h *Handler) TriggerAnalysis(c *gin.Context) {
 }
 
 // POST /api/projects/:id/tasks/:taskId/confirm
+// Returns immediately with status "planning". Plan result delivered via SSE PLAN_COMPLETE.
 func (h *Handler) ConfirmPlan(c *gin.Context) {
 	taskID, err := strconv.ParseInt(c.Param("taskId"), 10, 64)
 	if err != nil {

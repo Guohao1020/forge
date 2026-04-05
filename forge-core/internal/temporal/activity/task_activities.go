@@ -16,13 +16,14 @@ import (
 
 // TaskWorkflowInput is the input to the TaskWorkflow.
 type TaskWorkflowInput struct {
-	TaskID      int64                  `json:"task_id"`
-	TenantID    int64                  `json:"tenant_id"`
-	ProjectID   int64                  `json:"project_id"`
-	CreatedBy   int64                  `json:"created_by"`
-	Requirement string                 `json:"requirement"`
-	Title       string                 `json:"title"`
-	PlanResult  map[string]interface{} `json:"plan_result,omitempty"`
+	TaskID                int64                  `json:"task_id"`
+	TenantID              int64                  `json:"tenant_id"`
+	ProjectID             int64                  `json:"project_id"`
+	CreatedBy             int64                  `json:"created_by"`
+	Requirement           string                 `json:"requirement"`
+	Title                 string                 `json:"title"`
+	PlanResult            map[string]interface{} `json:"plan_result,omitempty"`
+	ConfirmedRequirements map[string]interface{} `json:"confirmed_requirements,omitempty"`
 }
 
 type TaskActivities struct {

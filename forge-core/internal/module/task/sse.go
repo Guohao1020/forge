@@ -33,7 +33,16 @@ func (h *SSEHub) Broadcast(taskID int64, event TaskProgressEvent) {
 	if err != nil {
 		return
 	}
+	h.broadcastBytes(taskID, data)
+}
 
+// BroadcastRaw sends pre-serialized JSON bytes to all SSE clients watching a task.
+// Implements the SSEBroadcaster interface used by the conversation service.
+func (h *SSEHub) BroadcastRaw(taskID int64, data []byte) {
+	h.broadcastBytes(taskID, data)
+}
+
+func (h *SSEHub) broadcastBytes(taskID int64, data []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 

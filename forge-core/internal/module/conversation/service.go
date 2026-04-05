@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-
+	"strings"
 	"time"
 
 	"github.com/shulex/forge/forge-core/internal/module/task"
@@ -24,21 +24,37 @@ type TaskRepo interface {
 	SaveStepOutput(ctx context.Context, taskID int64, stepType string, output json.RawMessage) error
 }
 
+// AnalysisCompleteEvent is broadcast via SSE when AI analysis finishes.
+type AnalysisCompleteEvent struct {
+	Type   string `json:"type"`
+	TaskID int64  `json:"task_id"`
+	Status string `json:"status"`
+	Data   string `json:"data,omitempty"`
+}
+
+// SSEBroadcaster broadcasts events to SSE clients watching a task.
+type SSEBroadcaster interface {
+	BroadcastRaw(taskID int64, data []byte)
+}
+
 type Service struct {
 	repo           *Repository
 	taskRepo       TaskRepo
 	temporalClient client.Client // nil if Temporal unavailable
+	sseBroadcaster SSEBroadcaster
 }
 
-func NewService(repo *Repository, taskRepo TaskRepo, tc client.Client) *Service {
+func NewService(repo *Repository, taskRepo TaskRepo, tc client.Client, sse SSEBroadcaster) *Service {
 	return &Service{
 		repo:           repo,
 		taskRepo:       taskRepo,
 		temporalClient: tc,
+		sseBroadcaster: sse,
 	}
 }
 
-// SendMessage saves user message, triggers AI analysis activity, saves AI response.
+// SendMessage saves user message, triggers AI analysis asynchronously, returns immediately.
+// The AI analysis result is delivered via SSE (analyze_token stream + ANALYSIS_COMPLETE event).
 func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, userID int64, content string) (*SendMessageResponse, error) {
 	// Verify task exists
 	t, err := s.taskRepo.FindByID(ctx, taskID)
@@ -69,22 +85,27 @@ func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, 
 		}
 	}
 
-	// Call AI worker via Temporal workflow wrapping analyze_requirement activity
-	aiResponse := "AI 服务当前不可用，请确认 Temporal 和 AI Worker 已启动运行。"
-	aiStatus := "clarify"
-	var aiMetadata map[string]interface{}
+	// Start AI analysis workflow asynchronously — result delivered via SSE
 	if s.temporalClient != nil {
-		// Load conversation history for context
 		history, err := s.repo.ListByTaskID(ctx, taskID)
 		if err != nil {
 			slog.Warn("failed to load conversation history", "task_id", taskID, "error", err)
 		}
 		messages := make([]map[string]interface{}, 0, len(history))
 		for _, h := range history {
-			messages = append(messages, map[string]interface{}{
+			msg := map[string]interface{}{
 				"role":    h.Role,
 				"content": h.Content,
-			})
+			}
+			// Include metadata for assistant messages so the AI worker can
+			// reconstruct the expected conversation format
+			if h.Role == RoleAssistant && h.Metadata != nil {
+				var meta map[string]interface{}
+				if err := json.Unmarshal(*h.Metadata, &meta); err == nil {
+					msg["metadata"] = meta
+				}
+			}
+			messages = append(messages, msg)
 		}
 
 		actInput := map[string]interface{}{
@@ -94,78 +115,106 @@ func (s *Service) SendMessage(ctx context.Context, projectID, taskID, tenantID, 
 			"conversation_history": messages,
 		}
 
-		// Start a lightweight wrapper workflow that calls the Python activity
 		workflowOpts := client.StartWorkflowOptions{
 			ID:        fmt.Sprintf("analyze-%d-%d", taskID, userMsg.ID),
-			TaskQueue: "forge-task-queue", // Go worker queue — runs the wrapper workflow
+			TaskQueue: "forge-task-queue",
 		}
 
 		we, err := s.temporalClient.ExecuteWorkflow(ctx, workflowOpts, "AnalyzeRequirementWorkflow", actInput)
 		if err != nil {
 			slog.Warn("failed to trigger AI analysis", "task_id", taskID, "error", err)
 		} else {
-			// Wait for the result synchronously (with timeout)
-			waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-			defer cancel()
+			// Wait for result in background goroutine, then broadcast via SSE
+			go s.waitAndBroadcastAnalysis(taskID, we)
+		}
+	}
 
-			var result map[string]interface{}
-			if err := we.Get(waitCtx, &result); err != nil {
-				slog.Warn("AI analysis failed", "task_id", taskID, "error", err)
-				aiResponse = "AI 分析遇到问题，请稍后重试。错误: " + err.Error()
-			} else {
-				// Extract AI response content
-				if c, ok := result["content"].(string); ok && c != "" {
-					aiResponse = c
-				}
-				// Extract status and metadata from AI result
-				if status, ok := result["status"].(string); ok && status != "" {
-					aiStatus = status
-				}
-				if md, ok := result["metadata"].(map[string]interface{}); ok {
-					aiMetadata = md
-				}
-				// Extract risks from AI result
-				if risks, ok := result["risks"]; ok {
-					if aiMetadata == nil {
-						aiMetadata = make(map[string]interface{})
-					}
-					aiMetadata["risks"] = risks
-				}
-				// If confirmed, update task analysis
-				if aiStatus == "confirmed" {
-					if metadata, err := json.Marshal(aiMetadata); err == nil {
-						if err := s.taskRepo.UpdateAnalysis(ctx, taskID, string(metadata)); err != nil {
-							slog.Warn("failed to update task analysis", "task_id", taskID, "error", err)
-						}
-					}
+	// Return immediately — AI response will arrive via SSE
+	return &SendMessageResponse{
+		Conversation: userMsg,
+		Status:       "analyzing",
+		Metadata:     nil,
+	}, nil
+}
+
+// waitAndBroadcastAnalysis waits for the Temporal workflow result in background,
+// saves the AI response to DB, and broadcasts ANALYSIS_COMPLETE via SSE.
+func (s *Service) waitAndBroadcastAnalysis(taskID int64, we client.WorkflowRun) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	aiResponse := "AI 分析遇到问题，请稍后重试。"
+	aiStatus := "clarify"
+	var aiMetadata map[string]interface{}
+
+	var result map[string]interface{}
+	if err := we.Get(ctx, &result); err != nil {
+		slog.Warn("AI analysis failed", "task_id", taskID, "error", err)
+		aiResponse = "AI 分析遇到问题，请稍后重试。错误: " + err.Error()
+		aiStatus = "error"
+	} else {
+		if c, ok := result["content"].(string); ok && c != "" {
+			aiResponse = c
+		}
+		if status, ok := result["status"].(string); ok && status != "" {
+			aiStatus = status
+		}
+		if md, ok := result["metadata"].(map[string]interface{}); ok {
+			aiMetadata = md
+		}
+		if risks, ok := result["risks"]; ok {
+			if aiMetadata == nil {
+				aiMetadata = make(map[string]interface{})
+			}
+			aiMetadata["risks"] = risks
+		}
+		if aiStatus == "confirmed" {
+			if metadata, err := json.Marshal(aiMetadata); err == nil {
+				if err := s.taskRepo.UpdateAnalysis(ctx, taskID, string(metadata)); err != nil {
+					slog.Warn("failed to update task analysis", "task_id", taskID, "error", err)
 				}
 			}
 		}
 	}
 
-	// Save AI response (with metadata for options/phase/risks)
+	// Save AI response to DB with message type for frontend routing
+	if aiMetadata == nil {
+		aiMetadata = make(map[string]interface{})
+	}
+	aiMetadata["message_type"] = "analysis"
 	assistantMsg := &Conversation{
 		TaskID:  taskID,
 		Role:    RoleAssistant,
 		Content: aiResponse,
 	}
-	if aiMetadata != nil {
-		metaJSON, _ := json.Marshal(aiMetadata)
-		raw := json.RawMessage(metaJSON)
-		assistantMsg.Metadata = &raw
-	}
+	metaJSON, _ := json.Marshal(aiMetadata)
+	raw := json.RawMessage(metaJSON)
+	assistantMsg.Metadata = &raw
 	if err := s.repo.Create(ctx, assistantMsg); err != nil {
-		return nil, fmt.Errorf("save assistant message: %w", err)
+		slog.Error("failed to save AI response", "task_id", taskID, "error", err)
 	}
 
-	return &SendMessageResponse{
-		Conversation: assistantMsg,
-		Status:       aiStatus,
-		Metadata:     aiMetadata,
-	}, nil
+	// Broadcast ANALYSIS_COMPLETE event via SSE — frontend will fetch new messages
+	if s.sseBroadcaster != nil {
+		eventData := map[string]interface{}{
+			"status":   aiStatus,
+			"metadata": aiMetadata,
+		}
+		dataJSON, _ := json.Marshal(eventData)
+		evt := AnalysisCompleteEvent{
+			Type:   "ANALYSIS_COMPLETE",
+			TaskID: taskID,
+			Status: aiStatus,
+			Data:   string(dataJSON),
+		}
+		evtBytes, _ := json.Marshal(evt)
+		s.sseBroadcaster.BroadcastRaw(taskID, evtBytes)
+	}
 }
 
-// ConfirmPlan confirms requirements, runs PlanOnlyWorkflow, and returns the plan for review.
+// ConfirmPlan confirms requirements, starts PlanOnlyWorkflow asynchronously,
+// and returns immediately. The plan result is delivered via SSE (PLAN_COMPLETE event).
+// This mirrors the async pattern used by SendMessage/waitAndBroadcastAnalysis.
 func (s *Service) ConfirmPlan(ctx context.Context, taskID, tenantID int64) (*PlanConfirmResponse, error) {
 	t, err := s.taskRepo.FindByID(ctx, taskID)
 	if err != nil {
@@ -184,7 +233,6 @@ func (s *Service) ConfirmPlan(ctx context.Context, taskID, tenantID int64) (*Pla
 	if err := s.taskRepo.UpdateStepStatus(ctx, taskID, task.StepTypeAnalyze, task.StepCompleted); err != nil {
 		slog.Warn("failed to mark ANALYZE completed", "task_id", taskID, "error", err)
 	}
-	// Save the last confirmed metadata as ANALYZE step output (P1: requirements document)
 	history, _ := s.repo.ListByTaskID(ctx, taskID)
 	for i := len(history) - 1; i >= 0; i-- {
 		msg := history[i]
@@ -199,34 +247,93 @@ func (s *Service) ConfirmPlan(ctx context.Context, taskID, tenantID int64) (*Pla
 		}
 	}
 
-	// Start PlanOnlyWorkflow — generates plan and returns it
+	// Extract confirmed requirements for planner context
+	var confirmedReqs map[string]interface{}
+	for i := len(history) - 1; i >= 0; i-- {
+		msg := history[i]
+		if msg.Role == RoleAssistant && msg.Metadata != nil {
+			var meta map[string]interface{}
+			if err := json.Unmarshal(*msg.Metadata, &meta); err == nil {
+				if status, ok := meta["status"].(string); ok && status == "confirmed" {
+					confirmedReqs = meta
+					break
+				}
+			}
+		}
+	}
+
+	// Start PlanOnlyWorkflow asynchronously — result delivered via SSE
 	workflowID := fmt.Sprintf("plan-%d", taskID)
 	we, err := s.temporalClient.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
 		ID:        workflowID,
 		TaskQueue: "forge-task-queue",
 	}, "PlanOnlyWorkflow", activity.TaskWorkflowInput{
-		TaskID:      taskID,
-		TenantID:    tenantID,
-		ProjectID:   t.ProjectID,
-		CreatedBy:   t.CreatedBy,
-		Requirement: t.Requirement,
-		Title:       derefStr(t.Title),
+		TaskID:                taskID,
+		TenantID:              tenantID,
+		ProjectID:             t.ProjectID,
+		CreatedBy:             t.CreatedBy,
+		Requirement:           t.Requirement,
+		Title:                 derefStr(t.Title),
+		ConfirmedRequirements: confirmedReqs,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start plan workflow: %w", err)
 	}
 
-	// Wait for plan result (up to 5 minutes)
-	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	// Wait for result in background goroutine, then broadcast via SSE
+	go s.waitAndBroadcastPlan(taskID, we)
+
+	// Return immediately — plan result will arrive via SSE PLAN_COMPLETE event
+	return &PlanConfirmResponse{
+		Status: "planning",
+	}, nil
+}
+
+// waitAndBroadcastPlan waits for the PlanOnlyWorkflow result in background,
+// saves the plan to DB, and broadcasts PLAN_COMPLETE via SSE.
+func (s *Service) waitAndBroadcastPlan(taskID int64, we client.WorkflowRun) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	var planResult map[string]interface{}
-	if err := we.Get(waitCtx, &planResult); err != nil {
-		return nil, fmt.Errorf("plan generation failed: %w", err)
+	if err := we.Get(ctx, &planResult); err != nil {
+		slog.Error("plan generation failed", "task_id", taskID, "error", err)
+
+		// Save error message to conversation
+		errContent := "方案生成失败，请重试。错误: " + err.Error()
+		errMeta := map[string]interface{}{
+			"message_type": "plan_error",
+			"error":        err.Error(),
+		}
+		metaJSON, _ := json.Marshal(errMeta)
+		raw := json.RawMessage(metaJSON)
+		errMsg := &Conversation{
+			TaskID:   taskID,
+			Role:     RoleAssistant,
+			Content:  errContent,
+			Metadata: &raw,
+		}
+		if err := s.repo.Create(ctx, errMsg); err != nil {
+			slog.Error("failed to save plan error message", "task_id", taskID, "error", err)
+		}
+
+		// Broadcast error event via SSE
+		if s.sseBroadcaster != nil {
+			evt := map[string]interface{}{
+				"type":    "PLAN_COMPLETE",
+				"task_id": taskID,
+				"status":  "error",
+				"data":    errContent,
+			}
+			evtBytes, _ := json.Marshal(evt)
+			s.sseBroadcaster.BroadcastRaw(taskID, evtBytes)
+		}
+		return
 	}
 
 	// Format plan as human-readable text for the conversation
 	planText := formatPlanForConversation(planResult)
+	planResult["message_type"] = "plan"
 	planMeta, _ := json.Marshal(planResult)
 	raw := json.RawMessage(planMeta)
 	assistantMsg := &Conversation{
@@ -236,14 +343,19 @@ func (s *Service) ConfirmPlan(ctx context.Context, taskID, tenantID int64) (*Pla
 		Metadata: &raw,
 	}
 	if err := s.repo.Create(ctx, assistantMsg); err != nil {
-		slog.Warn("failed to save plan message", "task_id", taskID, "error", err)
+		slog.Error("failed to save plan message", "task_id", taskID, "error", err)
 	}
 
-	return &PlanConfirmResponse{
-		Conversation: assistantMsg,
-		Status:       "plan_review",
-		PlanData:     planResult,
-	}, nil
+	// Broadcast PLAN_COMPLETE event via SSE — frontend will fetch plan data
+	if s.sseBroadcaster != nil {
+		evt := map[string]interface{}{
+			"type":    "PLAN_COMPLETE",
+			"task_id": taskID,
+			"status":  "plan_review",
+		}
+		evtBytes, _ := json.Marshal(evt)
+		s.sseBroadcaster.BroadcastRaw(taskID, evtBytes)
+	}
 }
 
 // ApprovePlan approves the generated plan and starts the execution workflow.
@@ -430,6 +542,7 @@ func (s *Service) CreateInitialMessage(ctx context.Context, taskID int64, conten
 
 // TriggerAnalysis triggers AI analysis without saving a new user message.
 // Used when the initial message already exists and we just need to trigger AI.
+// Returns immediately — result delivered via SSE.
 func (s *Service) TriggerAnalysis(ctx context.Context, projectID, taskID, tenantID int64) (*SendMessageResponse, error) {
 	t, err := s.taskRepo.FindByID(ctx, taskID)
 	if err != nil {
@@ -449,10 +562,6 @@ func (s *Service) TriggerAnalysis(ctx context.Context, projectID, taskID, tenant
 		}
 	}
 
-	// Call AI worker — same logic as SendMessage but without saving user message
-	aiResponse := "AI 服务当前不可用，请确认 Temporal 和 AI Worker 已启动运行。"
-	aiStatus := "clarify"
-	var aiMetadata map[string]interface{}
 	if s.temporalClient != nil {
 		history, err := s.repo.ListByTaskID(ctx, taskID)
 		if err != nil {
@@ -460,10 +569,17 @@ func (s *Service) TriggerAnalysis(ctx context.Context, projectID, taskID, tenant
 		}
 		messages := make([]map[string]interface{}, 0, len(history))
 		for _, h := range history {
-			messages = append(messages, map[string]interface{}{
+			msg := map[string]interface{}{
 				"role":    h.Role,
 				"content": h.Content,
-			})
+			}
+			if h.Role == RoleAssistant && h.Metadata != nil {
+				var meta map[string]interface{}
+				if err := json.Unmarshal(*h.Metadata, &meta); err == nil {
+					msg["metadata"] = meta
+				}
+			}
+			messages = append(messages, msg)
 		}
 
 		actInput := map[string]interface{}{
@@ -482,59 +598,12 @@ func (s *Service) TriggerAnalysis(ctx context.Context, projectID, taskID, tenant
 		if err != nil {
 			slog.Warn("failed to trigger AI analysis", "task_id", taskID, "error", err)
 		} else {
-			waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-			defer cancel()
-
-			var result map[string]interface{}
-			if err := we.Get(waitCtx, &result); err != nil {
-				slog.Warn("AI analysis failed", "task_id", taskID, "error", err)
-				aiResponse = "AI 分析遇到问题，请稍后重试。错误: " + err.Error()
-			} else {
-				if c, ok := result["content"].(string); ok && c != "" {
-					aiResponse = c
-				}
-				if status, ok := result["status"].(string); ok && status != "" {
-					aiStatus = status
-				}
-				if md, ok := result["metadata"].(map[string]interface{}); ok {
-					aiMetadata = md
-				}
-				if risks, ok := result["risks"]; ok {
-					if aiMetadata == nil {
-						aiMetadata = make(map[string]interface{})
-					}
-					aiMetadata["risks"] = risks
-				}
-				if aiStatus == "confirmed" {
-					if metadata, err := json.Marshal(aiMetadata); err == nil {
-						if err := s.taskRepo.UpdateAnalysis(ctx, taskID, string(metadata)); err != nil {
-							slog.Warn("failed to update task analysis", "task_id", taskID, "error", err)
-						}
-					}
-				}
-			}
+			go s.waitAndBroadcastAnalysis(taskID, we)
 		}
 	}
 
-	// Save AI response (with metadata for options/phase/risks)
-	assistantMsg := &Conversation{
-		TaskID:  taskID,
-		Role:    RoleAssistant,
-		Content: aiResponse,
-	}
-	if aiMetadata != nil {
-		metaJSON, _ := json.Marshal(aiMetadata)
-		raw := json.RawMessage(metaJSON)
-		assistantMsg.Metadata = &raw
-	}
-	if err := s.repo.Create(ctx, assistantMsg); err != nil {
-		return nil, fmt.Errorf("save assistant message: %w", err)
-	}
-
 	return &SendMessageResponse{
-		Conversation: assistantMsg,
-		Status:       aiStatus,
-		Metadata:     aiMetadata,
+		Status: "analyzing",
 	}, nil
 }
 
@@ -544,4 +613,83 @@ func derefStr(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// buildPlanRequirement creates a rich, structured requirement text from confirmed
+// analysis metadata. This gives the planner detailed context (functional requirements,
+// acceptance criteria, non-functional constraints) instead of just raw user input.
+func buildPlanRequirement(meta map[string]interface{}, fallback string) string {
+	var b strings.Builder
+
+	if summary, ok := meta["summary"].(string); ok && summary != "" {
+		b.WriteString("## 需求概述\n")
+		b.WriteString(summary)
+		b.WriteString("\n\n")
+	} else {
+		b.WriteString("## 原始需求\n")
+		b.WriteString(fallback)
+		b.WriteString("\n\n")
+	}
+
+	if reqs, ok := meta["functional_requirements"].([]interface{}); ok && len(reqs) > 0 {
+		b.WriteString("## 功能需求\n")
+		for i, r := range reqs {
+			if s, ok := r.(string); ok {
+				fmt.Fprintf(&b, "%d. %s\n", i+1, s)
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	if nf, ok := meta["non_functional"].(map[string]interface{}); ok {
+		b.WriteString("## 非功能需求\n")
+		for k, v := range nf {
+			if s, ok := v.(string); ok && s != "" {
+				fmt.Fprintf(&b, "- %s: %s\n", k, s)
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	if ac, ok := meta["acceptance_criteria"].([]interface{}); ok && len(ac) > 0 {
+		b.WriteString("## 验收标准\n")
+		for i, a := range ac {
+			if s, ok := a.(string); ok {
+				fmt.Fprintf(&b, "%d. %s\n", i+1, s)
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	if oos, ok := meta["out_of_scope"].([]interface{}); ok && len(oos) > 0 {
+		b.WriteString("## 不在范围内\n")
+		for _, o := range oos {
+			if s, ok := o.(string); ok {
+				fmt.Fprintf(&b, "- %s\n", s)
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	if modules, ok := meta["affected_modules"].([]interface{}); ok && len(modules) > 0 {
+		b.WriteString("## 影响模块\n")
+		names := make([]string, 0, len(modules))
+		for _, m := range modules {
+			if s, ok := m.(string); ok {
+				names = append(names, s)
+			}
+		}
+		b.WriteString(strings.Join(names, ", "))
+		b.WriteString("\n\n")
+	}
+
+	if complexity, ok := meta["estimated_complexity"].(string); ok && complexity != "" {
+		fmt.Fprintf(&b, "预估复杂度: %s\n", complexity)
+	}
+
+	result := b.String()
+	if result == "" {
+		return fallback
+	}
+	return result
 }

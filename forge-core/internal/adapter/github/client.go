@@ -450,6 +450,16 @@ func (c *Client) CreateRepo(ctx context.Context, name, description, orgName stri
 	return &result, nil
 }
 
+// DeleteRepo deletes a GitHub repository. Requires admin/delete permissions on the repo.
+func (c *Client) DeleteRepo(ctx context.Context, owner, repo string) error {
+	resp, err := c.client.Repositories.Delete(ctx, owner, repo)
+	if err != nil {
+		return fmt.Errorf("delete repo %s/%s: %w", owner, repo, err)
+	}
+	c.logRateLimit(resp)
+	return nil
+}
+
 func repoFromGitHub(r *ghlib.Repository) Repository {
 	return Repository{
 		ID:            r.GetID(),

@@ -41,26 +41,28 @@ export async function triggerAnalysis(
   return api.post(`/projects/${projectId}/tasks/${taskId}/analyze`, {}, { timeout: 180000 });
 }
 
+export interface PlanData {
+  title?: string;
+  tasks?: Array<{
+    order: number;
+    title: string;
+    description: string;
+    type: string;
+    files: string[];
+    depends_on: number[];
+    estimate_hours: number;
+    requirement_ref?: string;
+  }>;
+  risk_level?: string;
+  risk_factors?: string[];
+  total_estimate_hours?: number;
+  parallel_tracks?: number;
+}
+
 export interface PlanConfirmResponse {
-  conversation: Conversation;
-  status: string;        // "plan_review"
-  planData: {
-    title?: string;
-    tasks?: Array<{
-      order: number;
-      title: string;
-      description: string;
-      type: string;
-      files: string[];
-      depends_on: number[];
-      estimate_hours: number;
-      requirement_ref?: string;
-    }>;
-    risk_level?: string;
-    risk_factors?: string[];
-    total_estimate_hours?: number;
-    parallel_tracks?: number;
-  };
+  conversation?: Conversation;
+  status: string;        // "planning" (async, plan delivered via SSE)
+  planData?: PlanData;
 }
 
 export async function confirmPlan(

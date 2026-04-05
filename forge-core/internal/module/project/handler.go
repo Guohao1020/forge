@@ -98,7 +98,31 @@ func (h *Handler) Archive(c *gin.Context) {
 		response.Fail(c, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.svc.Archive(c.Request.Context(), id, tenantID); err != nil {
+	var req ArchiveProjectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "请输入项目名称以确认归档")
+		return
+	}
+	if err := h.svc.Archive(c.Request.Context(), id, tenantID, &req); err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (h *Handler) Delete(c *gin.Context) {
+	userID, tenantID := userCtx(c)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req DeleteProjectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "请输入项目名称以确认删除")
+		return
+	}
+	if err := h.svc.Delete(c.Request.Context(), id, tenantID, userID, &req); err != nil {
 		response.Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}

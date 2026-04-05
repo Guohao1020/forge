@@ -46,6 +46,17 @@ type UpdateProjectRequest struct {
 	CodeRepoURL   *string `json:"codeRepoUrl"`
 }
 
+// DeleteProjectRequest requires the user to type the project name to confirm deletion.
+type DeleteProjectRequest struct {
+	ConfirmName      string `json:"confirmName" binding:"required"`
+	DeleteRemoteRepo bool   `json:"deleteRemoteRepo"`
+}
+
+// ArchiveProjectRequest requires the user to type the project name to confirm archival.
+type ArchiveProjectRequest struct {
+	ConfirmName string `json:"confirmName" binding:"required"`
+}
+
 type ListProjectsQuery struct {
 	Search  string `form:"search"`
 	Starred bool   `form:"starred"`

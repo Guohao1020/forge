@@ -145,12 +145,15 @@ func TestUpdateProject(t *testing.T) {
 
 func TestArchiveProject(t *testing.T) {
 	svc, ctx := setupService(t)
+	name := "归档测试_" + uid()
 
 	created, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
-		Name: "归档测试_" + uid(),
+		Name: name,
 	})
 
-	err := svc.Archive(ctx, created.ID, testTenantID)
+	err := svc.Archive(ctx, created.ID, testTenantID, &project.ArchiveProjectRequest{
+		ConfirmName: name,
+	})
 	if err != nil {
 		t.Fatalf("Archive failed: %v", err)
 	}
@@ -308,7 +311,7 @@ func TestListProjects_ArchivedNotShown(t *testing.T) {
 
 	archName := "归档不可见_" + uid()
 	p, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{Name: archName})
-	svc.Archive(ctx, p.ID, testTenantID)
+	svc.Archive(ctx, p.ID, testTenantID, &project.ArchiveProjectRequest{ConfirmName: archName})
 
 	result, _ := svc.List(ctx, testTenantID, testUserID, &project.ListProjectsQuery{
 		Search: archName,
@@ -317,5 +320,179 @@ func TestListProjects_ArchivedNotShown(t *testing.T) {
 	})
 	if result.Total != 0 {
 		t.Fatalf("archived project should not appear in list, got total=%d", result.Total)
+	}
+}
+
+// --- Delete Tests ---
+
+func TestDeleteProject(t *testing.T) {
+	svc, ctx := setupService(t)
+	name := "删除测试_" + uid()
+
+	created, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
+		Name: name,
+	})
+
+	err := svc.Delete(ctx, created.ID, testTenantID, testUserID, &project.DeleteProjectRequest{
+		ConfirmName: name,
+	})
+	if err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	// Deleted project should not be found
+	_, err = svc.GetByID(ctx, created.ID, testTenantID, testUserID)
+	if err == nil {
+		t.Fatal("expected error: deleted project should not be retrievable")
+	}
+
+	// Should not appear in list
+	result, _ := svc.List(ctx, testTenantID, testUserID, &project.ListProjectsQuery{
+		Search: name,
+		Page:   1,
+		Size:   10,
+	})
+	if result.Total != 0 {
+		t.Fatalf("deleted project should not appear in list, got total=%d", result.Total)
+	}
+}
+
+func TestDeleteProject_ConfirmNameMismatch(t *testing.T) {
+	svc, ctx := setupService(t)
+	name := "名称不匹配_" + uid()
+
+	created, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
+		Name: name,
+	})
+
+	err := svc.Delete(ctx, created.ID, testTenantID, testUserID, &project.DeleteProjectRequest{
+		ConfirmName: "wrong-name",
+	})
+	if err == nil {
+		t.Fatal("expected error for confirm name mismatch")
+	}
+
+	// Project should still exist
+	_, err = svc.GetByID(ctx, created.ID, testTenantID, testUserID)
+	if err != nil {
+		t.Fatal("project should still exist after failed delete")
+	}
+}
+
+func TestDeleteProject_CascadeCleanup(t *testing.T) {
+	svc, ctx := setupService(t)
+	name := "级联删除_" + uid()
+
+	created, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
+		Name: name,
+	})
+
+	// Star the project
+	if err := svc.Star(ctx, created.ID, testTenantID, testUserID); err != nil {
+		t.Fatalf("Star failed: %v", err)
+	}
+
+	// Verify starred
+	got, _ := svc.GetByID(ctx, created.ID, testTenantID, testUserID)
+	if !got.Starred {
+		t.Fatal("expected starred=true")
+	}
+
+	// Delete project (CASCADE should clean up stars)
+	err := svc.Delete(ctx, created.ID, testTenantID, testUserID, &project.DeleteProjectRequest{
+		ConfirmName: name,
+	})
+	if err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	// Project should be completely gone
+	_, err = svc.GetByID(ctx, created.ID, testTenantID, testUserID)
+	if err == nil {
+		t.Fatal("expected error: deleted project should not be retrievable")
+	}
+}
+
+func TestDeleteProject_ArchivedProject(t *testing.T) {
+	svc, ctx := setupService(t)
+	name := "归档后删除_" + uid()
+
+	created, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
+		Name: name,
+	})
+
+	// Archive first
+	err := svc.Archive(ctx, created.ID, testTenantID, &project.ArchiveProjectRequest{
+		ConfirmName: name,
+	})
+	if err != nil {
+		t.Fatalf("Archive failed: %v", err)
+	}
+
+	// Now hard delete the archived project
+	err = svc.Delete(ctx, created.ID, testTenantID, testUserID, &project.DeleteProjectRequest{
+		ConfirmName: name,
+	})
+	if err != nil {
+		t.Fatalf("Delete archived project failed: %v", err)
+	}
+}
+
+func TestDeleteProject_NotFound(t *testing.T) {
+	svc, ctx := setupService(t)
+
+	err := svc.Delete(ctx, 99999, testTenantID, testUserID, &project.DeleteProjectRequest{
+		ConfirmName: "nonexistent",
+	})
+	if err == nil {
+		t.Fatal("expected error for non-existent project")
+	}
+}
+
+func TestArchiveProject_ConfirmName(t *testing.T) {
+	svc, ctx := setupService(t)
+	name := "归档确认_" + uid()
+
+	created, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
+		Name: name,
+	})
+
+	// Archive with correct name
+	err := svc.Archive(ctx, created.ID, testTenantID, &project.ArchiveProjectRequest{
+		ConfirmName: name,
+	})
+	if err != nil {
+		t.Fatalf("Archive with correct name failed: %v", err)
+	}
+
+	// Should not be accessible
+	_, err = svc.GetByID(ctx, created.ID, testTenantID, testUserID)
+	if err == nil {
+		t.Fatal("expected error: archived project should not be retrievable")
+	}
+}
+
+func TestArchiveProject_ConfirmNameMismatch(t *testing.T) {
+	svc, ctx := setupService(t)
+	name := "归档不匹配_" + uid()
+
+	created, _ := svc.Create(ctx, testTenantID, testUserID, &project.CreateProjectRequest{
+		Name: name,
+	})
+
+	err := svc.Archive(ctx, created.ID, testTenantID, &project.ArchiveProjectRequest{
+		ConfirmName: "wrong-name",
+	})
+	if err == nil {
+		t.Fatal("expected error for confirm name mismatch")
+	}
+
+	// Project should still be active
+	got, err := svc.GetByID(ctx, created.ID, testTenantID, testUserID)
+	if err != nil {
+		t.Fatal("project should still exist after failed archive")
+	}
+	if got.Status != "ACTIVE" {
+		t.Fatalf("expected status ACTIVE, got '%s'", got.Status)
 	}
 }

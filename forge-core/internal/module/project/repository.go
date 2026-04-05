@@ -170,6 +170,43 @@ func (r *Repository) UpdateTechStack(ctx context.Context, projectID int64, techS
 	return nil
 }
 
+// GetByIDIncludingArchived returns a project regardless of status (including ARCHIVED).
+// Used before deletion to fetch project info for confirmation and GitHub cleanup.
+func (r *Repository) GetByIDIncludingArchived(ctx context.Context, id, tenantID int64) (*Project, error) {
+	var p Project
+	err := r.db.QueryRow(ctx, `
+		SELECT p.id, p.tenant_id, p.name, COALESCE(p.description,''), p.status,
+		       COALESCE(p.code_platform,''), COALESCE(p.code_repo_url,''),
+		       p.default_branch, COALESCE(p.ai_model,''),
+		       p.risk_threshold, p.auto_merge, p.tech_stack, p.created_by, p.created_at, p.updated_at,
+		       false AS starred
+		FROM engine.projects p
+		WHERE p.id = $1 AND p.tenant_id = $2`,
+		id, tenantID,
+	).Scan(
+		&p.ID, &p.TenantID, &p.Name, &p.Description, &p.Status,
+		&p.CodePlatform, &p.CodeRepoURL, &p.DefaultBranch, &p.AIModel,
+		&p.RiskThreshold, &p.AutoMerge, &p.TechStack, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
+		&p.Starred,
+	)
+	return &p, err
+}
+
+// HardDelete permanently removes a project and all its child records (via ON DELETE CASCADE).
+func (r *Repository) HardDelete(ctx context.Context, id, tenantID int64) error {
+	tag, err := r.db.Exec(ctx,
+		`DELETE FROM engine.projects WHERE id = $1 AND tenant_id = $2`,
+		id, tenantID,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("project not found")
+	}
+	return nil
+}
+
 func (r *Repository) Archive(ctx context.Context, id, tenantID int64) error {
 	tag, err := r.db.Exec(ctx,
 		`UPDATE engine.projects SET status = 'ARCHIVED', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
