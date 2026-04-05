@@ -145,6 +145,48 @@ class TestTestWriterAgent:
         assert len(result.structured["test_files"]) == 1
 
 
+class TestProfilerAgent:
+    def test_default_dimension(self):
+        from src.agents.profiler import ProfilerAgent
+        agent = ProfilerAgent(MagicMock())
+        assert agent.dimension == "architecture"
+
+    def test_custom_dimension(self):
+        from src.agents.profiler import ProfilerAgent
+        agent = ProfilerAgent(MagicMock(), dimension="api_catalog")
+        assert agent.dimension == "api_catalog"
+
+    def test_system_prompt_includes_dimension(self):
+        from src.agents.profiler import ProfilerAgent
+        agent = ProfilerAgent(MagicMock(), dimension="db_schema")
+        ctx = ProjectContext()
+        prompt = agent._build_system_prompt(ctx)
+        assert "db_schema" in prompt
+        assert "tables" in prompt
+
+    def test_system_prompt_with_project_context(self):
+        from src.agents.profiler import ProfilerAgent
+        agent = ProfilerAgent(MagicMock(), dimension="api_catalog")
+        ctx = ProjectContext(project_name="forge", project_description="AI platform")
+        prompt = agent._build_system_prompt(ctx)
+        assert "forge" in prompt
+        assert "endpoints" in prompt
+
+    def test_system_prompt_unknown_dimension(self):
+        from src.agents.profiler import ProfilerAgent
+        agent = ProfilerAgent(MagicMock(), dimension="unknown_dim")
+        ctx = ProjectContext()
+        prompt = agent._build_system_prompt(ctx)
+        assert "unknown_dim" not in prompt  # no dimension prompt added
+        assert "architect" in prompt  # base prompt still present
+
+    def test_all_dimensions_have_prompts(self):
+        from src.agents.profiler import DIMENSION_PROMPTS
+        expected = ["api_catalog", "db_schema", "module_graph", "architecture", "business_rules"]
+        for dim in expected:
+            assert dim in DIMENSION_PROMPTS, f"Missing prompt for {dim}"
+
+
 class TestReviewerAgent:
     def test_purpose(self):
         assert ReviewerAgent.purpose == Purpose.REVIEW
