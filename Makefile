@@ -22,8 +22,8 @@ dev-stop:
 test: test-go test-python test-ts test-lint
 
 test-go:
-	cd forge-core && go test ./internal/middleware/... ./internal/module/auth/... ./internal/module/version/... ./internal/module/specs/... ./internal/temporal/... ./internal/pkg/... -count=1
-	cd forge-core && go test ./internal/module/project/... -run TestDetect -count=1
+	cd forge-core && go test ./internal/... -count=1
+	cd forge-bot && go test ./... -count=1
 
 test-python:
 	cd ai-worker && python -m pytest tests/ --tb=short -q
@@ -39,10 +39,15 @@ test-api:
 
 # === Build ===
 
-build: build-core build-portal
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+
+build: build-core build-bot build-portal
 
 build-core:
-	cd forge-core && go build -o forge-core ./cmd/forge-core
+	cd forge-core && go build -ldflags "-X github.com/shulex/forge/forge-core/internal/middleware.Version=$(VERSION)" -o forge-core ./cmd/forge-core
+
+build-bot:
+	cd forge-bot && go build -o forge-bot ./cmd/forge-bot
 
 build-portal:
 	cd forge-portal && npm run build
