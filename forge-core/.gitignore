@@ -1,0 +1,13 @@
+# Binary output
+forge-core
+forge-core.exe
+forge-core.exe~
+
+# Workspaces (AI-generated task code, cloned repos)
+workspaces/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
