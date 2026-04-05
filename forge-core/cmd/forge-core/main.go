@@ -18,6 +18,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/entropy"
 	"github.com/shulex/forge/forge-core/internal/module/search"
 	"github.com/shulex/forge/forge-core/internal/module/settings"
+	"github.com/shulex/forge/forge-core/internal/module/webhook"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/pipeline"
@@ -169,6 +170,10 @@ func main() {
 	// Search module
 	searchHandler := search.NewHandler(db)
 
+	// Webhook module
+	webhookSvc := webhook.NewService(db)
+	webhookHandler := webhook.NewHandler(webhookSvc)
+
 	// Settings module
 	settingsSvc := settings.NewService(db)
 	settingsHandler := settings.NewHandler(settingsSvc)
@@ -198,6 +203,7 @@ func main() {
 		EntropyHandler:      entropyHandler,
 		SearchHandler:       searchHandler,
 		SettingsHandler:     settingsHandler,
+		WebhookHandler:      webhookHandler,
 	})
 
 	// Graceful shutdown

@@ -13,6 +13,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/entropy"
 	"github.com/shulex/forge/forge-core/internal/module/search"
 	"github.com/shulex/forge/forge-core/internal/module/settings"
+	"github.com/shulex/forge/forge-core/internal/module/webhook"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
 	"github.com/shulex/forge/forge-core/internal/module/pipeline"
@@ -48,6 +49,7 @@ type Deps struct {
 	EntropyHandler      *entropy.Handler
 	SearchHandler       *search.Handler
 	SettingsHandler     *settings.Handler
+	WebhookHandler      *webhook.Handler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -294,6 +296,13 @@ func Setup(deps *Deps) *gin.Engine {
 				protected.GET("/admin/costs", middleware.RequireRole(middleware.RolePlatformAdmin), deps.CostHandler.GetMonthlyCosts)
 				protected.GET("/admin/budget", middleware.RequireRole(middleware.RolePlatformAdmin), deps.CostHandler.GetBudgetStatus)
 				protected.GET("/projects/:id/costs", middleware.RequireRole(middleware.RoleProjectAdmin), deps.CostHandler.GetProjectCosts)
+			}
+
+			// Webhooks
+			if deps.WebhookHandler != nil {
+				protected.GET("/projects/:id/webhooks", deps.WebhookHandler.List)
+				protected.POST("/projects/:id/webhooks", middleware.RequireRole(middleware.RoleProjectAdmin), deps.WebhookHandler.Create)
+				protected.DELETE("/projects/:id/webhooks/:webhookId", middleware.RequireRole(middleware.RoleProjectAdmin), deps.WebhookHandler.Delete)
 			}
 
 			// Entropy Management (code quality scans)
