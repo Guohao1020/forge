@@ -17,7 +17,17 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Forge — Harness Engineering Platform",
-  description: "AI-driven Harness Engineering Platform",
+  description: "AI-driven Harness Engineering Platform — 规范约束 + 机械化验证 + 可观测性闭环",
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+    ],
+  },
+  openGraph: {
+    title: "Forge — Harness Engineering Platform",
+    description: "AI-driven code generation with engineering constraints",
+    type: "website",
+  },
 };
 
 export default function RootLayout({

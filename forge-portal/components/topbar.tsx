@@ -24,6 +24,7 @@ export function Topbar() {
   const [showResults, setShowResults] = useState(false);
   const [searching, setSearching] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const doSearch = useCallback(async (q: string) => {
     if (q.length < 2) {
@@ -57,6 +58,23 @@ export function Topbar() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  // Keyboard shortcut: Cmd/Ctrl+K to focus search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        inputRef.current?.focus();
+        setShowResults(true);
+      }
+      if (e.key === "Escape") {
+        setShowResults(false);
+        inputRef.current?.blur();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   return (
     <header className="h-14 flex items-center justify-between px-6 border-b border-[var(--border)] bg-[var(--card)]">
       {/* Search */}
@@ -64,6 +82,7 @@ export function Topbar() {
         <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5">
           <Search size={14} className="text-[var(--muted-foreground)] shrink-0" />
           <input
+            ref={inputRef}
             type="text"
             value={searchQuery}
             onChange={(e) => {
@@ -74,6 +93,9 @@ export function Topbar() {
             placeholder="搜索项目和任务..."
             className="bg-transparent text-sm text-[var(--foreground)] placeholder:text-white/30 focus:outline-none w-full"
           />
+          <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-white/30 bg-white/5 rounded border border-white/10 shrink-0">
+            <span className="text-[9px]">⌘</span>K
+          </kbd>
           {searching && (
             <div className="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin shrink-0" />
           )}
