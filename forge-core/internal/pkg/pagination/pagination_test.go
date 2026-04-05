@@ -52,3 +52,28 @@ func TestParamsOffset(t *testing.T) {
 		}
 	}
 }
+
+func TestNewResult_LargeDataset(t *testing.T) {
+	p := Params{Page: 50, PerPage: 20, Offset: 980}
+	r := NewResult(nil, 1000000, p)
+	if r.TotalPages != 50000 {
+		t.Errorf("expected 50000 pages, got %d", r.TotalPages)
+	}
+	if r.Page != 50 {
+		t.Errorf("expected page 50, got %d", r.Page)
+	}
+}
+
+func TestNewResult_Preserves_Items(t *testing.T) {
+	items := []string{"a", "b", "c"}
+	p := Params{Page: 1, PerPage: 10}
+	r := NewResult(items, 3, p)
+
+	got, ok := r.Items.([]string)
+	if !ok {
+		t.Fatal("items should be []string")
+	}
+	if len(got) != 3 {
+		t.Errorf("expected 3 items, got %d", len(got))
+	}
+}
