@@ -2,13 +2,14 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { FolderOpen, Plus, GitBranch, Search, Star } from "lucide-react";
+import { FolderOpen, Plus, GitBranch, Search, Star, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProjectCard } from "@/components/project-card";
 import { CreateProjectDialog } from "@/components/create-project-dialog";
 import { ConnectPlatformDialog } from "@/components/connect-platform-dialog";
 import { ImportReposDialog } from "@/components/import-repos-dialog";
+import { ActivityFeed } from "@/components/activity-feed";
 import { api } from "@/lib/api";
 
 interface Project {
@@ -166,6 +167,17 @@ export default function ProjectsPage() {
               onStarToggled={fetchProjects}
             />
           ))}
+        </div>
+      )}
+
+      {/* Activity Feed — shown when projects exist */}
+      {!loading && projects.length > 0 && (
+        <div className="mt-8 rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Activity size={14} className="text-primary" />
+            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">最近动态</h3>
+          </div>
+          <ActivityFeed />
         </div>
       )}
 

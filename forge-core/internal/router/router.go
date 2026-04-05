@@ -123,6 +123,9 @@ func Setup(deps *Deps) *gin.Engine {
 				protected.GET("/search", deps.SearchHandler.Search)
 			}
 
+			// Recent activity feed
+			protected.GET("/activity", deps.ProjectHandler.GetRecentActivity)
+
 			// GitHub OAuth
 			protected.GET("/auth/github/authorize", deps.AuthHandler.GitHubAuthorize)
 			protected.GET("/auth/github/callback", deps.AuthHandler.GitHubCallback)
