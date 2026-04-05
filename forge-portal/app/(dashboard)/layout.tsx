@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { Sidebar } from "@/components/sidebar";
 import { Topbar } from "@/components/topbar";
+import { Breadcrumb } from "@/components/breadcrumb";
 
 // Project detail pages manage their own layout (ProjectSidebar + no Topbar)
 const PROJECT_DETAIL_PATTERN = /^\/projects\/\d+/;
@@ -41,6 +42,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div className="flex-1 flex flex-col overflow-hidden">
         <Topbar />
         <main className="flex-1 overflow-auto p-6">
+          <Breadcrumb />
           {children}
         </main>
       </div>
