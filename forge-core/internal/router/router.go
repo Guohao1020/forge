@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/shulex/forge/forge-core/internal/middleware"
+	"github.com/shulex/forge/forge-core/internal/pkg/database"
 	"github.com/shulex/forge/forge-core/internal/module/artifact"
 	"github.com/shulex/forge/forge-core/internal/module/cost"
 	"github.com/shulex/forge/forge-core/internal/module/entropy"
@@ -93,6 +94,11 @@ func Setup(deps *Deps) *gin.Engine {
 		}
 
 		health["uptime"] = time.Since(routerStartTime).Truncate(time.Second).String()
+
+		// Pool stats
+		if deps.DB != nil {
+			health["pool"] = database.GetPoolStats(deps.DB)
+		}
 
 		status := 200
 		if health["status"] == "degraded" {

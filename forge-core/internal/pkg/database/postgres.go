@@ -28,3 +28,25 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	slog.Info("database connected", "host", config.ConnConfig.Host)
 	return pool, nil
 }
+
+// PoolStats returns connection pool statistics.
+type PoolStats struct {
+	TotalConns     int32 `json:"totalConns"`
+	AcquiredConns  int32 `json:"acquiredConns"`
+	IdleConns      int32 `json:"idleConns"`
+	MaxConns       int32 `json:"maxConns"`
+	AcquireCount   int64 `json:"acquireCount"`
+	EmptyAcquire   int64 `json:"emptyAcquireCount"`
+}
+
+func GetPoolStats(pool *pgxpool.Pool) PoolStats {
+	s := pool.Stat()
+	return PoolStats{
+		TotalConns:    s.TotalConns(),
+		AcquiredConns: s.AcquiredConns(),
+		IdleConns:     s.IdleConns(),
+		MaxConns:      s.MaxConns(),
+		AcquireCount:  s.AcquireCount(),
+		EmptyAcquire:  s.EmptyAcquireCount(),
+	}
+}
