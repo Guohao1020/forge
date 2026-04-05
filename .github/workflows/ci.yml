@@ -21,6 +21,13 @@ jobs:
             forge-core/go.sum
             forge-bot/go.sum
 
+      - name: Lint forge-core
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: forge-core
+          version: latest
+          args: --timeout=3m
+
       - name: Build forge-core
         working-directory: forge-core
         run: go build ./cmd/forge-core
