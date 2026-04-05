@@ -10,9 +10,6 @@ jobs:
   go-test:
     name: Go Tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: forge-core
 
     steps:
       - uses: actions/checkout@v4
@@ -20,26 +17,33 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
-          cache-dependency-path: forge-core/go.sum
+          cache-dependency-path: |
+            forge-core/go.sum
+            forge-bot/go.sum
 
-      - name: Build
+      - name: Build forge-core
+        working-directory: forge-core
         run: go build ./cmd/forge-core
 
-      - name: Vet
+      - name: Build forge-bot
+        working-directory: forge-bot
+        run: go build ./cmd/forge-bot
+
+      - name: Vet forge-core
+        working-directory: forge-core
         run: go vet ./internal/...
 
-      - name: Unit Tests
-        run: |
-          go test ./internal/middleware/... \
-                  ./internal/module/auth/... \
-                  ./internal/module/version/... \
-                  ./internal/module/specs/... \
-                  ./internal/temporal/... \
-                  ./internal/pkg/... \
-                  -count=1 -race
+      - name: Vet forge-bot
+        working-directory: forge-bot
+        run: go vet ./...
 
-      - name: Detector Tests
-        run: go test ./internal/module/project/... -run TestDetect -count=1
+      - name: Test forge-core
+        working-directory: forge-core
+        run: go test ./internal/... -count=1 -race
+
+      - name: Test forge-bot
+        working-directory: forge-bot
+        run: go test ./... -count=1 -race
 
   python-test:
     name: Python Tests
@@ -105,14 +109,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set version
+        run: echo "VERSION=$(git describe --tags --always)" >> $GITHUB_ENV
+
       - name: Build forge-core
-        run: docker build -t forge-core:ci ./forge-core
+        run: docker build --build-arg VERSION=$VERSION -t forge-core:ci ./forge-core
 
       - name: Build ai-worker
         run: docker build -t forge-ai-worker:ci ./ai-worker
 
       - name: Build forge-portal
         run: docker build -t forge-portal:ci ./forge-portal
+
+      - name: Build forge-bot
+        run: docker build -t forge-bot:ci ./forge-bot
 
       - name: Verify images
         run: |
