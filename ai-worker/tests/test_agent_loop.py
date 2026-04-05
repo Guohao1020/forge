@@ -244,3 +244,72 @@ class TestExtractJSON:
         text = '```\n{"data": true}\n```'
         result = self.agent._parse_json(text)
         assert result == {"data": True}
+
+
+class TestBuildMessages:
+    """Tests for _build_messages with conversation history."""
+
+    def test_with_conversation_history(self):
+        router = MagicMock()
+        agent = BaseAgent(router)
+        ctx = ProjectContext()
+        ctx.conversation_history = [
+            {"role": "user", "content": "I need a login page"},
+            {"role": "assistant", "content": "Sure, let me plan that"},
+        ]
+        messages = agent._build_messages("Add password reset too", ctx)
+        assert len(messages) == 3
+        assert messages[0]["role"] == "user"
+        assert messages[0]["content"] == "I need a login page"
+        assert messages[1]["role"] == "assistant"
+        assert messages[2]["content"] == "Add password reset too"
+
+    def test_empty_conversation_history(self):
+        router = MagicMock()
+        agent = BaseAgent(router)
+        ctx = ProjectContext()
+        ctx.conversation_history = []
+        messages = agent._build_messages("Hello", ctx)
+        assert len(messages) == 1
+        assert messages[0]["content"] == "Hello"
+
+    def test_conversation_missing_fields(self):
+        router = MagicMock()
+        agent = BaseAgent(router)
+        ctx = ProjectContext()
+        ctx.conversation_history = [
+            {"role": "user"},  # missing content
+            {"content": "test"},  # missing role
+        ]
+        messages = agent._build_messages("end", ctx)
+        assert len(messages) == 3
+        assert messages[0]["content"] == ""  # default for missing
+        assert messages[1]["role"] == "user"  # default for missing
+
+
+class TestToolExceptionHandling:
+    """Test tool execution error paths."""
+
+    @pytest.mark.asyncio
+    async def test_tool_execution_error(self):
+        """Tool that raises should be caught and returned as error string."""
+        router = MagicMock()
+        router.chat = AsyncMock(side_effect=[
+            make_response(
+                content="",
+                stop_reason="tool_use",
+                tool_calls=[{"id": "1", "name": "bad_tool", "input": {}}],
+            ),
+            make_response(content='{"result": "done"}', stop_reason="end_turn"),
+        ])
+
+        async def failing_executor(tool_call):
+            raise ValueError("tool crashed")
+
+        executor = MagicMock()
+        executor.execute = AsyncMock(side_effect=failing_executor)
+
+        agent = BaseAgent(router)
+        tools = [{"name": "bad_tool", "description": "test", "input_schema": {}}]
+        result = await agent.run("test", ProjectContext(), tools=tools, tool_executor=executor)
+        assert result is not None
