@@ -107,6 +107,16 @@ func Setup(deps *Deps) *gin.Engine {
 		c.JSON(200, middleware.GetMetrics())
 	})
 
+	// System info endpoint (version, runtime)
+	r.GET("/api/system/info", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"version":  middleware.Version,
+			"go":       "1.26",
+			"platform": "forge-core",
+			"uptime":   time.Since(routerStartTime).Truncate(time.Second).String(),
+		})
+	})
+
 	api := r.Group("/api")
 	{
 		// Public routes
