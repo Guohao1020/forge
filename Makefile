@@ -37,6 +37,12 @@ test-lint:
 test-api:
 	bash scripts/test-api.sh
 
+smoke-test:
+	bash scripts/smoke-test.sh
+
+bench:
+	cd forge-core && go test ./internal/... -bench=. -benchmem -count=1 -run=^$$
+
 # === Build ===
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
