@@ -1,6 +1,6 @@
 # Forge API Reference
 
-> Auto-generated from router.go — 108 commits, 2026-04-05
+> Auto-generated from router.go — 115 commits, 2026-04-05
 
 ## Authentication
 
@@ -16,6 +16,21 @@
 | Method | Path | Auth | RBAC | Description |
 |--------|------|------|------|-------------|
 | GET | `/api/search?q=keyword` | Yes | Any | Global search (projects + tasks) |
+
+## Activity
+
+| Method | Path | Auth | RBAC | Description |
+|--------|------|------|------|-------------|
+| GET | `/api/activity` | Yes | Any | Recent activity feed |
+
+## Platform Settings
+
+| Method | Path | Auth | RBAC | Description |
+|--------|------|------|------|-------------|
+| GET | `/api/settings` | Yes | Any | List all settings |
+| GET | `/api/settings/:key` | Yes | Any | Get setting value |
+| PUT | `/api/settings/:key` | Yes | PLATFORM_ADMIN | Update setting |
+| PUT | `/api/settings` | Yes | PLATFORM_ADMIN | Bulk update settings |
 
 ## GitHub OAuth
 
@@ -175,8 +190,9 @@
 | GET | `/health` | No | — | Health check |
 | GET | `/metrics` | No | — | Prometheus metrics |
 | GET | `/api/admin/metrics` | No | — | JSON metrics snapshot |
+| GET | `/api/system/info` | No | — | Version, uptime, runtime info |
 
-**Total: ~83 endpoints across 17 resource groups**
+**Total: ~90 endpoints across 20 resource groups**
 
 ## Middleware Stack
 
