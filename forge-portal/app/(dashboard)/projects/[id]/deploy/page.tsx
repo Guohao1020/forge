@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { Rocket, Server, Clock, Play, CheckCircle2, XCircle, Loader2, RotateCcw } from "lucide-react";
+import { Rocket, Server, Clock, Play, CheckCircle2, XCircle, Loader2, RotateCcw, Tag } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -171,13 +171,16 @@ export default function DeployPage() {
     fetchEnvironments();
   }, [fetchEnvironments]);
 
+  const [deployDialogEnv, setDeployDialogEnv] = useState<number | null>(null);
+  const [deployVersion, setDeployVersion] = useState("");
+
   const handleDeploy = async (envId: number) => {
-    // TODO: Replace with real deploy dialog that lets user pick artifact/version
-    // For now, mock deploy with a generated version string
-    const version = `v0.1.${Date.now() % 10000}`;
+    if (!deployVersion.trim()) return;
     try {
       setDeploying(envId);
-      await triggerDeploy(projectId, envId, version);
+      await triggerDeploy(projectId, envId, deployVersion.trim());
+      setDeployDialogEnv(null);
+      setDeployVersion("");
       setRefreshKey((k) => k + 1);
       await fetchEnvironments();
     } catch (err) {
@@ -264,26 +267,55 @@ export default function DeployPage() {
                 </span>
               </div>
 
-              {/* Deploy button */}
-              <Button
-                size="sm"
-                variant="outline"
-                className="w-full text-xs"
-                disabled={isDeploying}
-                onClick={() => handleDeploy(env.id)}
-              >
-                {isDeploying ? (
-                  <>
-                    <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                    部署中...
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-3 w-3 mr-1.5" />
-                    部署
-                  </>
-                )}
-              </Button>
+              {/* Deploy button / dialog */}
+              {deployDialogEnv === env.id ? (
+                <div className="space-y-2 p-2 rounded-lg border border-primary/30 bg-primary/5">
+                  <div className="flex items-center gap-2">
+                    <Tag className="h-3 w-3 text-primary" />
+                    <span className="text-xs text-muted-foreground">部署版本</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={deployVersion}
+                    onChange={(e) => setDeployVersion(e.target.value)}
+                    placeholder="例如: v1.0.0"
+                    className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-foreground placeholder:text-white/30 focus:outline-none focus:border-primary/50"
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleDeploy(env.id);
+                      if (e.key === "Escape") { setDeployDialogEnv(null); setDeployVersion(""); }
+                    }}
+                  />
+                  <div className="flex gap-1.5">
+                    <Button
+                      size="sm"
+                      className="flex-1 text-xs h-7"
+                      disabled={isDeploying || !deployVersion.trim()}
+                      onClick={() => handleDeploy(env.id)}
+                    >
+                      {isDeploying ? <Loader2 className="h-3 w-3 animate-spin" /> : "确认部署"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-xs h-7"
+                      onClick={() => { setDeployDialogEnv(null); setDeployVersion(""); }}
+                    >
+                      取消
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full text-xs"
+                  onClick={() => setDeployDialogEnv(env.id)}
+                >
+                  <Play className="h-3 w-3 mr-1.5" />
+                  部署
+                </Button>
+              )}
 
               {/* Deploy history timeline */}
               <DeployHistory key={refreshKey} projectId={projectId} envId={env.id} />
