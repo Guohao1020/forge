@@ -97,7 +97,8 @@ export default function CodeBrowserPage() {
   );
 
   // Breadcrumb navigation: select a directory path (clear file)
-  const handleBreadcrumbNavigate = useCallback((path: string) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleBreadcrumbNavigate = useCallback((_path: string) => {
     setSelectedPath("");
     setFileContent("");
     // Could expand the tree to this path in future

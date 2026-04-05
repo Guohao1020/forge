@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { GitCommit, ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
+import { GitCommit, ChevronDown, ChevronRight } from "lucide-react";
 import { listTasks, getTaskDetail } from "@/lib/tasks";
 import type { Task, TaskDetail } from "@/lib/tasks";
 import { ChangeSummary } from "@/components/changes/change-summary";

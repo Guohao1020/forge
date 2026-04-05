@@ -191,6 +191,7 @@ export default function TaskDetailPage() {
         setLatestOptions(opts);
 
         // Check for AI recommendations (SP-2)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const recs = res.metadata.recommendations as any;
         if (recs && recs.options && recs.options.length > 0) {
           setLatestRecommendation({

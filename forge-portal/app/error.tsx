@@ -33,12 +33,12 @@ export default function Error({
           >
             重试
           </button>
-          <a
-            href="/projects"
+          <button
+            onClick={() => window.location.href = "/projects"}
             className="px-6 py-2.5 bg-white/5 border border-white/10 text-foreground rounded-lg text-sm font-medium hover:bg-white/10 transition-colors"
           >
             返回首页
-          </a>
+          </button>
         </div>
       </div>
     </div>

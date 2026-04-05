@@ -86,6 +86,7 @@ function EmptyState() {
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function ComingSoonState() {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-white/30">
@@ -198,7 +199,7 @@ function TestStepCard({ output }: { output: TestStepOutput }) {
   );
 }
 
-export function TaskWorkspace({ selectedStep, steps, requirement, streamingTokens, isStreaming }: TaskWorkspaceProps) {
+export function TaskWorkspace({ selectedStep, steps: _steps, requirement, streamingTokens, isStreaming }: TaskWorkspaceProps) {
   if (!selectedStep) {
     return <EmptyState />;
   }

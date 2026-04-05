@@ -52,7 +52,6 @@ function buildTree(files: string[]): TreeNode[] {
 
   // Pre-compute which paths are directories:
   // A path is a directory if any other path starts with it + "/"
-  const pathSet = new Set(files);
   const dirSet = new Set<string>();
   for (const filePath of files) {
     const parts = filePath.split("/");
