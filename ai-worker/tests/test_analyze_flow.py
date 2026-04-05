@@ -649,3 +649,53 @@ class TestEdgeCases:
         result = format_human_response("clarify", data)
         assert "⚪" in result  # default for unknown level
         assert "CRITICAL" in result
+
+
+class TestGenerateFallbackOptions:
+    """Tests for _generate_fallback_options pure logic."""
+
+    def test_chinese_or_pattern(self):
+        from src.activities.analyze import _generate_fallback_options
+        opts = _generate_fallback_options("使用MySQL还是PostgreSQL？")
+        assert len(opts) >= 2
+        assert any("MySQL" in o for o in opts)
+        assert any("PostgreSQL" in o for o in opts)
+
+    def test_chinese_or_pattern_alternative(self):
+        from src.activities.analyze import _generate_fallback_options
+        opts = _generate_fallback_options("前端用React或者Vue？")
+        assert len(opts) >= 2
+
+    def test_yes_no_pattern(self):
+        from src.activities.analyze import _generate_fallback_options
+        opts = _generate_fallback_options("是否需要用户登录功能？")
+        assert len(opts) == 3
+        assert "是的，需要" in opts[0]
+
+    def test_yes_no_pattern_variant(self):
+        from src.activities.analyze import _generate_fallback_options
+        opts = _generate_fallback_options("需不需要支持多语言？")
+        assert len(opts) == 3
+
+    def test_scale_pattern(self):
+        from src.activities.analyze import _generate_fallback_options
+        opts = _generate_fallback_options("预期多少用户同时使用？")
+        assert len(opts) == 3
+        assert "小规模" in opts[0]
+
+    def test_feature_pattern(self):
+        from src.activities.analyze import _generate_fallback_options
+        opts = _generate_fallback_options("需要支持哪些功能？")
+        assert len(opts) == 3
+        assert "基础功能" in opts[0]
+
+    def test_generic_fallback(self):
+        from src.activities.analyze import _generate_fallback_options
+        opts = _generate_fallback_options("你觉得怎么样？")
+        assert len(opts) == 3
+        assert "是的" in opts[0]
+
+    def test_empty_question(self):
+        from src.activities.analyze import _generate_fallback_options
+        opts = _generate_fallback_options("")
+        assert len(opts) == 3  # generic fallback
