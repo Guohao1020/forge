@@ -157,3 +157,63 @@ class TestParallelFetch:
         assert ctx.coding_standards == []
 
         await builder.close()
+
+    @pytest.mark.asyncio
+    async def test_prompt_template_fallback_to_first(self):
+        """When no template has isDefault, should use the first one."""
+        builder = ContextBuilder()
+
+        async def mock_get(url, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            if "specs/prompts" in str(url):
+                mock_resp.json.return_value = {"data": {"items": [
+                    {"systemPrompt": "First template", "userTemplate": "User: {input}"},
+                    {"systemPrompt": "Second template", "userTemplate": "Q: {input}"},
+                ]}}  # None has isDefault
+            elif "specs/effective" in str(url):
+                mock_resp.json.return_value = {"data": {"standards": [], "rules": []}}
+            elif "profiles" in str(url):
+                mock_resp.json.return_value = {"data": {"profiles": []}}
+            else:
+                mock_resp.json.return_value = {"data": {"name": "test", "description": ""}}
+            return mock_resp
+
+        builder._client = MagicMock()
+        builder._client.get = AsyncMock(side_effect=mock_get)
+        builder._client.aclose = AsyncMock()
+
+        ctx = await builder.build(project_id=1, purpose="test")
+        assert ctx.prompt_template_system == "First template"
+
+        await builder.close()
+
+    @pytest.mark.asyncio
+    async def test_prompt_template_with_default(self):
+        """When a template has isDefault, should use that one."""
+        builder = ContextBuilder()
+
+        async def mock_get(url, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            if "specs/prompts" in str(url):
+                mock_resp.json.return_value = {"data": {"items": [
+                    {"systemPrompt": "Not default"},
+                    {"systemPrompt": "Default template", "isDefault": True},
+                ]}}
+            elif "specs/effective" in str(url):
+                mock_resp.json.return_value = {"data": {"standards": [], "rules": []}}
+            elif "profiles" in str(url):
+                mock_resp.json.return_value = {"data": {"profiles": []}}
+            else:
+                mock_resp.json.return_value = {"data": {"name": "test", "description": ""}}
+            return mock_resp
+
+        builder._client = MagicMock()
+        builder._client.get = AsyncMock(side_effect=mock_get)
+        builder._client.aclose = AsyncMock()
+
+        ctx = await builder.build(project_id=1, purpose="test")
+        assert ctx.prompt_template_system == "Default template"
+
+        await builder.close()
