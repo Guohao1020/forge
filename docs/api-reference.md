@@ -1,6 +1,6 @@
 # Forge API Reference
 
-> Auto-generated from router.go — 102 commits, 2026-04-05
+> Auto-generated from router.go — 108 commits, 2026-04-05
 
 ## Authentication
 
@@ -10,6 +10,12 @@
 | POST | `/api/auth/logout` | Yes | — | Invalidate current token |
 | PUT | `/api/auth/password` | Yes | — | Change own password |
 | GET | `/api/auth/me` | Yes | — | Get current user profile + roles |
+
+## Search
+
+| Method | Path | Auth | RBAC | Description |
+|--------|------|------|------|-------------|
+| GET | `/api/search?q=keyword` | Yes | Any | Global search (projects + tasks) |
 
 ## GitHub OAuth
 
@@ -34,6 +40,7 @@
 | POST | `/api/projects/:id/star` | Yes | Any | Star project |
 | DELETE | `/api/projects/:id/star` | Yes | Any | Unstar project |
 | POST | `/api/projects/:id/sync` | Yes | Any | Sync to GitHub |
+| GET | `/api/projects/:id/stats` | Yes | Any | Project stats overview |
 | POST | `/api/projects/:id/detect` | Yes | Any | Detect tech stack |
 
 ## Code Browsing
@@ -169,7 +176,7 @@
 | GET | `/metrics` | No | — | Prometheus metrics |
 | GET | `/api/admin/metrics` | No | — | JSON metrics snapshot |
 
-**Total: ~80 endpoints across 16 resource groups**
+**Total: ~83 endpoints across 17 resource groups**
 
 ## Middleware Stack
 

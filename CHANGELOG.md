@@ -2,6 +2,26 @@
 
 All notable changes to the Forge platform are documented here.
 
+## [0.3.2] — Platform Polish & Search
+
+### Added
+- **Global Search**: `GET /api/search?q=keyword` — searches projects + tasks, ILIKE pattern matching, returns typed results with frontend URLs.
+- **Search Bar**: Topbar search with Cmd/Ctrl+K shortcut, 300ms debounce, dropdown results with type badges.
+- **Project Stats API**: `GET /api/projects/:id/stats` — task counts by status, active versions, quality score.
+- **Project Stats Bar**: Task page shows overview cards (total, completed, in-progress, quality score).
+- **Admin Dashboard**: `/settings/dashboard` — platform health, AI performance, task pipeline, cost summary.
+- **Password Change**: `PUT /api/auth/password` + `/settings/account` page.
+- **Rate Limiting**: Token bucket (60 burst, 10/sec) per user/IP on protected routes.
+- **Access Logging**: Structured JSON logs for Loki ingestion (method, path, status, latency, user_id).
+- **Request Timeout**: 30s context deadline (excludes SSE/streaming), returns 504 on timeout.
+- **Graceful Shutdown**: SIGINT/SIGTERM → 10s drain → proper cleanup.
+- **Enhanced Health Check**: `/health` checks DB + Redis, returns 503 on degradation.
+- **Promtail**: Docker log → Loki pipeline via Docker socket discovery.
+- **Entropy Config UI**: Expandable panel for scan schedule, auto-fix toggles.
+- **Pagination Utility**: `pkg/pagination` with Parse(), NewResult(), 7 tests.
+- **Favicon**: SVG Forge purple anvil icon + OpenGraph meta tags.
+- **Keyboard Shortcut**: Cmd/Ctrl+K for search, Escape to close.
+
 ## [0.3.1] — Phase 3 Extended Modules
 
 ### Added
