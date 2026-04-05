@@ -161,6 +161,7 @@ func Setup(deps *Deps) *gin.Engine {
 			protected.GET("/github/repos", deps.AuthHandler.ListGitHubRepos)
 
 			// Projects (read: any auth user, write: DEVELOPER+, admin: PROJECT_ADMIN+)
+			protected.GET("/projects/templates", deps.ProjectHandler.GetTemplates)
 			protected.POST("/projects/import", middleware.RequireRole(middleware.RoleDeveloper), deps.ProjectHandler.Import)
 			protected.POST("/projects", middleware.RequireRole(middleware.RoleDeveloper), deps.ProjectHandler.Create)
 			protected.GET("/projects", deps.ProjectHandler.List)

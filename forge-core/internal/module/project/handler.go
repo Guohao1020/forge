@@ -166,6 +166,25 @@ func (h *Handler) Unstar(c *gin.Context) {
 	response.OK(c, nil)
 }
 
+// GetTemplates returns the list of available project starter templates.
+// GET /api/projects/templates
+func (h *Handler) GetTemplates(c *gin.Context) {
+	category := c.Query("category")
+	templates := BuiltInTemplates()
+
+	if category != "" {
+		var filtered []ProjectTemplate
+		for _, t := range templates {
+			if t.Category == category {
+				filtered = append(filtered, t)
+			}
+		}
+		templates = filtered
+	}
+
+	response.OK(c, gin.H{"templates": templates})
+}
+
 // GetStats returns task/version/quality statistics for the project.
 // GET /api/projects/:id/stats
 func (h *Handler) GetStats(c *gin.Context) {
