@@ -21,8 +21,9 @@ RUN go mod download
 
 # Build
 COPY . .
+ARG VERSION=dev
 RUN go build \
-    -ldflags="-s -w -X main.version=$(date +%Y%m%d)" \
+    -ldflags="-s -w -X github.com/shulex/forge/forge-core/internal/middleware.Version=${VERSION}" \
     -o /forge-core \
     ./cmd/forge-core
 
@@ -43,6 +44,6 @@ COPY --from=builder /app/migrations ./migrations
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
-    CMD wget -qO- http://localhost:8080/api/auth/me || exit 1
+    CMD wget -qO- http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["forge-core"]

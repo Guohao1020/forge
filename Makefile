@@ -55,9 +55,10 @@ build-portal:
 # === Docker ===
 
 docker:
-	docker build -t forge-core:latest ./forge-core
+	docker build --build-arg VERSION=$(VERSION) -t forge-core:$(VERSION) -t forge-core:latest ./forge-core
 	docker build -t forge-ai-worker:latest ./ai-worker
 	docker build -t forge-portal:latest ./forge-portal
+	docker build -t forge-bot:latest ./forge-bot
 	docker build -t forge-task-runner:latest ./docker/task-runner
 
 # === Deploy ===
