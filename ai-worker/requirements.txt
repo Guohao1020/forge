@@ -10,7 +10,9 @@ dashscope>=1.20.0
 httpx>=0.28.0
 
 # Config
+pydantic>=2.0.0
 pydantic-settings>=2.7.0
+pyyaml>=6.0
 
 # Redis (streaming)
 redis[hiredis]>=5.0.0
