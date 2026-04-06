@@ -1124,7 +1124,53 @@ class SkillRegistry:
 
 - [ ] **Step 4: Create 6 skill markdown files**
 
-Extract the existing hardcoded system prompts from each agent into `ai-worker/skills/` as markdown files. Each file has frontmatter (name, purpose, tools) + the full system prompt as markdown body.
+Extract hardcoded system prompts from each agent into `ai-worker/skills/` as markdown files.
+
+**IMPORTANT**: Each agent's `_build_system_prompt()` adds dynamic content on top of the base prompt:
+- **AnalystAgent**: base prompt only (project context added by base class)
+- **CoderAgent**: adds `_build_language_constraints(tech_stack)` dynamically — keep this in the agent, only extract the base prompt to markdown
+- **PlannerAgent**: adds confirmed_requirements from analyzer — keep this in the agent
+- **ReviewerAgent**: adds review_rules from context — keep this in the agent
+- **TestWriterAgent**: adds tech_stack detection — keep this in the agent
+- **ProfilerAgent**: has 5 dimension-specific sub-prompts — extract the base prompt + all 5 dimension prompts as separate sections
+
+**Skill file format** (example `skills/analyze.md`):
+
+```markdown
+---
+name: requirement-analysis
+description: Progressive requirement clarification through structured conversation
+purpose: analyze
+tools: []
+---
+
+You are a senior product analyst embedded in Forge, an AI engineering platform.
+Your role is to deeply understand user requirements through a structured, progressive conversation — one question at a time.
+
+## 语言规则
+- 始终使用中文回复用户
+- 技术术语可保留英文（如 API, Redis, WebSocket）
+
+## 核心原则
+
+1. **一次只问一个问题** — 绝不同时抛出多个问题
+2. **多选题优先** — 尽可能提供选项（A/B/C）
+3. **递进式深入** — 先理解大方向，再逐步细化
+4. **每轮确认** — 每个回合先简短复述理解，再提问
+5. **YAGNI** — 不要过度设计
+
+[... rest of ANALYST_SYSTEM_PROMPT from analyst.py lines 7-118 ...]
+```
+
+**Each skill file copies the FULL base prompt constant** from the corresponding agent file. The agent's `_build_system_prompt()` method then loads from SkillLoader and appends its dynamic sections (language constraints, confirmed requirements, review rules, tech stack, dimension prompts).
+
+Create all 6 files:
+- `skills/analyze.md` — from `ANALYST_SYSTEM_PROMPT` in `analyst.py:7-118`
+- `skills/generate.md` — from `CODER_SYSTEM_PROMPT` in `coder.py:7-113`
+- `skills/plan.md` — from `PLANNER_SYSTEM_PROMPT` in `planner.py:7-37`
+- `skills/review.md` — from `REVIEWER_SYSTEM_PROMPT` in `reviewer.py:7-69`
+- `skills/test-writing.md` — from `TEST_WRITER_SYSTEM_PROMPT` in `test_writer.py:7-25`
+- `skills/profile.md` — from `PROFILER_SYSTEM_PROMPT` in `profiler.py:66-72` + `DIMENSION_PROMPTS` dict in `profiler.py:7-64` (all 5 dimensions as ## sections)
 
 - [ ] **Step 5: Run tests**
 
@@ -1574,22 +1620,161 @@ git commit -m "feat(harness): PermissionChecker with mode-based authorization"
 ### Task 7: API Providers — 适配现有 ModelRouter
 
 **Files:**
-- Create: `ai-worker/src/openharness/api/providers/anthropic.py`
-- Create: `ai-worker/src/openharness/api/providers/openai_compat.py`
-- Modify: `ai-worker/src/models/client.py` — 实现 SupportsStreamingMessages
-- Modify: `ai-worker/src/models/router.py` — 委托给新 API clients
+- Create: `ai-worker/src/openharness/api/providers/__init__.py`
+- Create: `ai-worker/src/openharness/api/providers/router_adapter.py`
 - Test: `ai-worker/tests/test_api_providers.py`
 
-- [ ] **Step 1: Write failing test for Anthropic provider**
+**设计决策**: 不重写 4 个 provider caller，而是把现有 `ModelRouter` 整体适配为 `SupportsStreamingMessages` 协议。这保留了 ModelRouter 的降级链、熔断器、Purpose 路由等全部能力。
 
-- [ ] **Step 2: Implement providers wrapping existing callers**
+- [ ] **Step 1: Write failing test**
 
-Wrap the existing `call_anthropic()`, `call_openai()`, `call_dashscope()`, `call_deepseek()` functions into classes implementing `SupportsStreamingMessages`. The ModelRouter continues to handle fallback chains and circuit breakers.
+```python
+# tests/test_api_providers.py
+import pytest
+from unittest.mock import AsyncMock, patch
+from src.openharness.api.providers.router_adapter import ModelRouterAdapter
+from src.openharness.api.client import ApiMessageRequest, ApiTextDeltaEvent, ApiMessageCompleteEvent
+from src.openharness.engine.messages import ConversationMessage, TextBlock
+from src.openharness.api.usage import UsageSnapshot
+from src.models.router import ModelRouter, Purpose
 
-- [ ] **Step 3: Run tests, commit**
+@pytest.mark.asyncio
+async def test_router_adapter_stream_message():
+    """Adapter wraps ModelRouter.chat() into SupportsStreamingMessages."""
+    router = ModelRouter()
+
+    # Mock the chat method to return a simple response
+    mock_response = AsyncMock()
+    mock_response.content = "Hello world"
+    mock_response.model = "test-model"
+    mock_response.provider = "test"
+    mock_response.input_tokens = 10
+    mock_response.output_tokens = 5
+    mock_response.latency_ms = 100
+    mock_response.stop_reason = "end_turn"
+    mock_response.tool_calls = []
+    mock_response.raw_content = None
+
+    with patch.object(router, 'chat', return_value=mock_response):
+        adapter = ModelRouterAdapter(router, purpose=Purpose.GENERATE)
+
+        request = ApiMessageRequest(
+            model="test-model",
+            messages=[ConversationMessage.from_user_text("hi")],
+            system_prompt="You are helpful.",
+        )
+
+        events = []
+        async for event in adapter.stream_message(request):
+            events.append(event)
+
+        assert len(events) == 2  # TextDelta + MessageComplete
+        assert isinstance(events[0], ApiTextDeltaEvent)
+        assert events[0].text == "Hello world"
+        assert isinstance(events[1], ApiMessageCompleteEvent)
+        assert events[1].usage.total_tokens == 15
+```
+
+- [ ] **Step 2: Run to verify fails**
+
+Run: `cd ai-worker && python -m pytest tests/test_api_providers.py -v`
+
+- [ ] **Step 3: Implement router_adapter.py**
+
+```python
+# src/openharness/api/providers/router_adapter.py
+"""Adapt existing ModelRouter to SupportsStreamingMessages protocol."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, AsyncIterator
+
+from src.models.router import ModelRouter, Purpose
+from src.models.client import LLMResponse
+from ..client import ApiMessageRequest, ApiTextDeltaEvent, ApiMessageCompleteEvent
+from ..usage import UsageSnapshot
+from ...engine.messages import ConversationMessage, TextBlock, ToolUseBlock
+
+logger = logging.getLogger(__name__)
+
+
+class ModelRouterAdapter:
+    """Wraps ModelRouter to implement SupportsStreamingMessages.
+
+    Converts between OpenHarness message format and the existing
+    Anthropic-style messages that ModelRouter expects.
+    """
+
+    def __init__(self, router: ModelRouter, purpose: Purpose = Purpose.GENERATE) -> None:
+        self._router = router
+        self._purpose = purpose
+
+    async def stream_message(self, request: ApiMessageRequest) -> AsyncIterator:
+        """Convert request, call router, yield events."""
+        # Convert OpenHarness messages to router format
+        system = request.system_prompt or ""
+        messages = self._convert_messages(request.messages)
+        tools = request.tools
+
+        # Call existing router (non-streaming for now, streaming in future)
+        response: LLMResponse = await self._router.chat(
+            system=system,
+            messages=messages,
+            purpose=self._purpose,
+            tools=tools,
+        )
+
+        # Yield text delta event
+        if response.content:
+            yield ApiTextDeltaEvent(text=response.content)
+
+        # Build ConversationMessage from response
+        content_blocks = []
+        if response.content:
+            content_blocks.append(TextBlock(text=response.content))
+
+        # Add tool calls if present
+        if response.tool_calls:
+            for tc in response.tool_calls:
+                content_blocks.append(ToolUseBlock(
+                    id=tc.get("id", ""),
+                    name=tc.get("name", ""),
+                    input=tc.get("input", {}),
+                ))
+
+        msg = ConversationMessage(role="assistant", content=content_blocks)
+        usage = UsageSnapshot(
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+        )
+
+        yield ApiMessageCompleteEvent(
+            message=msg,
+            usage=usage,
+            stop_reason=response.stop_reason,
+        )
+
+    def _convert_messages(self, messages: list[ConversationMessage]) -> list[dict[str, Any]]:
+        """Convert OpenHarness messages to router's expected format."""
+        result = []
+        for msg in messages:
+            # Simple text messages
+            if len(msg.content) == 1 and isinstance(msg.content[0], TextBlock):
+                result.append({"role": msg.role, "content": msg.content[0].text})
+            else:
+                # Multi-block messages (tool results, etc.) — use Anthropic format
+                result.append(msg.to_api_param())
+        return result
+```
+
+- [ ] **Step 4: Run tests, commit**
+
+Run: `cd ai-worker && python -m pytest tests/test_api_providers.py -v`
 
 ```bash
-git commit -m "feat(harness): API provider adapters implementing SupportsStreamingMessages"
+git add ai-worker/src/openharness/api/providers/ ai-worker/tests/test_api_providers.py
+git commit -m "feat(harness): ModelRouterAdapter — bridge existing router to SupportsStreamingMessages"
 ```
 
 ---
@@ -1597,94 +1782,391 @@ git commit -m "feat(harness): API provider adapters implementing SupportsStreami
 ### Task 8: Agent 改造 — 委托给 QueryEngine
 
 **Files:**
-- Modify: `ai-worker/src/agents/base.py` — BaseAgent 使用 QueryEngine
-- Modify: `ai-worker/src/agents/analyst.py` — 从 Skill 加载 prompt
-- Modify: `ai-worker/src/agents/coder.py`
-- Modify: `ai-worker/src/agents/reviewer.py`
-- Modify: `ai-worker/src/agents/planner.py`
-- Modify: `ai-worker/src/agents/test_writer.py`
-- Modify: `ai-worker/src/agents/profiler.py`
-- Modify: `ai-worker/src/activities/analyze.py`
-- Modify: `ai-worker/src/activities/generate.py`
-- Modify: `ai-worker/src/activities/plan.py`
-- Modify: `ai-worker/src/activities/review.py`
-- Modify: `ai-worker/src/activities/profile.py`
-- Modify: `ai-worker/src/worker.py`
-- Test: `ai-worker/tests/test_agent_loop.py`
+- Modify: `ai-worker/src/agents/base.py` — 添加 QueryEngine 路径（保留旧路径向后兼容）
+- Modify: `ai-worker/src/worker.py` — 启动时初始化 Harness 基础设施
+- Test: `ai-worker/tests/test_agent_loop.py` — 更新测试
 
-- [ ] **Step 1: Refactor BaseAgent to use QueryEngine internally**
+**设计决策**: 不一次性改所有 Agent。先在 BaseAgent 中添加 QueryEngine 支持作为**可选路径**，旧代码保持不动。Agent 子类可以逐步迁移。Activities 完全不改。
 
-BaseAgent becomes a thin wrapper: builds QueryEngine with the right skill prompt, tool registry, and hooks, then calls `engine.submit_message()`. The existing `run()` method signature stays the same for backward compatibility — Activities don't change.
-
-- [ ] **Step 2: Update each Agent to load prompt from SkillLoader**
-
-Replace hardcoded system prompts with `skill_registry.get("generate").content` etc.
-
-- [ ] **Step 3: Update worker.py to bootstrap Harness**
+- [ ] **Step 1: Write test for new engine path**
 
 ```python
-# worker.py — new initialization
-from src.openharness.tools import create_default_tool_registry
-from src.openharness.hooks.loader import HookRegistry
-from src.openharness.hooks.executor import HookExecutor
-from src.openharness.skills.loader import load_skill_registry
+# tests/test_agent_engine.py
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+from src.agents.base import BaseAgent, AgentResult
+from src.context.builder import ProjectContext
+from src.models.router import ModelRouter, Purpose
 
-# At startup:
-skill_registry = load_skill_registry("skills/")
-tool_registry = create_default_tool_registry()
-hook_registry = HookRegistry()
-hook_executor = HookExecutor(hook_registry)
+@pytest.mark.asyncio
+async def test_base_agent_run_legacy_path():
+    """Verify legacy run() still works without QueryEngine."""
+    router = MagicMock(spec=ModelRouter)
+    mock_response = MagicMock()
+    mock_response.content = '{"status": "ok"}'
+    mock_response.model = "test"
+    mock_response.provider = "test"
+    mock_response.input_tokens = 10
+    mock_response.output_tokens = 5
+    mock_response.latency_ms = 100
+    mock_response.stop_reason = "end_turn"
+    mock_response.tool_calls = []
+    router.chat = AsyncMock(return_value=mock_response)
+
+    class TestAgent(BaseAgent):
+        purpose = Purpose.GENERATE
+
+    agent = TestAgent(router)
+    ctx = ProjectContext(
+        project_name="test", project_description="test",
+        tech_stack={}, coding_standards=[], review_rules=[],
+        prompt_template_system="", prompt_template_user="",
+        conversation_history=[], project_profiles={},
+    )
+    result = await agent.run("test input", ctx)
+    assert isinstance(result, AgentResult)
+    assert result.structured == {"status": "ok"}
 ```
 
-- [ ] **Step 4: Run existing tests to verify backward compatibility**
+- [ ] **Step 2: Run to verify existing behavior preserved**
+
+Run: `cd ai-worker && python -m pytest tests/test_agent_engine.py tests/test_agent_loop.py -v`
+
+- [ ] **Step 3: Add Harness bootstrap to worker.py**
+
+```python
+# Add to worker.py main() function, before worker.run():
+import logging
+logger = logging.getLogger(__name__)
+
+# Initialize Harness infrastructure (graceful — errors don't block startup)
+try:
+    from src.openharness.skills.loader import load_skill_registry
+    from src.openharness.tools.base import ToolRegistry
+    from src.openharness.hooks.loader import HookRegistry
+    from src.openharness.hooks.executor import HookExecutor
+
+    skill_registry = load_skill_registry("skills/")
+    tool_registry = ToolRegistry()
+    hook_registry = HookRegistry()
+    hook_executor = HookExecutor(hook_registry)
+
+    logger.info(
+        "Harness initialized: %d skills, %d tools, %d hooks",
+        len(skill_registry.list_skills()),
+        len(tool_registry.list_tools()),
+        sum(len(h) for h in hook_registry._hooks.values()) if hasattr(hook_registry, '_hooks') else 0,
+    )
+except ImportError as e:
+    logger.warning("Harness infrastructure not available: %s", e)
+    skill_registry = None
+    tool_registry = None
+    hook_executor = None
+```
+
+- [ ] **Step 4: Run full test suite**
 
 Run: `cd ai-worker && python -m pytest tests/ -v`
-Expected: All existing tests still pass
+Expected: ALL existing tests pass + new test passes
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git commit -m "refactor(harness): agents delegate to QueryEngine, skills loaded from markdown"
+git add ai-worker/src/agents/base.py ai-worker/src/worker.py ai-worker/tests/test_agent_engine.py
+git commit -m "feat(harness): Harness bootstrap in worker + BaseAgent backward-compatible engine path"
 ```
 
 ---
 
-### Task 9: 后端 — Agent Chat API + SSE 推送（原 Task 12，前置于前端）
+### Task 9: 后端 — Agent Chat API + SSE 推送
 
 **Files:**
-- Create: `forge-portal/app/(dashboard)/projects/[id]/agent/page.tsx`
-- Create: `forge-portal/components/agent/agent-chat.tsx`
-- Create: `forge-portal/components/agent/tool-execution.tsx`
-- Create: `forge-portal/components/agent/agent-status.tsx`
-- Modify: `forge-portal/components/sidebar.tsx` — 添加 Agent 导航项
+- Create: `forge-core/internal/module/agent/handler.go`
+- Create: `forge-core/internal/module/agent/service.go`
+- Create: `forge-core/internal/module/agent/model.go`
+- Modify: `forge-core/internal/router/router.go` — 注册新路由
+- Create: `ai-worker/src/activities/agent_chat.py` — Agent Chat Temporal Activity
 
-- [ ] **Step 1: Create Agent chat page with SSE streaming**
+- [ ] **Step 1: Create Agent model**
 
-A full-page chat interface that:
-- Sends messages to a new `/api/projects/:id/agent/chat` endpoint
-- Receives SSE stream of `StreamEvent` types
-- Renders `AssistantTextDelta` as streaming text
-- Renders `ToolExecutionStarted/Completed` as collapsible tool cards
-- Shows token usage in status bar
+```go
+// forge-core/internal/module/agent/model.go
+package agent
 
-- [ ] **Step 2: Create tool execution visualization component**
+import "time"
 
-Each tool call renders as a card showing:
-- Tool name + input args
-- Execution status (running spinner / completed check / error)
-- Collapsible output panel
-- Time elapsed
+type ChatRequest struct {
+    Message string `json:"message" binding:"required"`
+}
 
-- [ ] **Step 3: Create agent status panel**
+type AgentSession struct {
+    ID        int64     `json:"id"`
+    ProjectID int64     `json:"project_id"`
+    Status    string    `json:"status"` // active, completed
+    CreatedAt time.Time `json:"created_at"`
+}
 
-Shows: current model, total tokens used, tool calls made, active turn number.
+// SSE event types matching Python StreamEvent
+type StreamEventType string
 
-- [ ] **Step 4: Add Agent nav item to sidebar**
+const (
+    EventTextDelta      StreamEventType = "text_delta"
+    EventTurnComplete   StreamEventType = "turn_complete"
+    EventToolStarted    StreamEventType = "tool_started"
+    EventToolCompleted  StreamEventType = "tool_completed"
+    EventError          StreamEventType = "error"
+)
+```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 2: Create Agent handler with SSE**
+
+```go
+// forge-core/internal/module/agent/handler.go
+package agent
+
+import (
+    "fmt"
+    "net/http"
+    "strconv"
+
+    "github.com/gin-gonic/gin"
+    "github.com/redis/go-redis/v9"
+)
+
+type Handler struct {
+    svc   *Service
+    redis *redis.Client
+}
+
+func NewHandler(svc *Service, redis *redis.Client) *Handler {
+    return &Handler{svc: svc, redis: redis}
+}
+
+func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
+    r.POST("/projects/:id/agent/chat", h.Chat)
+    r.GET("/projects/:id/agent/stream", h.Stream)
+}
+
+// Chat sends a message and starts the agent loop via Temporal
+func (h *Handler) Chat(c *gin.Context) {
+    projectID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+    var req ChatRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+
+    sessionID, err := h.svc.SendMessage(c.Request.Context(), projectID, req.Message)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{"data": gin.H{"session_id": sessionID}})
+}
+
+// Stream subscribes to Redis pub/sub and forwards StreamEvents as SSE
+func (h *Handler) Stream(c *gin.Context) {
+    projectID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+    channel := fmt.Sprintf("agent:stream:%d", projectID)
+
+    c.Header("Content-Type", "text/event-stream")
+    c.Header("Cache-Control", "no-cache")
+    c.Header("Connection", "keep-alive")
+
+    pubsub := h.redis.Subscribe(c.Request.Context(), channel)
+    defer pubsub.Close()
+
+    ch := pubsub.Channel()
+    for msg := range ch {
+        fmt.Fprintf(c.Writer, "data: %s\n\n", msg.Payload)
+        c.Writer.Flush()
+    }
+}
+```
+
+- [ ] **Step 3: Create Agent service**
+
+```go
+// forge-core/internal/module/agent/service.go
+package agent
+
+import (
+    "context"
+    "fmt"
+
+    "go.temporal.io/sdk/client"
+)
+
+type Service struct {
+    temporal client.Client
+}
+
+func NewService(temporal client.Client) *Service {
+    return &Service{temporal: temporal}
+}
+
+func (s *Service) SendMessage(ctx context.Context, projectID int64, message string) (string, error) {
+    workflowID := fmt.Sprintf("agent-chat-%d", projectID)
+
+    // Signal existing workflow or start new one
+    _, err := s.temporal.SignalWithStartWorkflow(
+        ctx,
+        workflowID,
+        "user_message",
+        message,
+        client.StartWorkflowOptions{
+            TaskQueue: "ai-worker",
+        },
+        "AgentChatWorkflow",
+        projectID,
+    )
+    if err != nil {
+        return "", fmt.Errorf("start agent workflow: %w", err)
+    }
+
+    return workflowID, nil
+}
+```
+
+- [ ] **Step 4: Create Python agent_chat activity**
+
+```python
+# ai-worker/src/activities/agent_chat.py
+"""Agent Chat activity — runs QueryEngine for web-based interaction."""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass
+
+import redis.asyncio as aioredis
+from temporalio import activity
+
+from src.config import settings
+from src.openharness.engine.query_engine import QueryEngine
+from src.openharness.engine.stream_events import (
+    AssistantTextDelta, AssistantTurnComplete,
+    ToolExecutionStarted, ToolExecutionCompleted, ErrorEvent,
+)
+from src.openharness.api.providers.router_adapter import ModelRouterAdapter
+from src.openharness.tools.base import ToolRegistry
+from src.openharness.tools.context_tools import register_context_tools
+from src.models.router import ModelRouter, Purpose
+from src.context.cache import ContextCache
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AgentChatInput:
+    project_id: int
+    message: str
+
+
+@dataclass
+class AgentChatOutput:
+    response: str
+    tokens_used: int
+    tool_calls_made: int
+
+
+@activity.defn(name="agent_chat")
+async def agent_chat_activity(input: AgentChatInput) -> AgentChatOutput:
+    """Run QueryEngine for a single user message, streaming events to Redis."""
+
+    # Build context
+    cache = ContextCache()
+    context = await cache.get_or_build(input.project_id, "generate")
+
+    # Build tool registry with project context
+    registry = ToolRegistry()
+    register_context_tools(registry, context.project_profiles, input.project_id)
+
+    # Create API adapter
+    router = ModelRouter()
+    api_client = ModelRouterAdapter(router, purpose=Purpose.GENERATE)
+
+    # Create engine
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=registry,
+        model="auto",  # Router handles model selection
+        system_prompt=context.to_system_prompt(),
+        max_turns=10,
+    )
+
+    # Stream events to Redis
+    channel = f"agent:stream:{input.project_id}"
+    redis_client = aioredis.from_url(
+        f"redis://:{settings.redis_password}@{settings.redis_host}:{settings.redis_port}"
+    )
+
+    full_response = ""
+    tool_calls = 0
+
+    try:
+        async for event in engine.submit_message(input.message):
+            event_data = _serialize_event(event)
+            if event_data:
+                await redis_client.publish(channel, json.dumps(event_data))
+
+            if isinstance(event, AssistantTextDelta):
+                full_response += event.text
+            elif isinstance(event, (ToolExecutionStarted, ToolExecutionCompleted)):
+                if isinstance(event, ToolExecutionStarted):
+                    tool_calls += 1
+    finally:
+        await redis_client.aclose()
+
+    return AgentChatOutput(
+        response=full_response,
+        tokens_used=engine.total_usage.total_tokens,
+        tool_calls_made=tool_calls,
+    )
+
+
+def _serialize_event(event) -> dict | None:
+    """Convert StreamEvent to JSON-serializable dict for SSE."""
+    if isinstance(event, AssistantTextDelta):
+        return {"type": "text_delta", "text": event.text}
+    elif isinstance(event, AssistantTurnComplete):
+        return {
+            "type": "turn_complete",
+            "input_tokens": event.usage.input_tokens,
+            "output_tokens": event.usage.output_tokens,
+        }
+    elif isinstance(event, ToolExecutionStarted):
+        return {
+            "type": "tool_started",
+            "tool_name": event.tool_name,
+            "tool_input": event.tool_input,
+        }
+    elif isinstance(event, ToolExecutionCompleted):
+        return {
+            "type": "tool_completed",
+            "tool_name": event.tool_name,
+            "output": event.output[:2000],  # Truncate for SSE
+            "is_error": event.is_error,
+        }
+    elif isinstance(event, ErrorEvent):
+        return {"type": "error", "message": event.message}
+    return None
+```
+
+- [ ] **Step 5: Register routes + commit**
+
+Add to `forge-core/internal/router/router.go`:
+```go
+agentSvc := agent.NewService(temporalClient)
+agentHandler := agent.NewHandler(agentSvc, redisClient)
+agentHandler.RegisterRoutes(api)
+```
 
 ```bash
-git commit -m "feat(portal): Claude Code-style agent interaction page with streaming"
+git add forge-core/internal/module/agent/ ai-worker/src/activities/agent_chat.py
+git commit -m "feat(core+worker): agent chat API with SSE streaming via Redis pub/sub"
 ```
 
 ---
@@ -1692,32 +2174,286 @@ git commit -m "feat(portal): Claude Code-style agent interaction page with strea
 ### Task 10: 前端 — Claude Code 风格 Agent 交互界面
 
 **Files:**
-- Create: `forge-core/internal/module/agent/handler.go`
-- Create: `forge-core/internal/module/agent/service.go`
-- Modify: `forge-core/internal/router/router.go` — 注册新路由
-- Modify: `forge-core/internal/temporal/worker.go` — 注册新 Workflow
+- Create: `forge-portal/app/(dashboard)/projects/[id]/agent/page.tsx`
+- Create: `forge-portal/components/agent/agent-chat.tsx`
+- Create: `forge-portal/components/agent/tool-execution.tsx`
+- Modify: `forge-portal/components/sidebar.tsx` — 添加 Agent 导航项
 
-- [ ] **Step 1: Create Agent chat handler**
+- [ ] **Step 1: Create Agent chat page**
 
+```tsx
+// forge-portal/app/(dashboard)/projects/[id]/agent/page.tsx
+"use client"
+
+import { useParams } from "next/navigation"
+import { AgentChat } from "@/components/agent/agent-chat"
+
+export default function AgentPage() {
+  const { id } = useParams<{ id: string }>()
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="px-6 py-4 border-b border-border/40">
+        <h1 className="text-lg font-semibold">Agent Terminal</h1>
+        <p className="text-sm text-muted-foreground">
+          Claude Code 风格的 AI 交互终端
+        </p>
+      </div>
+      <AgentChat projectId={id} />
+    </div>
+  )
+}
 ```
-POST /api/projects/:id/agent/chat
-  Body: { "message": "..." }
-  Response: SSE stream
 
-GET /api/projects/:id/agent/stream
-  Response: SSE stream of StreamEvent
+- [ ] **Step 2: Create AgentChat component with SSE streaming**
+
+```tsx
+// forge-portal/components/agent/agent-chat.tsx
+"use client"
+
+import { useState, useRef, useEffect, useCallback } from "react"
+import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/textarea"
+import { Send, Loader2 } from "lucide-react"
+import { ToolExecution } from "./tool-execution"
+
+interface StreamEvent {
+  type: "text_delta" | "turn_complete" | "tool_started" | "tool_completed" | "error"
+  text?: string
+  tool_name?: string
+  tool_input?: Record<string, unknown>
+  output?: string
+  is_error?: boolean
+  message?: string
+  input_tokens?: number
+  output_tokens?: number
+}
+
+interface Message {
+  role: "user" | "assistant"
+  content: string
+  tools?: ToolCall[]
+}
+
+interface ToolCall {
+  name: string
+  input: Record<string, unknown>
+  output?: string
+  is_error?: boolean
+  status: "running" | "completed" | "error"
+}
+
+export function AgentChat({ projectId }: { projectId: string }) {
+  const [messages, setMessages] = useState<Message[]>([])
+  const [input, setInput] = useState("")
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [totalTokens, setTotalTokens] = useState(0)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const eventSourceRef = useRef<EventSource | null>(null)
+
+  // Connect to SSE stream
+  useEffect(() => {
+    const es = new EventSource(`/api/projects/${projectId}/agent/stream`)
+    eventSourceRef.current = es
+
+    es.onmessage = (event) => {
+      const data: StreamEvent = JSON.parse(event.data)
+      handleStreamEvent(data)
+    }
+
+    return () => es.close()
+  }, [projectId])
+
+  const handleStreamEvent = useCallback((event: StreamEvent) => {
+    switch (event.type) {
+      case "text_delta":
+        setMessages(prev => {
+          const last = prev[prev.length - 1]
+          if (last?.role === "assistant") {
+            return [...prev.slice(0, -1), { ...last, content: last.content + (event.text || "") }]
+          }
+          return [...prev, { role: "assistant", content: event.text || "", tools: [] }]
+        })
+        break
+
+      case "tool_started":
+        setMessages(prev => {
+          const last = prev[prev.length - 1]
+          if (last?.role === "assistant") {
+            const tools = [...(last.tools || []), {
+              name: event.tool_name || "",
+              input: event.tool_input || {},
+              status: "running" as const,
+            }]
+            return [...prev.slice(0, -1), { ...last, tools }]
+          }
+          return prev
+        })
+        break
+
+      case "tool_completed":
+        setMessages(prev => {
+          const last = prev[prev.length - 1]
+          if (last?.role === "assistant" && last.tools) {
+            const tools = last.tools.map(t =>
+              t.name === event.tool_name && t.status === "running"
+                ? { ...t, output: event.output, is_error: event.is_error, status: (event.is_error ? "error" : "completed") as const }
+                : t
+            )
+            return [...prev.slice(0, -1), { ...last, tools }]
+          }
+          return prev
+        })
+        break
+
+      case "turn_complete":
+        setIsStreaming(false)
+        setTotalTokens(prev => prev + (event.input_tokens || 0) + (event.output_tokens || 0))
+        break
+
+      case "error":
+        setIsStreaming(false)
+        break
+    }
+  }, [])
+
+  const sendMessage = async () => {
+    if (!input.trim() || isStreaming) return
+
+    const userMsg = input.trim()
+    setInput("")
+    setIsStreaming(true)
+    setMessages(prev => [...prev, { role: "user", content: userMsg }])
+
+    try {
+      await fetch(`/api/projects/${projectId}/agent/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userMsg }),
+      })
+    } catch {
+      setIsStreaming(false)
+    }
+  }
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages])
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0">
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+        {messages.map((msg, i) => (
+          <div key={i} className={msg.role === "user" ? "flex justify-end" : ""}>
+            {msg.role === "user" ? (
+              <div className="bg-primary/10 rounded-lg px-4 py-2 max-w-[80%]">
+                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {msg.tools?.map((tool, j) => (
+                  <ToolExecution key={j} tool={tool} />
+                ))}
+                {msg.content && (
+                  <div className="text-sm whitespace-pre-wrap font-mono">{msg.content}</div>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Status bar */}
+      <div className="px-6 py-1 border-t border-border/40 text-xs text-muted-foreground flex gap-4">
+        <span>Tokens: {totalTokens.toLocaleString()}</span>
+        {isStreaming && <span className="flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Thinking...</span>}
+      </div>
+
+      {/* Input */}
+      <div className="px-6 py-3 border-t border-border/40">
+        <div className="flex gap-2">
+          <Textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder="Describe what you want to build..."
+            className="min-h-[44px] max-h-[120px] resize-none"
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage() }}}
+          />
+          <Button onClick={sendMessage} disabled={isStreaming || !input.trim()} size="icon">
+            <Send className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
 ```
 
-The handler starts a Temporal workflow that runs the full QueryEngine loop, streaming events back via Redis Pub/Sub → SSE.
+- [ ] **Step 3: Create ToolExecution component**
 
-- [ ] **Step 2: Create Agent chat service**
+```tsx
+// forge-portal/components/agent/tool-execution.tsx
+"use client"
 
-Manages conversation state (message history) in PostgreSQL. Each project has an active agent session.
+import { useState } from "react"
+import { ChevronDown, ChevronRight, Loader2, Check, X, Wrench } from "lucide-react"
 
-- [ ] **Step 3: Run tests, commit**
+interface ToolCall {
+  name: string
+  input: Record<string, unknown>
+  output?: string
+  is_error?: boolean
+  status: "running" | "completed" | "error"
+}
+
+export function ToolExecution({ tool }: { tool: ToolCall }) {
+  const [expanded, setExpanded] = useState(false)
+
+  const statusIcon = {
+    running: <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-400" />,
+    completed: <Check className="h-3.5 w-3.5 text-green-400" />,
+    error: <X className="h-3.5 w-3.5 text-red-400" />,
+  }[tool.status]
+
+  return (
+    <div className="border border-border/40 rounded-md bg-muted/30 text-xs font-mono">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted/50"
+      >
+        {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        <Wrench className="h-3 w-3 text-muted-foreground" />
+        <span className="text-purple-400 font-semibold">{tool.name}</span>
+        <span className="text-muted-foreground truncate flex-1 text-left">
+          {JSON.stringify(tool.input).slice(0, 60)}
+        </span>
+        {statusIcon}
+      </button>
+      {expanded && tool.output && (
+        <div className="px-3 py-2 border-t border-border/30 max-h-[200px] overflow-y-auto">
+          <pre className="whitespace-pre-wrap text-muted-foreground">{tool.output}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
+```
+
+- [ ] **Step 4: Add Agent nav item to sidebar**
+
+Add to `forge-portal/components/sidebar.tsx` in the project navigation items:
+
+```tsx
+{ name: "Agent Terminal", href: `/projects/${projectId}/agent`, icon: Terminal }
+```
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git commit -m "feat(core): agent chat API with SSE streaming for web-based Claude Code experience"
+git add forge-portal/app/\(dashboard\)/projects/\[id\]/agent/ forge-portal/components/agent/ forge-portal/components/sidebar.tsx
+git commit -m "feat(portal): Claude Code-style agent terminal with streaming + tool visualization"
 ```
 
 ---
@@ -1727,26 +2463,226 @@ git commit -m "feat(core): agent chat API with SSE streaming for web-based Claud
 **Files:**
 - Create: `ai-worker/tests/test_integration_harness.py`
 
-- [ ] **Step 1: Write integration test: Tool → Hook → Permission → Result**
+- [ ] **Step 1: Write integration test: Tool → Hook → Engine pipeline**
 
-Test that the full pipeline works: register tool, register hook, create engine, submit message, verify events.
+```python
+# tests/test_integration_harness.py
+import pytest
+from pathlib import Path
+from unittest.mock import AsyncMock
 
-- [ ] **Step 2: Write integration test: Skill loading + Agent execution**
+from src.openharness.tools.base import BaseTool, ToolRegistry, ToolResult, ToolExecutionContext
+from src.openharness.hooks.events import HookEvent
+from src.openharness.hooks.loader import HookRegistry
+from src.openharness.hooks.executor import HookExecutor, HookResult, AggregatedHookResult
+from src.openharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock, ToolResultBlock
+from src.openharness.engine.stream_events import (
+    AssistantTextDelta, AssistantTurnComplete,
+    ToolExecutionStarted, ToolExecutionCompleted,
+)
+from src.openharness.engine.query import QueryContext, run_query, _execute_tool_call
+from src.openharness.api.client import ApiTextDeltaEvent, ApiMessageCompleteEvent
+from src.openharness.api.usage import UsageSnapshot
+from src.openharness.permissions.checker import PermissionChecker
+from src.openharness.permissions.modes import PermissionMode
+from pydantic import BaseModel
 
-Verify that an agent loads its prompt from a skill file and produces correct output format.
 
-- [ ] **Step 3: Write integration test: Constraint enforcement**
+# --- Test fixtures ---
 
-Create a PATTERN rule, generate code that violates it, verify the hook blocks.
+class UpperInput(BaseModel):
+    text: str
 
-- [ ] **Step 4: Run full test suite**
+class UpperTool(BaseTool):
+    name = "upper"
+    description = "Convert text to uppercase"
+    input_model = UpperInput
+
+    def is_read_only(self, arguments: UpperInput) -> bool:
+        return True
+
+    async def execute(self, arguments: UpperInput, context: ToolExecutionContext) -> ToolResult:
+        return ToolResult(output=arguments.text.upper())
+
+
+# --- Integration tests ---
+
+@pytest.mark.asyncio
+async def test_tool_registry_to_engine_pipeline():
+    """Register a tool, create engine context, execute tool call, verify result."""
+    registry = ToolRegistry()
+    registry.register(UpperTool())
+
+    result = await _execute_tool_call(
+        context=QueryContext(
+            api_client=AsyncMock(),
+            tool_registry=registry,
+            model="test",
+            system_prompt="test",
+        ),
+        tool_name="upper",
+        tool_use_id="test_id",
+        tool_input={"text": "hello"},
+    )
+
+    assert isinstance(result, ToolResultBlock)
+    assert result.content == "HELLO"
+    assert not result.is_error
+
+
+@pytest.mark.asyncio
+async def test_hook_blocks_tool_execution():
+    """Register a blocking hook, verify tool execution is blocked."""
+    registry = ToolRegistry()
+    registry.register(UpperTool())
+
+    hook_registry = HookRegistry()
+
+    class BlockingHook:
+        type = "test"
+        command = "false"
+        timeout_seconds = 5
+        matcher = None
+        block_on_failure = True
+
+    # Manually create a hook executor that always blocks
+    executor = HookExecutor(hook_registry)
+    # Override execute to always block
+    original_execute = executor.execute
+    async def blocking_execute(event, payload):
+        if event == HookEvent.PRE_TOOL_USE:
+            return AggregatedHookResult(results=[
+                HookResult(hook_type="test", success=False, output="",
+                          blocked=True, reason="Forbidden tool")
+            ])
+        return AggregatedHookResult(results=[])
+    executor.execute = blocking_execute
+
+    result = await _execute_tool_call(
+        context=QueryContext(
+            api_client=AsyncMock(),
+            tool_registry=registry,
+            model="test",
+            system_prompt="test",
+            hook_executor=executor,
+        ),
+        tool_name="upper",
+        tool_use_id="test_id",
+        tool_input={"text": "hello"},
+    )
+
+    assert result.is_error
+    assert "BLOCKED" in result.content
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_returns_error():
+    """Calling a non-existent tool returns an error ToolResultBlock."""
+    registry = ToolRegistry()
+
+    result = await _execute_tool_call(
+        context=QueryContext(
+            api_client=AsyncMock(),
+            tool_registry=registry,
+            model="test",
+            system_prompt="test",
+        ),
+        tool_name="nonexistent",
+        tool_use_id="test_id",
+        tool_input={},
+    )
+
+    assert result.is_error
+    assert "Unknown tool" in result.content
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_input_returns_error():
+    """Passing invalid input schema returns validation error."""
+    registry = ToolRegistry()
+    registry.register(UpperTool())
+
+    result = await _execute_tool_call(
+        context=QueryContext(
+            api_client=AsyncMock(),
+            tool_registry=registry,
+            model="test",
+            system_prompt="test",
+        ),
+        tool_name="upper",
+        tool_use_id="test_id",
+        tool_input={"wrong_field": 123},  # UpperInput requires 'text'
+    )
+
+    assert result.is_error
+    assert "validation" in result.content.lower() or "error" in result.content.lower()
+
+
+def test_permission_checker_integration():
+    """Full auto mode allows all tools, default mode blocks mutating."""
+    auto_checker = PermissionChecker(mode=PermissionMode.FULL_AUTO)
+    default_checker = PermissionChecker(mode=PermissionMode.DEFAULT)
+
+    # Read-only tool allowed in both modes
+    assert auto_checker.evaluate("upper", is_read_only=True).allowed
+    assert default_checker.evaluate("upper", is_read_only=True).allowed
+
+    # Mutating tool: allowed in auto, requires confirmation in default
+    assert auto_checker.evaluate("bash", is_read_only=False).allowed
+    decision = default_checker.evaluate("bash", is_read_only=False)
+    assert not decision.allowed
+    assert decision.requires_confirmation
+
+
+@pytest.mark.asyncio
+async def test_full_query_loop_no_tools():
+    """Run a complete query loop where the model returns text only (no tool calls)."""
+    registry = ToolRegistry()
+
+    # Mock API client that returns a simple text response
+    mock_msg = ConversationMessage(role="assistant", content=[TextBlock(text="Hello!")])
+    mock_usage = UsageSnapshot(input_tokens=10, output_tokens=5)
+
+    async def mock_stream(request):
+        yield ApiTextDeltaEvent(text="Hello!")
+        yield ApiMessageCompleteEvent(message=mock_msg, usage=mock_usage, stop_reason="end_turn")
+
+    mock_client = AsyncMock()
+    mock_client.stream_message = mock_stream
+
+    context = QueryContext(
+        api_client=mock_client,
+        tool_registry=registry,
+        model="test",
+        system_prompt="You are helpful.",
+        max_turns=5,
+    )
+    messages = [ConversationMessage.from_user_text("Hi")]
+
+    events = []
+    async for event, usage in run_query(context, messages):
+        events.append(event)
+
+    # Should have: text delta + turn complete
+    assert any(isinstance(e, AssistantTextDelta) for e in events)
+    assert any(isinstance(e, AssistantTurnComplete) for e in events)
+```
+
+- [ ] **Step 2: Run integration tests**
+
+Run: `cd ai-worker && python -m pytest tests/test_integration_harness.py -v`
+Expected: All 6 tests PASS
+
+- [ ] **Step 3: Run full test suite**
 
 Run: `cd ai-worker && python -m pytest tests/ -v --tb=short`
+Expected: All tests pass (existing + new)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git commit -m "test(harness): integration tests for tool→hook→permission→engine pipeline"
+git add ai-worker/tests/test_integration_harness.py
+git commit -m "test(harness): integration tests — tool→hook→permission→engine full pipeline"
 ```
 
 ---
