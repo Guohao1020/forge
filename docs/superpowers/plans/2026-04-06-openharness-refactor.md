@@ -6,6 +6,10 @@
 
 **Architecture:** 去掉 Temporal，改为 OpenHarness 的 QueryEngine (Python 进程内 Agent Loop) + Redis Pub/Sub (SSE 推送) + HTTP API (Go 触发 Python)。任务页面从 3 列布局改为 **Chat + 当前步骤指示器**，取消固定 7 步 timeline。
 
+**References:**
+- [HKUDS/OpenHarness](https://github.com/HKUDS/OpenHarness) — Agent Loop + Tools + Skills + Hooks 架构
+- [unohee/OpenSwarm](https://github.com/unohee/OpenSwarm) — Worker/Reviewer Pair Pipeline + PR Auto-fix + Knowledge Graph
+
 **Dependencies added:** `pydantic>=2.0.0`, `pyyaml>=6.0`
 
 **Tech Stack:** Python 3.12 + Pydantic + asyncio + Redis Pub/Sub + SSE + Next.js + shadcn/ui
@@ -79,7 +83,75 @@ AI 生成代码 → 真实编译(npm run build / go build / pytest) → 失败 �
 
 **需要设计师重新设计**: 这部分 UI 变化很大，需要运行 `/plan-design-review` 做详细设计。
 
-### 决策 5: Skill 体系 — 把硬编码变成 Harness 环境规则
+### 决策 5: OpenSwarm 理念融入 — Worker/Reviewer Pair + PR Auto-fix
+
+**来源**: [OpenSwarm](https://github.com/unohee/OpenSwarm) — 自主 AI Agent 编排器
+
+**OpenSwarm 做对了什么**:
+
+1. **Worker/Reviewer Pair Pipeline** — 代码生成不是一次性的，而是迭代循环：
+   ```
+   Worker 生成代码 → Reviewer 评审 → REVISE(修改意见) → Worker 修复 → Reviewer 再审 → APPROVE/REJECT
+   ```
+   这比 Forge 现在的"生成 → Review → 完"更合理。Review 不通过应该自动重试，不是报错终止。
+
+2. **PR Auto-improvement** — PR 提交后 CI 失败，自动分析错误、修复、重新提交，循环直到 CI 全绿。
+   这和我们的"编译验证 + 自动修复"理念完全一致，但 OpenSwarm 把它延伸到了 PR 合并后的 CI 阶段。
+
+3. **Knowledge Graph + Conflict Detection** — 分析文件依赖关系，多个并发任务修改同一文件时检测冲突。
+   Forge 的 VersionOrchestrator 已经有文件级冲突检测，可以增强为依赖图级别。
+
+4. **Memory Hybrid Scoring** — 不是简单的"最近的记忆最重要"，而是加权：
+   ```
+   score = 0.55 × similarity + 0.20 × importance + 0.15 × recency + 0.10 × frequency
+   ```
+   项目画像应该用这种多维度检索，而不是简单的 key-value 查询。
+
+**Forge 采纳的模式**:
+
+| OpenSwarm 模式 | Forge 实现位置 |
+|---|---|
+| Worker/Reviewer pair loop | Agent Loop 内部: Coder → BuildVerify → Reviewer → 不通过则循环 |
+| APPROVE/REVISE/REJECT 决策 | ReviewerAgent 输出增加 `decision` 字段，HookManager 根据决策决定下一步 |
+| PR Auto-fix | 新增 `POST_PUSH` 钩子: 推送后监控 CI → 失败则 AI 分析 → 自动修复 → 重推 |
+| Knowledge Graph | 项目画像的 `module_graph` 维度增强: 文件级依赖 + 影响范围分析 |
+| Memory hybrid scoring | ProjectContext 检索时加权: 相似度 + 重要性 + 新鲜度 |
+
+**Agent Loop 内的 Pair Pipeline 流程**:
+
+```
+用户提需求
+  ↓
+AnalystAgent 澄清需求 (对话循环)
+  ↓ 需求确认
+PlannerAgent 拆分任务 (使用 context tools)
+  ↓ 方案确认
+CoderAgent 生成代码
+  ↓
+BuildVerifyHook 真实编译验证 ←──────┐
+  ↓ 失败                           │
+CoderAgent 自动修复 (收到编译错误)    │
+  ↓                                │
+BuildVerifyHook 再次验证 ──────────┘
+  ↓ 通过
+ReviewerAgent 代码审查
+  ↓ REVISE (有修改意见) ←──────────┐
+CoderAgent 按意见修复              │
+  ↓                               │
+ReviewerAgent 再次审查 ────────────┘
+  ↓ APPROVE
+Push to GitHub → CI 运行
+  ↓ CI 失败 ←─────────────────────┐
+CoderAgent 分析 CI 日志并修复      │
+  ↓                               │
+Push again → CI ──────────────────┘
+  ↓ CI 通过
+Create PR → 等待人工合并或自动合并
+```
+
+这就是完整的 **AI Engineering Loop** — 不是流水线，是**验证驱动的循环**。
+
+### 决策 6: Skill 体系 — 把硬编码变成 Harness 环境规则
 
 **原则**: Forge 的开发、测试、部署环境本身就是 Harness。Harness 的规则不应该写死在代码里，而是**项目画像的一部分**，以 Skill（结构化 YAML/Markdown）形式存储，由 Agent 在运行时加载。
 
@@ -3896,6 +3968,256 @@ git commit -m "feat(harness): Skill system — Platform YAML + Project Skills lo
 
 ---
 
+### Task 16: Pair Pipeline — Worker/Reviewer 迭代循环 (来自 OpenSwarm)
+
+**来源**: OpenSwarm 的 Worker/Reviewer Pair Pipeline 模式
+
+**Files:**
+- Create: `ai-worker/src/openharness/engine/pair_pipeline.py` — 迭代循环编排器
+- Modify: `ai-worker/src/openharness/hooks/builtin/build_verify_hook.py` — 集成到循环
+- Test: `ai-worker/tests/test_pair_pipeline.py`
+
+**设计**: 在 QueryEngine 内部实现 Coder → Verify → Review 迭代循环，不是新建独立模块。
+
+- [ ] **Step 1: Implement PairPipeline**
+
+```python
+# ai-worker/src/openharness/engine/pair_pipeline.py
+"""Worker/Reviewer Pair Pipeline — iterative code generation with verification.
+
+Inspired by OpenSwarm's pair pattern:
+  Worker → Reviewer → REVISE → Worker → Reviewer → APPROVE
+
+Extended with real build verification:
+  Coder → BuildVerify → fail? → Coder(fix) → BuildVerify → pass → Reviewer → REVISE? → loop → APPROVE
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class ReviewDecision(str, Enum):
+    APPROVE = "APPROVE"    # Code passes review, proceed to push
+    REVISE = "REVISE"      # Code needs changes, loop back to Coder
+    REJECT = "REJECT"      # Code is fundamentally wrong, abort
+
+
+@dataclass
+class PairIterationResult:
+    """Result of one Worker/Reviewer iteration."""
+    iteration: int
+    code_files: list[dict]       # Generated/fixed files
+    build_passed: bool
+    review_decision: ReviewDecision
+    review_findings: list[dict]  # Reviewer's findings
+    fix_instructions: str        # What to fix (if REVISE)
+
+
+@dataclass
+class PairPipelineResult:
+    """Final result after all iterations."""
+    success: bool
+    iterations: int
+    final_files: list[dict]
+    total_tokens: int
+    aborted_reason: str | None = None
+
+
+class PairPipelineConfig:
+    """Pipeline configuration — loaded from Agent Loop Skill."""
+    max_iterations: int = 3          # Max Coder→Reviewer cycles
+    max_build_retries: int = 3       # Max build fix attempts per iteration
+    require_build_pass: bool = True  # Must build pass before review
+    auto_fix_on_revise: bool = True  # Auto-fix on REVISE without user input
+
+
+async def run_pair_pipeline(
+    engine,  # QueryEngine instance
+    requirement: str,
+    config: PairPipelineConfig | None = None,
+) -> PairPipelineResult:
+    """Execute the full pair pipeline.
+
+    Flow:
+    1. Coder generates code from requirement
+    2. BuildVerifyHook checks compilation
+       - Fail → Coder fixes with error context → retry build (up to max_build_retries)
+    3. Reviewer evaluates code
+       - APPROVE → done, return success
+       - REVISE → Coder fixes with review feedback → goto step 2
+       - REJECT → abort, return failure
+    4. Repeat until APPROVE or max_iterations exceeded
+    """
+    cfg = config or PairPipelineConfig()
+    total_tokens = 0
+
+    for iteration in range(1, cfg.max_iterations + 1):
+        logger.info("Pair pipeline iteration %d/%d", iteration, cfg.max_iterations)
+
+        # Step 1: Generate/fix code
+        if iteration == 1:
+            prompt = f"Generate code for: {requirement}"
+        else:
+            prompt = f"Fix the code based on review feedback:\n{last_fix_instructions}"
+
+        # The engine handles Coder → BuildVerify loop internally via hooks
+        # BuildVerifyHook in POST_GENERATION will block until build passes
+        # or max retries exceeded
+
+        async for event in engine.submit_message(prompt):
+            # Stream events to frontend
+            pass  # Events already published via Redis in the engine
+
+        total_tokens = engine.total_usage.total_tokens
+
+        # Step 2: Review (separate engine call with Reviewer prompt)
+        review_prompt = "Review the generated code. Respond with decision: APPROVE, REVISE, or REJECT."
+        # ... review logic using ReviewerAgent ...
+
+        # Step 3: Check decision
+        # decision = parse_review_decision(review_result)
+        # if decision == ReviewDecision.APPROVE: return success
+        # if decision == ReviewDecision.REJECT: return failure
+        # if decision == ReviewDecision.REVISE: continue loop
+
+    return PairPipelineResult(
+        success=False,
+        iterations=cfg.max_iterations,
+        final_files=[],
+        total_tokens=total_tokens,
+        aborted_reason=f"Max iterations ({cfg.max_iterations}) exceeded",
+    )
+```
+
+- [ ] **Step 2: Write tests**
+
+```python
+# tests/test_pair_pipeline.py
+import pytest
+from src.openharness.engine.pair_pipeline import (
+    ReviewDecision, PairPipelineConfig, PairIterationResult, PairPipelineResult,
+)
+
+def test_review_decision_values():
+    assert ReviewDecision.APPROVE == "APPROVE"
+    assert ReviewDecision.REVISE == "REVISE"
+    assert ReviewDecision.REJECT == "REJECT"
+
+def test_pipeline_config_defaults():
+    cfg = PairPipelineConfig()
+    assert cfg.max_iterations == 3
+    assert cfg.max_build_retries == 3
+    assert cfg.require_build_pass is True
+
+def test_pipeline_result_success():
+    result = PairPipelineResult(success=True, iterations=2, final_files=[], total_tokens=1000)
+    assert result.success
+    assert result.aborted_reason is None
+
+def test_pipeline_result_failure():
+    result = PairPipelineResult(
+        success=False, iterations=3, final_files=[], total_tokens=5000,
+        aborted_reason="Max iterations exceeded",
+    )
+    assert not result.success
+    assert "Max iterations" in result.aborted_reason
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add ai-worker/src/openharness/engine/pair_pipeline.py ai-worker/tests/test_pair_pipeline.py
+git commit -m "feat(harness): Worker/Reviewer pair pipeline with build verify loop (OpenSwarm pattern)"
+```
+
+---
+
+### Task 17: PR Auto-fix — CI 失败自动修复 (来自 OpenSwarm)
+
+**来源**: OpenSwarm 的 PR Auto-improvement 模式
+
+**设计**: 推送到 GitHub 后，监控 CI 状态。如果 CI 失败，自动获取日志、分析错误、生成修复、重新推送。
+
+- [ ] **Step 1: Design PR Auto-fix hook**
+
+```python
+# ai-worker/src/openharness/hooks/builtin/ci_autofix_hook.py
+"""POST_PUSH hook — monitors CI and auto-fixes failures.
+
+After code is pushed to GitHub:
+1. Poll CI status (GitHub Actions / Codeup Pipeline)
+2. If failed → fetch CI logs
+3. Feed error logs to CoderAgent for fix
+4. Commit fix → push → poll CI again
+5. Repeat until pass or max retries
+
+This is the "last mile" of the AI Engineering Loop — even after
+local build passes, CI may catch additional issues (env differences,
+integration tests, linting rules on CI that aren't local, etc.)
+"""
+
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Any
+from ..events import HookEvent
+from ..executor import HookResult
+
+class CIAutoFixHook:
+    event = HookEvent.POST_PUSH  # New hook point: after git push
+    priority = 10
+    max_retries = 3
+
+    async def execute(self, payload: dict[str, Any]) -> HookResult:
+        pr_url = payload.get("pr_url")
+        repo = payload.get("repo")
+        branch = payload.get("branch")
+
+        for attempt in range(self.max_retries):
+            ci_status = await self._poll_ci_status(repo, branch)
+            if ci_status == "success":
+                return HookResult(hook_type="ci_autofix", success=True,
+                                output=f"CI passed on attempt {attempt + 1}")
+
+            if ci_status == "failure":
+                logs = await self._fetch_ci_logs(repo, branch)
+                fix = await self._generate_fix(logs)
+                await self._push_fix(repo, branch, fix)
+                continue  # Poll again after fix
+
+        return HookResult(
+            hook_type="ci_autofix", success=False, output="CI still failing",
+            blocked=False,  # Don't block, just report
+            reason=f"CI failed after {self.max_retries} auto-fix attempts",
+        )
+```
+
+- [ ] **Step 2: Add POST_PUSH to HookEvent enum**
+
+```python
+# Update hooks/events.py
+class HookEvent(str, Enum):
+    PRE_TOOL_USE = "pre_tool_use"
+    POST_TOOL_USE = "post_tool_use"
+    PRE_GENERATION = "pre_generation"
+    POST_GENERATION = "post_generation"
+    POST_PUSH = "post_push"       # NEW: after git push, monitor CI
+    POST_CI = "post_ci"           # NEW: after CI completes (pass or fail)
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git commit -m "feat(harness): CI auto-fix hook — monitor CI + auto-repair failures (OpenSwarm pattern)"
+```
+
+---
+
 ## Verification
 
 ### End-to-End Smoke Test
@@ -3908,6 +4230,8 @@ git commit -m "feat(harness): Skill system — Platform YAML + Project Skills lo
 6. Navigate to Agent Terminal → 发消息
 7. 验证: 流式文本 + 工具调用卡片 + 编译验证结果
 8. 验证: 编译失败时 AI 自动修复并重试
+9. 验证: Review REVISE 时自动重新生成并再次 Review
+10. 验证: Push 后 CI 失败时自动修复并重推
 
 ### Unit Test Coverage
 
