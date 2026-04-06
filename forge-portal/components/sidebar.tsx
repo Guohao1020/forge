@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ForgeLogo } from "./forge-logo";
 import { FolderOpen, BookOpen, Settings, Users, KeyRound, BarChart3, Settings2, Info } from "lucide-react";
+import { SystemStatus } from "./system-status";
 
 const navItems = [
   { href: "/projects", label: "项目大厅", icon: FolderOpen },
@@ -69,6 +70,10 @@ export function Sidebar() {
             </Link>
           );
         })}
+      </div>
+
+      <div className="border-t border-[var(--border)]">
+        <SystemStatus />
       </div>
     </aside>
   );

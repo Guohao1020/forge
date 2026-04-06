@@ -12,7 +12,7 @@ import (
 )
 
 func registerEntropyActivities(env *testsuite.TestWorkflowEnvironment) {
-	ea := activity.NewEntropyActivities(nil)
+	ea := activity.NewEntropyActivities(nil, nil)
 	env.RegisterActivityWithOptions(ea.FetchProjectFiles, sdkactivity.RegisterOptions{Name: "FetchProjectFiles"})
 	env.RegisterActivityWithOptions(ea.RunEntropyLint, sdkactivity.RegisterOptions{Name: "RunEntropyLint"})
 	env.RegisterActivityWithOptions(ea.RunEntropyAIScan, sdkactivity.RegisterOptions{Name: "RunEntropyAIScan"})

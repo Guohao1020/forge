@@ -285,6 +285,18 @@ func (c *Client) CreatePR(ctx context.Context, owner, repo, title, body, head, b
 	}, nil
 }
 
+// MergePR merges a pull request using the merge (not squash/rebase) strategy.
+func (c *Client) MergePR(ctx context.Context, owner, repo string, prNumber int, commitMessage string) error {
+	_, _, err := c.client.PullRequests.Merge(ctx, owner, repo, prNumber, commitMessage, &ghlib.PullRequestOptions{
+		MergeMethod: "merge",
+	})
+	if err != nil {
+		return fmt.Errorf("merge PR #%d: %w", prNumber, err)
+	}
+	slog.Info("PR merged", "owner", owner, "repo", repo, "pr", prNumber)
+	return nil
+}
+
 // GetPRFiles returns the list of changed files in a pull request.
 func (c *Client) GetPRFiles(ctx context.Context, owner, repo string, prNumber int) ([]PRFile, error) {
 	files, resp, err := c.client.PullRequests.ListFiles(ctx, owner, repo, prNumber, nil)

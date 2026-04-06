@@ -60,6 +60,31 @@ func (h *Handler) ListDeployRecords(c *gin.Context) {
 	response.OK(c, DeployRecordListResponse{Records: records})
 }
 
+func (h *Handler) RollbackDeploy(c *gin.Context) {
+	projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid project id")
+		return
+	}
+	envID, err := strconv.ParseInt(c.Param("envId"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid environment id")
+		return
+	}
+
+	tenantID, _ := c.Get("tenant_id")
+	userID, _ := c.Get("user_id")
+	tid, _ := tenantID.(int64)
+	uid, _ := userID.(int64)
+
+	record, err := h.svc.RollbackDeploy(c.Request.Context(), tid, projectID, envID, uid)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	response.OK(c, record)
+}
+
 func (h *Handler) TriggerDeploy(c *gin.Context) {
 	projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {

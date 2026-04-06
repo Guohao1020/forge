@@ -8,6 +8,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,12 +68,16 @@ func (c *Client) CreateJob(ctx context.Context, name string, image string, comma
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
+					ImagePullSecrets: []corev1.LocalObjectReference{
+						{Name: "acr-secret"},
+					},
 					Containers: []corev1.Container{
 						{
-							Name:    "worker",
-							Image:   image,
-							Command: command,
-							Env:     envVars,
+							Name:            "worker",
+							Image:           image,
+							ImagePullPolicy: corev1.PullAlways,
+							Command:         command,
+							Env:             envVars,
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
 									corev1.ResourceCPU:    resource.MustParse("500m"),
@@ -205,6 +210,9 @@ func (c *Client) ApplyDeployment(ctx context.Context, namespace, name, image str
 					Labels: labels,
 				},
 				Spec: corev1.PodSpec{
+					ImagePullSecrets: []corev1.LocalObjectReference{
+						{Name: "acr-secret"},
+					},
 					Containers: []corev1.Container{
 						{
 							Name:  name,
@@ -379,3 +387,356 @@ func (c *Client) GetDeploymentStatus(ctx context.Context, namespace, name string
 	}
 	return "UNAVAILABLE", nil
 }
+
+// EnsureImagePullSecret creates or updates a Docker registry secret in the namespace.
+func (c *Client) EnsureImagePullSecret(ctx context.Context, namespace, secretName string, dockerConfigJSON []byte) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretTypeDockerConfigJson,
+		Data: map[string][]byte{
+			corev1.DockerConfigJsonKey: dockerConfigJSON,
+		},
+	}
+
+	_, err := c.clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		// Create
+		_, err = c.clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
+		return err
+	}
+	// Update
+	_, err = c.clientset.CoreV1().Secrets(namespace).Update(ctx, secret, metav1.UpdateOptions{})
+	return err
+}
+
+// CreateConfigMap creates or updates a ConfigMap in the given namespace.
+func (c *Client) CreateConfigMap(ctx context.Context, namespace, name string, data map[string]string) error {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Data: data,
+	}
+
+	existing, err := c.clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		_, err = c.clientset.CoreV1().ConfigMaps(namespace).Create(ctx, cm, metav1.CreateOptions{})
+		return err
+	}
+	cm.ResourceVersion = existing.ResourceVersion
+	_, err = c.clientset.CoreV1().ConfigMaps(namespace).Update(ctx, cm, metav1.UpdateOptions{})
+	return err
+}
+
+// DeleteConfigMap removes a ConfigMap.
+func (c *Client) DeleteConfigMap(ctx context.Context, namespace, name string) error {
+	return c.clientset.CoreV1().ConfigMaps(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+}
+
+// CreateJobWithVolumes creates a K8s Job with ConfigMap volumes mounted.
+// configMaps is a map of configmap-name -> mount-path.
+func (c *Client) CreateJobWithVolumes(ctx context.Context, name, image string, command []string, env map[string]string, configMaps map[string]string, timeoutSeconds int64) error {
+	envVars := make([]corev1.EnvVar, 0, len(env))
+	for k, v := range env {
+		envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
+	}
+
+	backoffLimit := int32(0)
+	ttl := int32(300)
+
+	// Build volumes and volume mounts
+	volumes := make([]corev1.Volume, 0, len(configMaps))
+	mounts := make([]corev1.VolumeMount, 0, len(configMaps))
+	i := 0
+	for cmName, mountPath := range configMaps {
+		volName := fmt.Sprintf("cm-%d", i)
+		volumes = append(volumes, corev1.Volume{
+			Name: volName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: cmName},
+				},
+			},
+		})
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      volName,
+			MountPath: mountPath,
+			ReadOnly:  true,
+		})
+		i++
+	}
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "forge-jobs",
+			Labels: map[string]string{
+				"app":       "forge",
+				"component": "task-job",
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &timeoutSeconds,
+			BackoffLimit:            &backoffLimit,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyNever,
+					ImagePullSecrets: []corev1.LocalObjectReference{
+						{Name: "acr-secret"},
+					},
+					Volumes: volumes,
+					Containers: []corev1.Container{
+						{
+							Name:            "worker",
+							Image:           image,
+							ImagePullPolicy: corev1.PullAlways,
+							Command:         command,
+							Env:             envVars,
+							VolumeMounts:    mounts,
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("1Gi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("2"),
+									corev1.ResourceMemory: resource.MustParse("4Gi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := c.clientset.BatchV1().Jobs("forge-jobs").Create(ctx, job, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("create job: %w", err)
+	}
+	slog.Info("k8s job created (with volumes)", "name", name, "namespace", "forge-jobs", "volumes", len(configMaps))
+	return nil
+}
+
+// ApplyIngress creates or updates an Ingress for the given app with the specified host.
+// If tlsSecretName is non-empty, TLS termination is configured using that secret.
+func (c *Client) ApplyIngress(ctx context.Context, namespace, name, serviceName string, servicePort int32, host string) error {
+	tlsSecretName := "forge-tls-secret" // will be created by EnsureTLSSecret
+	pathType := networkingv1.PathTypePrefix
+	ingress := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Annotations: map[string]string{
+				"kubernetes.io/ingress.class":           "nginx",
+				"nginx.ingress.kubernetes.io/ssl-redirect": "true",
+			},
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: strPtr("nginx"),
+			TLS: []networkingv1.IngressTLS{
+				{
+					Hosts:      []string{host},
+					SecretName: tlsSecretName,
+				},
+			},
+			Rules: []networkingv1.IngressRule{
+				{
+					Host: host,
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path:     "/",
+									PathType: &pathType,
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: serviceName,
+											Port: networkingv1.ServiceBackendPort{
+												Number: servicePort,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	existing, err := c.clientset.NetworkingV1().Ingresses(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		_, err = c.clientset.NetworkingV1().Ingresses(namespace).Create(ctx, ingress, metav1.CreateOptions{})
+		return err
+	}
+	ingress.ResourceVersion = existing.ResourceVersion
+	_, err = c.clientset.NetworkingV1().Ingresses(namespace).Update(ctx, ingress, metav1.UpdateOptions{})
+	return err
+}
+
+// CopySecret copies a secret from one namespace to another (e.g., TLS certs).
+func (c *Client) CopySecret(ctx context.Context, srcNamespace, srcName, dstNamespace, dstName string) error {
+	src, err := c.clientset.CoreV1().Secrets(srcNamespace).Get(ctx, srcName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get source secret %s/%s: %w", srcNamespace, srcName, err)
+	}
+
+	dst := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dstName,
+			Namespace: dstNamespace,
+		},
+		Type: src.Type,
+		Data: src.Data,
+	}
+
+	existing, err := c.clientset.CoreV1().Secrets(dstNamespace).Get(ctx, dstName, metav1.GetOptions{})
+	if err != nil {
+		_, err = c.clientset.CoreV1().Secrets(dstNamespace).Create(ctx, dst, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("create secret %s/%s: %w", dstNamespace, dstName, err)
+		}
+		slog.Info("k8s secret copied", "from", srcNamespace+"/"+srcName, "to", dstNamespace+"/"+dstName)
+		return nil
+	}
+	dst.ResourceVersion = existing.ResourceVersion
+	_, err = c.clientset.CoreV1().Secrets(dstNamespace).Update(ctx, dst, metav1.UpdateOptions{})
+	return err
+}
+
+// AddIngressPathRule adds (or updates) a path rule on a shared Ingress.
+// If the Ingress doesn't exist, it creates one. If the path already exists, it updates the backend.
+// This enables the forge-{env}.shulex.com/{project}/ pattern with a single shared Ingress per environment.
+func (c *Client) AddIngressPathRule(ctx context.Context, namespace, ingressName, host, pathPrefix, serviceName string, servicePort int32) error {
+	pathType := networkingv1.PathTypePrefix
+
+	existing, err := c.clientset.NetworkingV1().Ingresses(namespace).Get(ctx, ingressName, metav1.GetOptions{})
+	if err != nil {
+		// Create new Ingress with this path
+		ingress := &networkingv1.Ingress{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      ingressName,
+				Namespace: namespace,
+				Annotations: map[string]string{
+					"kubernetes.io/ingress.class":              "nginx",
+					"nginx.ingress.kubernetes.io/use-regex":    "true",
+					"nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+				},
+			},
+			Spec: networkingv1.IngressSpec{
+				IngressClassName: strPtr("nginx"),
+				TLS: []networkingv1.IngressTLS{
+					{
+						Hosts:      []string{host},
+						SecretName: "forge-tls-secret",
+					},
+				},
+				Rules: []networkingv1.IngressRule{
+					{
+						Host: host,
+						IngressRuleValue: networkingv1.IngressRuleValue{
+							HTTP: &networkingv1.HTTPIngressRuleValue{
+								Paths: []networkingv1.HTTPIngressPath{
+									{
+										Path:     pathPrefix + "(/|$)(.*)",
+										PathType: &pathType,
+										Backend: networkingv1.IngressBackend{
+											Service: &networkingv1.IngressServiceBackend{
+												Name: serviceName,
+												Port: networkingv1.ServiceBackendPort{Number: servicePort},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		_, err = c.clientset.NetworkingV1().Ingresses(namespace).Create(ctx, ingress, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("create shared ingress: %w", err)
+		}
+		slog.Info("shared ingress created", "name", ingressName, "host", host, "path", pathPrefix)
+		return nil
+	}
+
+	// Ingress exists, add or update the path rule
+	newPath := networkingv1.HTTPIngressPath{
+		Path:     pathPrefix + "(/|$)(.*)",
+		PathType: &pathType,
+		Backend: networkingv1.IngressBackend{
+			Service: &networkingv1.IngressServiceBackend{
+				Name: serviceName,
+				Port: networkingv1.ServiceBackendPort{Number: servicePort},
+			},
+		},
+	}
+
+	if len(existing.Spec.Rules) == 0 {
+		existing.Spec.Rules = []networkingv1.IngressRule{{Host: host}}
+	}
+
+	rule := &existing.Spec.Rules[0]
+	if rule.HTTP == nil {
+		rule.HTTP = &networkingv1.HTTPIngressRuleValue{}
+	}
+
+	// Check if path already exists, update if so
+	found := false
+	for i, p := range rule.HTTP.Paths {
+		if p.Path == newPath.Path {
+			rule.HTTP.Paths[i] = newPath
+			found = true
+			break
+		}
+	}
+	if !found {
+		rule.HTTP.Paths = append(rule.HTTP.Paths, newPath)
+	}
+
+	_, err = c.clientset.NetworkingV1().Ingresses(namespace).Update(ctx, existing, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("update shared ingress: %w", err)
+	}
+	slog.Info("ingress path rule added", "ingress", ingressName, "path", pathPrefix, "service", serviceName)
+	return nil
+}
+
+// EnsureTLSSecret creates or updates a TLS secret with cert and key data.
+func (c *Client) EnsureTLSSecret(ctx context.Context, namespace, name string, certPEM, keyPEM []byte) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			corev1.TLSCertKey:       certPEM,
+			corev1.TLSPrivateKeyKey: keyPEM,
+		},
+	}
+
+	existing, err := c.clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		_, err = c.clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("create TLS secret: %w", err)
+		}
+		slog.Info("k8s TLS secret created", "name", name, "namespace", namespace)
+		return nil
+	}
+	secret.ResourceVersion = existing.ResourceVersion
+	_, err = c.clientset.CoreV1().Secrets(namespace).Update(ctx, secret, metav1.UpdateOptions{})
+	return err
+}
+
+func strPtr(s string) *string { return &s }

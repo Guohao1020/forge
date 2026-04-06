@@ -52,48 +52,69 @@ Your role is to deeply understand user requirements through a structured, progre
 
 ## Output Format
 
-IMPORTANT: You MUST respond with ONLY a JSON object. No markdown, no text outside JSON.
-Do NOT wrap in ```json``` code blocks.
+你的输出分为两个部分，用 `---JSON---` 分隔：
 
-### 澄清阶段 (status=clarify):
-{
-  "status": "clarify",
-  "phase": "understanding|scenario|constraints",
-  "understanding": "我对你需求的理解：...",
-  "question": "单个具体问题？",
-  "options": ["选项A: 说明", "选项B: 说明", "选项C: 说明"],
-  "risks": [{"level": "HIGH|MEDIUM|LOW", "description": "...", "mitigation": "..."}]
-}
+**第一部分（思考过程）**：用中文自然语言描述你的分析思路，这部分会实时流式展示给用户。包含：
+- 你对需求的理解和分析
+- 为什么要问这个问题（方法论依据）
+- 每个选项的设计考量和推荐理由
+- 当前阶段的判断依据
+
+**第二部分（结构化数据）**：JSON 对象，包含问题、选项等结构化信息。
+
+示例输出格式：
+
+让我分析一下这个需求...
+
+你想做一个日历web端应用，可以记录笔记。这是一个典型的工具型产品需求，核心在于日历展示和笔记关联。
+
+我需要先确认你的使用场景，因为不同场景会影响日历的展示粒度和笔记的组织方式。比如个人日记场景需要按天记录，而项目管理场景则更关注时间段和里程碑。
+
+下面几个选项的设计考量：
+- **个人日记**适合大多数用户，界面简洁，按天组织
+- **项目管理**需要更复杂的时间线视图和协作功能
+- **学习计划**介于两者之间，强调周期性和复习提醒
+
+---JSON---
+{"status": "clarify", "phase": "understanding", "understanding": "你想做一个网页端的日历应用，支持记录笔记。", "question": "这个日历应用主要面向什么使用场景？", "options": [{"label": "个人日记/生活记录", "reason": "按天组织，界面简洁，适合记录日常想法和事件"}, {"label": "项目管理/工作安排", "reason": "需要时间段视图、任务追踪和团队协作功能"}, {"label": "学习计划/知识管理", "reason": "强调周期性复习、知识关联和进度追踪"}, {"label": "综合用途", "reason": "兼顾多种场景，需要灵活的标签和分类系统"}], "risks": []}
+
+示例 — 第二轮（场景澄清）:
+
+用户选择了个人日记场景，那我需要确认笔记的组织方式...
+
+---JSON---
+{"status": "clarify", "phase": "scenario", "understanding": "你需要一个面向个人日记场景的日历应用。", "question": "笔记内容需要支持哪些格式？", "options": [{"label": "纯文本", "reason": "最简单直接，加载快，兼容性好"}, {"label": "富文本（加粗、列表等）", "reason": "满足日常记录需求，无需额外学习成本"}, {"label": "Markdown", "reason": "适合技术用户，支持代码片段和结构化内容"}], "risks": []}
 
 ⚠️ 严格规则：
+- 必须先写思考过程，再写 `---JSON---`，再写 JSON 对象
 - `question` 是**单个字符串**，绝不是数组！每次只问一个问题！
 - 不要使用 `questions`（复数）字段，只用 `question`（单数）
-- `options` 尽量提供，帮助用户快速选择。至少 2 个选项，最多 4 个
-- 每个选项格式：简短描述（不超过 20 字）
+- `options` 必须是对象数组，每个选项包含 `label`（选项文本，不超过 15 字）和 `reason`（推荐理由，说明为什么选这个好）
 - `risks` 在早期阶段可以为空数组 []
 - `phase` 必须填写
 
-示例 — 第一轮（初步理解）:
-{"status": "clarify", "phase": "understanding", "understanding": "你想做一个网页端的计算器应用。", "question": "这个计算器主要面向什么场景？", "options": ["日常简单计算（加减乘除）", "科学计算（三角函数、对数等）", "金融计算（利率、汇率等）", "编程辅助（进制转换、位运算）"], "risks": []}
-
-示例 — 第二轮（场景澄清）:
-{"status": "clarify", "phase": "scenario", "understanding": "你需要一个支持基本运算的日常计算器，面向普通用户。", "question": "计算结果需要保存历史记录吗？", "options": ["不需要，用完即走", "需要，本地保存最近 20 条", "需要，支持云端同步"], "risks": []}
-
 ### 确认阶段 (status=confirmed):
+
+同样先写思考总结，再写 JSON：
+
+经过几轮讨论，需求已经非常清晰了。总结一下核心要点...
+
+---JSON---
 {
   "status": "confirmed",
   "summary": "完整需求摘要（2-3段）",
   "task_title": "简短任务标题",
-  "functional_requirements": ["功能需求1", "功能需求2", "..."],
+  "functional_requirements": ["功能需求1", "功能需求2"],
   "non_functional": {"performance": "...", "security": "...", "compatibility": "..."},
   "affected_modules": ["module1", "module2"],
   "estimated_complexity": "LOW|MEDIUM|HIGH",
   "risks": [{"level": "MEDIUM", "description": "...", "mitigation": "..."}],
-  "out_of_scope": ["明确不包含的内容1", "..."],
-  "acceptance_criteria": ["验收标准1", "验收标准2", "..."]
+  "out_of_scope": ["明确不包含的内容1"],
+  "acceptance_criteria": ["验收标准1", "验收标准2"]
 }
 
-CRITICAL: Always output raw JSON only. Always include "risks" array (can be empty).
+CRITICAL: Always use the two-part format: thinking text + ---JSON--- + JSON object.
+Always include "risks" array in JSON (can be empty).
 """
 
 
@@ -106,3 +127,36 @@ class AnalystAgent(BaseAgent):
         if project_context:
             base += f"\n\n## Project Context\n{project_context}"
         return base
+
+    def _build_messages(self, user_input: str, context: ProjectContext) -> list[dict]:
+        """Build messages, reconstructing assistant messages in the expected two-part format.
+
+        The DB stores formatted human-readable text as assistant content, but the system
+        prompt expects thinking + ---JSON--- + JSON. We reconstruct the expected format
+        from the metadata stored alongside each message.
+        """
+        import json as _json
+        messages = []
+        for msg in context.conversation_history:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "assistant" and msg.get("metadata"):
+                # Use the raw AI output if available (stored by analyze activity).
+                # This avoids fragile format reconstruction from metadata fields.
+                meta = msg["metadata"]
+                if isinstance(meta, str):
+                    try:
+                        meta = _json.loads(meta)
+                    except _json.JSONDecodeError:
+                        meta = {}
+                if meta.get("raw_response"):
+                    # Best case: use the exact original AI output
+                    content = meta["raw_response"]
+                elif meta.get("status"):
+                    # Fallback: reconstruct thinking + JSON from metadata
+                    thinking = content if content and content != "{}" else meta.get("understanding", "")
+                    json_str = _json.dumps(meta, ensure_ascii=False)
+                    content = f"{thinking}\n\n---JSON---\n{json_str}"
+            messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": user_input})
+        return messages

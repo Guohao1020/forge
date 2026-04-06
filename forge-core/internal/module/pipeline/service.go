@@ -54,6 +54,36 @@ func (s *Service) ListDeployRecords(ctx context.Context, environmentID int64) ([
 	return records, nil
 }
 
+// RollbackDeploy rolls back to the previously deployed version on the given environment.
+func (s *Service) RollbackDeploy(ctx context.Context, tenantID, projectID, envID, userID int64) (*DeployRecord, error) {
+	prevVersion, prevArtifactID, err := s.repo.FindPreviousDeploy(ctx, envID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("no previous version to rollback to")
+	}
+
+	record := &DeployRecord{
+		TenantID:      tenantID,
+		ProjectID:     projectID,
+		EnvironmentID: envID,
+		ArtifactID:    prevArtifactID,
+		Version:       prevVersion,
+		Status:        "ROLLED_BACK",
+		DeployedBy:    userID,
+	}
+	if err := s.repo.CreateRollbackRecord(ctx, record); err != nil {
+		return nil, fmt.Errorf("create rollback record: %w", err)
+	}
+
+	_ = s.repo.UpdateEnvironmentVersion(ctx, envID, prevVersion)
+
+	slog.Info("rollback deploy completed",
+		"projectId", projectID, "envId", envID,
+		"rolledBackTo", prevVersion,
+	)
+
+	return record, nil
+}
+
 func (s *Service) TriggerDeploy(ctx context.Context, tenantID, projectID, envID, userID int64, req TriggerDeployRequest) (*DeployRecord, error) {
 	// Get the environment to determine env type
 	env, err := s.repo.GetByID(ctx, envID)

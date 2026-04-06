@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Wifi, ExternalLink, Globe } from "lucide-react";
+import { ArrowLeft, Wifi, WifiOff, ExternalLink, Globe, Package, Tag, Rocket } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { StepTimeline } from "@/components/tasks/step-timeline";
 import { TaskWorkspace } from "@/components/tasks/task-workspace";
@@ -31,6 +31,87 @@ const PHASE_LABELS: Record<string, string> = {
 //     error        error       error
 //
 type Phase = "analyzing" | "confirming" | "planning" | "plan_review" | "idle" | "error";
+
+function extractDeployInfo(steps: TaskStep[]): {
+  artifactId?: number;
+  artifactName?: string;
+  versionId?: number;
+  versionTag?: string;
+  deployStatus?: string;
+} | null {
+  const deployStep = steps.find(
+    (s) => s.step_type === "DEPLOY" && s.output
+  );
+  if (!deployStep?.output) return null;
+  try {
+    const data = JSON.parse(deployStep.output);
+    if (data.artifact_id || data.version_id || data.deploy_status) {
+      return {
+        artifactId: data.artifact_id,
+        artifactName: data.artifact_name,
+        versionId: data.version_id,
+        versionTag: data.version_tag || data.version,
+        deployStatus: data.deploy_status || data.status,
+      };
+    }
+  } catch {
+    // not JSON or no relevant fields
+  }
+  return null;
+}
+
+function DeployInfoBar({
+  projectId,
+  deployInfo,
+}: {
+  projectId: string;
+  deployInfo: NonNullable<ReturnType<typeof extractDeployInfo>>;
+}) {
+  return (
+    <div className="flex items-center gap-4 px-4 py-2.5 border-t border-border bg-muted/30">
+      <span className="text-xs text-muted-foreground/60 shrink-0">部署产物:</span>
+      {deployInfo.artifactId && (
+        <Link
+          href={`/projects/${projectId}/artifacts`}
+          className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
+        >
+          <Package className="h-3 w-3" />
+          {deployInfo.artifactName || `制品 #${deployInfo.artifactId}`}
+        </Link>
+      )}
+      {deployInfo.versionId && (
+        <Link
+          href={`/projects/${projectId}/versions/${deployInfo.versionId}`}
+          className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
+        >
+          <Tag className="h-3 w-3" />
+          {deployInfo.versionTag || `版本 #${deployInfo.versionId}`}
+        </Link>
+      )}
+      {deployInfo.deployStatus && (
+        <Badge
+          variant="secondary"
+          className={`text-[10px] ${
+            deployInfo.deployStatus === "DEPLOYED"
+              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+              : deployInfo.deployStatus === "SIMULATED"
+              ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
+              : deployInfo.deployStatus === "FAILED"
+              ? "bg-red-500/10 text-red-400 border-red-500/20"
+              : "bg-muted text-muted-foreground"
+          }`}
+        >
+          <Rocket className="h-2.5 w-2.5 mr-1" />
+          {deployInfo.deployStatus === "DEPLOYED"
+            ? "DEV 已部署"
+            : deployInfo.deployStatus === "SIMULATED"
+            ? "模拟部署"
+            : deployInfo.deployStatus}
+        </Badge>
+      )}
+    </div>
+  );
+}
 
 function pickDefaultStep(steps: TaskStep[]): TaskStep | null {
   if (!steps.length) return null;
@@ -355,6 +436,42 @@ export default function TaskDetailPage() {
     }
   }, [detail?.steps]);
 
+  // Timeout detection for long-running analyzing/planning phases (3 minutes)
+  useEffect(() => {
+    if (phase !== "analyzing" && phase !== "planning") return;
+    const timer = setTimeout(() => {
+      setPhase("error");
+      setErrorMessage(
+        phase === "analyzing"
+          ? "需求分析超时（超过 3 分钟无响应），请检查服务状态后重试"
+          : "方案生成超时（超过 3 分钟无响应），请检查服务状态后重试"
+      );
+    }, 180_000);
+    return () => clearTimeout(timer);
+  }, [phase]);
+
+  // System status check when entering error phase
+  const [downServices, setDownServices] = useState<string[]>([]);
+  useEffect(() => {
+    if (phase !== "error") {
+      setDownServices([]);
+      return;
+    }
+    fetch("/api/health")
+      .then((r) => r.json())
+      .then((health) => {
+        const down: string[] = [];
+        if (health.temporal !== "up") down.push("Temporal");
+        if (health.ai_worker !== "up") down.push("AI Worker");
+        if (health.database !== "up") down.push("Database");
+        if (down.length > 0) setDownServices(down);
+      })
+      .catch(() => {
+        // health endpoint unreachable — the API server itself may be down
+        setDownServices(["API Server"]);
+      });
+  }, [phase]);
+
   // --- Action handlers ---
 
   const handleChatSend = useCallback(async (content: string) => {
@@ -540,7 +657,15 @@ export default function TaskDetailPage() {
       {/* Column 2+3: Content area */}
       {isConversationPhase ? (
         /* --- CONVERSATION PHASE: Chat + Action Panel --- */
-        <div className="flex-1 flex min-w-0">
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* SSE disconnection warning */}
+          {!connected && !isTerminal && (
+            <div className="bg-yellow-500/10 border-b border-yellow-500/20 px-4 py-2 text-sm text-yellow-400 flex items-center gap-2 shrink-0">
+              <WifiOff className="h-3.5 w-3.5 shrink-0" />
+              <span>实时连接已断开，正在重连...</span>
+            </div>
+          )}
+          <div className="flex-1 flex min-w-0">
           {/* Column 2: Chat messages */}
           <div className="flex-1 min-w-[300px] border-r border-border">
             <ChatPanel
@@ -580,21 +705,36 @@ export default function TaskDetailPage() {
               planReviewData={planReviewData}
               isPlanApproving={isPlanApproving}
               onApprovePlan={handleApprovePlan}
-              errorMessage={errorMessage}
+              errorMessage={
+                errorMessage +
+                (downServices.length > 0
+                  ? `\n服务异常: ${downServices.join("、")} 不可用`
+                  : "")
+              }
               onRetry={handleRetry}
             />
+          </div>
           </div>
         </div>
       ) : (
         /* --- EXECUTION PHASE: Step Workspace --- */
-        <div className="flex-1 overflow-y-auto p-6">
-          <TaskWorkspace
-            selectedStep={selectedStep}
-            steps={steps || []}
-            requirement={task.requirement}
-            streamingTokens={streamingTokens}
-            isStreaming={isStreaming}
-          />
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 overflow-y-auto p-6">
+            <TaskWorkspace
+              selectedStep={selectedStep}
+              steps={steps || []}
+              requirement={task.requirement}
+              streamingTokens={streamingTokens}
+              isStreaming={isStreaming}
+            />
+          </div>
+          {/* Post-deploy info bar */}
+          {(() => {
+            const deployInfo = extractDeployInfo(steps || []);
+            return deployInfo ? (
+              <DeployInfoBar projectId={projectId} deployInfo={deployInfo} />
+            ) : null;
+          })()}
         </div>
       )}
     </div>

@@ -13,6 +13,27 @@ CODER_SYSTEM_PROMPT = """You are a senior software engineer. Your task is to gen
 4. Include necessary imports
 5. Follow existing project patterns
 
+## Project Configuration Files (MANDATORY)
+When generating code for a project, you MUST also generate all required project configuration files if they do not already exist in the project. These files are necessary for the project to build and run.
+
+**For Node.js / TypeScript / Next.js projects**, ALWAYS generate:
+- `package.json` — with project name, scripts (dev, build, start), and all dependencies used in the generated code
+- `tsconfig.json` — with appropriate compiler options for the framework
+- If using Next.js: `next.config.js` with `output: 'standalone'` for Docker deployment
+- If using Tailwind: `tailwind.config.js` and `postcss.config.js`
+
+**For Go projects**, ALWAYS generate:
+- `go.mod` — with module name and Go version
+- `go.sum` — can be empty (will be populated by `go mod tidy`)
+
+**For Python projects**, ALWAYS generate:
+- `requirements.txt` — with all dependencies and pinned versions
+
+**For Java projects**, ALWAYS generate:
+- `pom.xml` or `build.gradle` with all dependencies
+
+Include ALL config files in the `files[]` array. Without these, the project cannot be built or deployed.
+
 ## Dockerfile Generation
 If the project does NOT already have a Dockerfile and you are generating a complete service, you MUST also generate a Dockerfile using a multi-stage build pattern. Include it in the `files[]` array with `"path": "Dockerfile"` and `"language": "dockerfile"`.
 

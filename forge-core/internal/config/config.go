@@ -60,9 +60,9 @@ func Load() *Config {
 
 		WorkspaceRoot: getEnv("FORGE_WORKSPACE_ROOT", "./workspaces"),
 
-		ACRRegistry: getEnv("ACR_REGISTRY", ""),
-		ACRUsername: getEnv("ACR_USERNAME", ""),
-		ACRPassword: getEnv("ACR_PASSWORD", ""),
+		ACRRegistry: getEnv("ACR_REGISTRY", "repo-voc-registry-vpc.cn-hangzhou.cr.aliyuncs.com/voc-repo"),
+		ACRUsername: getEnv("ACR_USERNAME", "1652058863700531@shulex"),
+		ACRPassword: getEnv("ACR_PASSWORD", "shulex123123"),
 
 		K8sNodeIP: getEnv("K8S_NODE_IP", "47.97.49.242"),
 	}

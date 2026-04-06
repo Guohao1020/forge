@@ -48,6 +48,52 @@ class AgentResult:
     parse_failed: bool = False  # True if final JSON parsing failed
 
 
+def _normalize_assistant_content(response: LLMResponse) -> list:
+    """Normalize assistant response content to Anthropic-style content blocks.
+
+    This handles the difference between providers:
+    - Anthropic raw_content: list of ContentBlock objects (TextBlock, ToolUseBlock)
+    - OpenAI raw_content: ChatCompletionMessage with .content and .tool_calls
+
+    Returns a list of dicts in Anthropic format:
+    [{"type": "text", "text": "..."}, {"type": "tool_use", "id": "...", "name": "...", "input": {...}}]
+    """
+    raw = response.raw_content
+
+    # Already a list (Anthropic format) — convert to dicts if needed
+    if isinstance(raw, list):
+        result = []
+        for block in raw:
+            if isinstance(block, dict):
+                result.append(block)
+            elif hasattr(block, "type"):
+                # Anthropic ContentBlock object
+                if block.type == "text":
+                    result.append({"type": "text", "text": block.text})
+                elif block.type == "tool_use":
+                    result.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
+            else:
+                result.append({"type": "text", "text": str(block)})
+        return result
+
+    # OpenAI ChatCompletionMessage — convert to Anthropic format
+    result = []
+    if hasattr(raw, "content") and raw.content:
+        result.append({"type": "text", "text": raw.content})
+    if hasattr(raw, "tool_calls") and raw.tool_calls:
+        for tc in raw.tool_calls:
+            result.append({
+                "type": "tool_use",
+                "id": tc.id,
+                "name": tc.function.name,
+                "input": json.loads(tc.function.arguments) if tc.function.arguments else {},
+            })
+    if not result:
+        # Fallback: use the text content from the response
+        result.append({"type": "text", "text": response.content or ""})
+    return result
+
+
 class BaseAgent:
     purpose: Purpose = Purpose.ANALYZE
 
@@ -183,8 +229,15 @@ class BaseAgent:
                     "content": result,
                 })
 
-            # Append assistant response and tool results to messages
-            messages.append({"role": "assistant", "content": response.raw_content})
+            # Append assistant response and tool results in normalized format.
+            # We use Anthropic-style format internally (content blocks), and the
+            # client layer converts to OpenAI format when needed.
+            #
+            # For Anthropic: raw_content is a list of ContentBlock objects
+            # For OpenAI: raw_content is a ChatCompletionMessage Pydantic model
+            # We normalize both to Anthropic-style content blocks.
+            assistant_content = _normalize_assistant_content(response)
+            messages.append({"role": "assistant", "content": assistant_content})
             messages.append({"role": "user", "content": tool_results})
 
             # Token budget check: stop early if consuming too much

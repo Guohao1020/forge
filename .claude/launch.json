@@ -6,7 +6,8 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "cwd": "forge-portal",
-      "port": 3000
+      "port": 3000,
+      "autoPort": false
     }
   ]
 }

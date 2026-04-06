@@ -15,6 +15,11 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
+// DB returns the underlying database pool for ad-hoc queries.
+func (r *Repository) DB() *pgxpool.Pool {
+	return r.db
+}
+
 func (r *Repository) Create(ctx context.Context, conv *Conversation) error {
 	err := r.db.QueryRow(ctx,
 		`INSERT INTO engine.conversations (task_id, role, content, metadata, tokens_used)

@@ -5,19 +5,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.temporal.io/sdk/activity"
+
+	"github.com/shulex/forge/forge-core/internal/k8s"
+	"github.com/shulex/forge/forge-core/internal/module/task"
 )
 
 // DeployActivities handles K8s deployment operations.
 type DeployActivities struct {
-	db *pgxpool.Pool
+	db  *pgxpool.Pool
+	k8s *k8s.Client // may be nil
+	sse *task.SSEHub
 }
 
-func NewDeployActivities(db *pgxpool.Pool) *DeployActivities {
-	return &DeployActivities{db: db}
+func NewDeployActivities(db *pgxpool.Pool, k8sClient *k8s.Client, sse *task.SSEHub) *DeployActivities {
+	return &DeployActivities{db: db, k8s: k8sClient, sse: sse}
 }
 
 // GenerateManifestInput is the input for K8s manifest generation.
@@ -159,7 +165,8 @@ spec:
 	)
 
 	// --- Ingress ---
-	host := fmt.Sprintf("%s-%s.forge.example.com", appName, input.Environment)
+	baseDomain := getEnvOrDefault("FORGE_BASE_DOMAIN", "shulex.com")
+	host := fmt.Sprintf("forge-%s-%s.%s", appName, input.Environment, baseDomain)
 	ingress := fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -284,6 +291,189 @@ func (a *DeployActivities) Rollback(ctx context.Context, input RollbackInput) er
 
 	slog.Info("Rollback completed", "target_deploy_id", input.DeployID)
 	return nil
+}
+
+// AutoDeployInput is the input for the AutoDeployToDev activity.
+type AutoDeployInput struct {
+	TenantID   int64  `json:"tenant_id"`
+	ProjectID  int64  `json:"project_id"`
+	TaskID     int64  `json:"task_id"`
+	ArtifactID int64  `json:"artifact_id"`
+	ImageURL   string `json:"image_url"`
+	Version    string `json:"version"`
+	CreatedBy  int64  `json:"created_by"`
+}
+
+// AutoDeployOutput is the result of the AutoDeployToDev activity.
+type AutoDeployOutput struct {
+	DeployRecordID int64  `json:"deploy_record_id"`
+	EnvironmentID  int64  `json:"environment_id"`
+	Status         string `json:"status"`
+}
+
+// AutoDeployToDev automatically deploys to the DEV environment after task completion.
+func (a *DeployActivities) AutoDeployToDev(ctx context.Context, input AutoDeployInput) (*AutoDeployOutput, error) {
+	info := activity.GetInfo(ctx)
+	slog.Info("AutoDeployToDev", "task_id", input.TaskID, "project_id", input.ProjectID, "workflow_id", info.WorkflowExecution.ID)
+
+	// Find DEV environment for this project
+	var envID int64
+	err := a.db.QueryRow(ctx,
+		`SELECT id FROM pipeline.environments WHERE project_id = $1 AND tenant_id = $2 AND env_type = 'DEV'`,
+		input.ProjectID, input.TenantID,
+	).Scan(&envID)
+	if err != nil {
+		slog.Warn("no DEV environment found, skipping auto-deploy", "project_id", input.ProjectID)
+		return &AutoDeployOutput{Status: "SKIPPED"}, nil
+	}
+
+	// Create deploy record
+	version := input.Version
+	if version == "" {
+		version = input.ImageURL
+	}
+
+	var deployID int64
+	err = a.db.QueryRow(ctx,
+		`INSERT INTO pipeline.deploy_records (tenant_id, project_id, environment_id, artifact_id, version, status, deployed_by)
+		 VALUES ($1, $2, $3, $4, $5, 'PENDING', $6)
+		 RETURNING id`,
+		input.TenantID, input.ProjectID, envID, input.ArtifactID, version, input.CreatedBy,
+	).Scan(&deployID)
+	if err != nil {
+		return nil, fmt.Errorf("create deploy record: %w", err)
+	}
+
+	// Real K8s deployment when client is available
+	if a.k8s != nil && input.ImageURL != "" {
+		namespace := fmt.Sprintf("tenant-%d-dev", input.TenantID)
+		appName := fmt.Sprintf("project-%d", input.ProjectID)
+
+		// Ensure namespace exists
+		if err := a.k8s.EnsureNamespace(ctx, namespace, map[string]string{
+			"app":        "forge",
+			"component":  "dev-env",
+			"managed-by": "forge",
+		}); err != nil {
+			slog.Warn("failed to ensure namespace", "namespace", namespace, "error", err)
+		}
+
+		// Create ACR pull secret
+		dockerConfigJSON := []byte(`{"auths":{"repo-voc-registry-vpc.cn-hangzhou.cr.aliyuncs.com":{"username":"1652058863700531@shulex","password":"shulex123123","auth":"MTY1MjA1ODg2MzcwMDUzMUBzaHVsZXg6c2h1bGV4MTIzMTIz"}}}`)
+		if err := a.k8s.EnsureImagePullSecret(ctx, namespace, "acr-secret", dockerConfigJSON); err != nil {
+			slog.Warn("failed to create image pull secret", "error", err)
+		}
+
+		// Apply deployment
+		if err := a.k8s.ApplyDeployment(ctx, namespace, appName, input.ImageURL,
+			8080, // port
+			1,    // replicas
+			map[string]string{"APP_ENV": "dev", "APP_PORT": "8080"},
+		); err != nil {
+			slog.Warn("failed to apply deployment", "error", err)
+		} else {
+			// Apply service
+			_ = a.k8s.ApplyService(ctx, namespace, appName, 80, 8080)
+
+			// Ensure TLS secret for HTTPS
+			tlsCertPath := getEnvOrDefault("FORGE_TLS_CERT", "k8s/tls/shulex.com.crt")
+			tlsKeyPath := getEnvOrDefault("FORGE_TLS_KEY", "k8s/tls/shulex.com.key")
+			certData, certErr := os.ReadFile(tlsCertPath)
+			keyData, keyErr := os.ReadFile(tlsKeyPath)
+			if certErr == nil && keyErr == nil {
+				_ = a.k8s.EnsureTLSSecret(ctx, namespace, "forge-tls-secret", certData, keyData)
+			}
+
+			// Add path rule to shared Ingress: forge-dev.shulex.com/{project-slug}/
+			baseDomain := getEnvOrDefault("FORGE_BASE_DOMAIN", "shulex.com")
+			host := fmt.Sprintf("forge-dev.%s", baseDomain)
+			var projectSlug string
+			var projectName string
+			_ = a.db.QueryRow(ctx,
+				`SELECT name FROM engine.projects WHERE id = $1`, input.ProjectID,
+			).Scan(&projectName)
+			// Generate slug: prefer ASCII chars from name, fallback to "p{id}"
+			projectSlug = sanitizeK8sName(projectName)
+			if projectSlug == "" || projectSlug == "-" {
+				projectSlug = fmt.Sprintf("p%d", input.ProjectID)
+			}
+			pathPrefix := "/" + projectSlug
+			if err := a.k8s.AddIngressPathRule(ctx, namespace, "forge-dev-ingress", host, pathPrefix, appName, 8080); err != nil {
+				slog.Warn("failed to add ingress path rule", "error", err)
+			} else {
+				slog.Info("ingress path added", "host", host, "path", pathPrefix)
+			}
+
+			// Mark as DEPLOYED (not SIMULATED)
+			_, _ = a.db.Exec(ctx,
+				`UPDATE pipeline.deploy_records SET status = 'DEPLOYED', completed_at = NOW() WHERE id = $1`,
+				deployID,
+			)
+
+			// Update environment
+			_, _ = a.db.Exec(ctx,
+				`UPDATE pipeline.environments SET current_version = $1, last_deploy_at = NOW(), status = 'ACTIVE' WHERE id = $2`,
+				version, envID,
+			)
+
+			// Broadcast
+			if a.sse != nil {
+				a.sse.Broadcast(input.TaskID, task.TaskProgressEvent{
+					Type:   "deploy_completed",
+					TaskID: input.TaskID,
+					Status: "DEPLOYED",
+					Data: map[string]string{
+						"environment": "DEV",
+						"version":     version,
+						"deploy_id":   fmt.Sprintf("%d", deployID),
+					},
+				})
+			}
+
+			slog.Info("AutoDeployToDev completed (real K8s)", "deploy_id", deployID, "namespace", namespace)
+			return &AutoDeployOutput{
+				DeployRecordID: deployID,
+				EnvironmentID:  envID,
+				Status:         "DEPLOYED",
+			}, nil
+		}
+	}
+
+	// Fallback: Mark as SIMULATED (K8s unavailable or deployment failed)
+	_, err = a.db.Exec(ctx,
+		`UPDATE pipeline.deploy_records SET status = 'SIMULATED', completed_at = NOW() WHERE id = $1`,
+		deployID,
+	)
+	if err != nil {
+		slog.Warn("failed to update deploy status", "deploy_id", deployID, "error", err)
+	}
+
+	// Update environment current_version
+	_, _ = a.db.Exec(ctx,
+		`UPDATE pipeline.environments SET current_version = $1, last_deploy_at = NOW(), status = 'ACTIVE' WHERE id = $2`,
+		version, envID,
+	)
+
+	// Broadcast SSE event
+	if a.sse != nil {
+		a.sse.Broadcast(input.TaskID, task.TaskProgressEvent{
+			Type:   "deploy_completed",
+			TaskID: input.TaskID,
+			Status: "SIMULATED",
+			Data: map[string]string{
+				"environment": "DEV",
+				"version":     version,
+				"deploy_id":   fmt.Sprintf("%d", deployID),
+			},
+		})
+	}
+
+	slog.Info("AutoDeployToDev completed (simulated)", "deploy_id", deployID, "env_id", envID, "version", version)
+	return &AutoDeployOutput{
+		DeployRecordID: deployID,
+		EnvironmentID:  envID,
+		Status:         "SIMULATED",
+	}, nil
 }
 
 func sanitizeK8sName(name string) string {

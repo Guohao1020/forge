@@ -62,3 +62,4 @@ workspaces/
 # Binary artifacts
 *.exe~
 forge-core/forge-core.exe~
+forge-core/k8s/tls/

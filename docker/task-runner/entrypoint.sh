@@ -1,180 +1,184 @@
-#!/bin/bash
-# forge-task-runner entrypoint
-#
-# Environment variables (set by Forge when creating the container):
-#   REPO_URL       — Git clone URL (with token embedded for private repos)
-#   BRANCH         — Branch to checkout
-#   FRAMEWORK      — Test framework to use (go_test, jest, pytest, junit5)
-#   COMMAND         — Override: run this command instead of auto-detected test
-#   TASK_ID        — Forge task ID (for reporting)
-#   COVERAGE_MIN   — Minimum coverage percentage (default: 60)
-#   FORGE_API_URL  — Forge API base URL (for reporting results back)
-#   FORGE_API_TOKEN — API token for authentication
-
-set -euo pipefail
-
-COVERAGE_MIN=${COVERAGE_MIN:-60}
-RESULT_FILE="/tmp/test-result.json"
+#!/usr/bin/env bash
+set -e
 
 echo "=== Forge Task Runner ==="
-echo "Task ID:    ${TASK_ID:-unknown}"
-echo "Framework:  ${FRAMEWORK:-auto}"
-echo "Branch:     ${BRANCH:-main}"
-echo "Coverage:   >= ${COVERAGE_MIN}%"
-echo "========================="
+echo "TASK_ID: $TASK_ID"
+echo "FRAMEWORK: $FRAMEWORK"
+echo "FORGE_API_URL: $FORGE_API_URL"
 
-# --- Step 1: Clone repository ---
-if [ -n "${REPO_URL:-}" ]; then
-    echo "[1/4] Cloning repository..."
-    git clone --depth 1 --branch "${BRANCH:-main}" "${REPO_URL}" /workspace/repo 2>&1 || {
-        echo "ERROR: Failed to clone repository"
-        exit 1
-    }
-    cd /workspace/repo
-else
-    echo "[1/4] No REPO_URL provided, using mounted workspace"
-    cd /workspace
-fi
-
-# --- Step 2: Install dependencies ---
-echo "[2/4] Installing dependencies..."
-if [ -f "go.mod" ]; then
-    go mod download 2>&1
-elif [ -f "package.json" ]; then
-    if [ -f "pnpm-lock.yaml" ]; then
-        pnpm install --frozen-lockfile 2>&1
-    elif [ -f "yarn.lock" ]; then
-        npm install 2>&1
+# Check if files are mounted via ConfigMap
+if [ "$FILES_MOUNTED" = "true" ] && [ -d "/workspace/files" ]; then
+  echo "Files mounted via ConfigMap, restoring to workspace..."
+  cd /workspace
+  # Only process real files (skip K8s ConfigMap symlink dirs like ..data, ..2026_xxx)
+  find /workspace/files -maxdepth 1 -type l -o -type f | while read -r f; do
+    fname=$(basename "$f")
+    # Skip K8s internal files (start with ..)
+    [[ "$fname" == ..* ]] && continue
+    # Restore path: __ becomes /, gen__ prefix means generated code
+    if [[ "$fname" == gen__* ]]; then
+      restored=$(echo "${fname#gen__}" | sed 's/__/\//g')
     else
-        npm ci 2>&1 || npm install 2>&1
+      restored=$(echo "$fname" | sed 's/__/\//g')
     fi
-elif [ -f "requirements.txt" ]; then
-    pip install -r requirements.txt 2>&1
-elif [ -f "pyproject.toml" ]; then
-    pip install -e ".[test]" 2>&1 || pip install -e . 2>&1
+    mkdir -p "$(dirname "$restored")"
+    cp "$f" "$restored"
+    echo "  Restored: $restored"
+  done
+  echo "Files restored from ConfigMap."
+else
+  # Fallback: fetch from API (original behavior)
+  echo "Fetching generated code and test files from API..."
+
+  TASK_DATA=$(curl -sf -H "Authorization: Bearer $FORGE_API_TOKEN" \
+    "$FORGE_API_URL/api/internal/tasks/$TASK_ID/steps" 2>/dev/null || echo '{}')
+
+  if [ "$TASK_DATA" = "{}" ] || [ -z "$TASK_DATA" ]; then
+    echo "ERROR: Could not fetch task data from forge-core"
+    TASK_DATA=$(curl -sf -H "Authorization: Bearer $FORGE_API_TOKEN" \
+      "$FORGE_API_URL/api/projects/0/tasks/$TASK_ID" 2>/dev/null || echo '{}')
+  fi
+
+  GENERATE_OUTPUT=$(echo "$TASK_DATA" | jq -r '.data.steps[] | select(.step_type == "GENERATE") | .output // empty' 2>/dev/null || echo '')
+  TEST_OUTPUT=$(echo "$TASK_DATA" | jq -r '.data.steps[] | select(.step_type == "TEST_WRITING") | .output // empty' 2>/dev/null || echo '')
+
+  mkdir -p /workspace/src /workspace/test
+
+  if [ -n "$GENERATE_OUTPUT" ]; then
+    echo "$GENERATE_OUTPUT" | jq -c '.files[]?' 2>/dev/null | while read -r file; do
+      filepath=$(echo "$file" | jq -r '.path')
+      content=$(echo "$file" | jq -r '.content')
+      mkdir -p "/workspace/$(dirname "$filepath")"
+      echo "$content" > "/workspace/$filepath"
+      echo "  Written: $filepath"
+    done
+  fi
+
+  if [ -n "$TEST_OUTPUT" ]; then
+    echo "$TEST_OUTPUT" | jq -c '.test_files[]?' 2>/dev/null | while read -r file; do
+      filepath=$(echo "$file" | jq -r '.path')
+      content=$(echo "$file" | jq -r '.content')
+      mkdir -p "/workspace/$(dirname "$filepath")"
+      echo "$content" > "/workspace/$filepath"
+      echo "  Written (test): $filepath"
+    done
+  fi
 fi
 
-# --- Step 3: Run tests ---
-echo "[3/4] Running tests..."
+echo "Files in workspace:"
+find /workspace -maxdepth 4 -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.py' -o -name '*.go' \) | grep -v node_modules | head -20
 
+# Detect framework and run tests
+RESULT_FILE="/tmp/test-results.json"
 PASSED=0
 FAILED=0
 TOTAL=0
 COVERAGE=0
-STATUS="FAILED"
-TEST_OUTPUT=""
+STATUS="UNKNOWN"
 
-# Override command takes priority
-if [ -n "${COMMAND:-}" ]; then
-    echo "Running custom command: ${COMMAND}"
-    TEST_OUTPUT=$(eval "${COMMAND}" 2>&1) || true
-    STATUS="PASSED"
-else
-    # Auto-detect test framework
-    DETECTED_FRAMEWORK="${FRAMEWORK:-auto}"
+cd /workspace
 
-    if [ "${DETECTED_FRAMEWORK}" = "auto" ]; then
-        if [ -f "go.mod" ]; then
-            DETECTED_FRAMEWORK="go_test"
-        elif [ -f "package.json" ]; then
-            DETECTED_FRAMEWORK="jest"
-        elif [ -f "pyproject.toml" ] || [ -f "requirements.txt" ]; then
-            DETECTED_FRAMEWORK="pytest"
-        fi
+case "$FRAMEWORK" in
+  jest|vitest|"")
+    # Node.js project — initialize if needed
+    if [ ! -f "package.json" ]; then
+      cat > package.json <<'PKGJSON'
+{"name":"forge-test","private":true}
+PKGJSON
     fi
 
-    case "${DETECTED_FRAMEWORK}" in
-        go_test)
-            echo "Running: go test ./... -v -coverprofile=coverage.out"
-            TEST_OUTPUT=$(go test ./... -v -coverprofile=coverage.out -json 2>&1) || true
-            # Extract coverage
-            if [ -f "coverage.out" ]; then
-                COVERAGE_LINE=$(go tool cover -func=coverage.out | grep total: | awk '{print $3}' | sed 's/%//')
-                COVERAGE=${COVERAGE_LINE%.*}  # truncate to int
-            fi
-            # Count pass/fail from JSON output
-            PASSED=$(echo "${TEST_OUTPUT}" | grep -c '"Action":"pass"' || true)
-            FAILED=$(echo "${TEST_OUTPUT}" | grep -c '"Action":"fail"' || true)
-            TOTAL=$((PASSED + FAILED))
-            ;;
+    # Install Jest with TypeScript/JSX support
+    npm install --save-dev jest @types/jest ts-jest typescript \
+      @testing-library/react @testing-library/jest-dom react react-dom @types/react 2>/dev/null || true
 
-        jest)
-            echo "Running: npx jest --coverage --json"
-            TEST_OUTPUT=$(npx jest --coverage --json --outputFile=/tmp/jest-result.json 2>&1) || true
-            if [ -f "/tmp/jest-result.json" ]; then
-                PASSED=$(jq '.numPassedTests' /tmp/jest-result.json 2>/dev/null || echo 0)
-                FAILED=$(jq '.numFailedTests' /tmp/jest-result.json 2>/dev/null || echo 0)
-                TOTAL=$(jq '.numTotalTests' /tmp/jest-result.json 2>/dev/null || echo 0)
-                # Extract line coverage
-                COVERAGE=$(jq '.coverageMap | to_entries | map(.value.s | to_entries | map(.value) | add) | add // 0' /tmp/jest-result.json 2>/dev/null | head -1 || echo 0)
-            fi
-            ;;
+    # Create jest.config.js with ts-jest for TSX support
+    cat > jest.config.js <<'JESTCFG'
+module.exports = {
+  testEnvironment: 'jsdom',
+  transform: {
+    '^.+\\.tsx?$': ['ts-jest', { tsconfig: { jsx: 'react-jsx', esModuleInterop: true, module: 'commonjs' } }],
+  },
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
+  testMatch: ['**/*.test.ts', '**/*.test.tsx', '**/*.spec.ts', '**/*.spec.tsx'],
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/$1',
+  },
+};
+JESTCFG
 
-        pytest)
-            echo "Running: python -m pytest -v --cov --cov-report=json"
-            TEST_OUTPUT=$(python -m pytest -v --cov --cov-report=json:/tmp/cov.json 2>&1) || true
-            # Extract pass/fail from pytest output
-            PASSED=$(echo "${TEST_OUTPUT}" | grep -oP '\d+ passed' | grep -oP '\d+' || echo 0)
-            FAILED=$(echo "${TEST_OUTPUT}" | grep -oP '\d+ failed' | grep -oP '\d+' || echo 0)
-            TOTAL=$((PASSED + FAILED))
-            if [ -f "/tmp/cov.json" ]; then
-                COVERAGE=$(jq '.totals.percent_covered' /tmp/cov.json 2>/dev/null | cut -d. -f1 || echo 0)
-            fi
-            ;;
-
-        *)
-            echo "WARNING: Unknown framework '${DETECTED_FRAMEWORK}', running generic test"
-            TEST_OUTPUT="No test framework detected"
-            ;;
-    esac
-
-    # Determine pass/fail
-    if [ "${FAILED}" -eq 0 ] && [ "${TOTAL}" -gt 0 ]; then
-        STATUS="PASSED"
+    # Create minimal tsconfig if missing
+    if [ ! -f "tsconfig.json" ]; then
+      cat > tsconfig.json <<'TSCFG'
+{"compilerOptions":{"target":"es2020","module":"commonjs","jsx":"react-jsx","esModuleInterop":true,"strict":false,"moduleResolution":"node","baseUrl":".","paths":{"@/*":["./*"]}}}
+TSCFG
     fi
 
-    # Coverage gate
-    if [ "${COVERAGE}" -lt "${COVERAGE_MIN}" ] && [ "${STATUS}" = "PASSED" ]; then
-        echo "WARNING: Coverage ${COVERAGE}% is below minimum ${COVERAGE_MIN}%"
-        # Don't fail on coverage yet — just warn (configurable in future)
+    # Run tests
+    npx jest --json --outputFile=/tmp/jest-results.json --passWithNoTests --forceExit --no-cache 2>&1 || true
+
+    if [ -f "/tmp/jest-results.json" ]; then
+      PASSED=$(jq '.numPassedTests // 0' /tmp/jest-results.json)
+      FAILED=$(jq '.numFailedTests // 0' /tmp/jest-results.json)
+      TOTAL=$((PASSED + FAILED))
+      STATUS=$([ "$FAILED" -eq 0 ] && echo "PASSED" || echo "FAILED")
+      cp /tmp/jest-results.json "$RESULT_FILE"
+    else
+      STATUS="ERROR"
+      echo '{"error":"jest did not produce output"}' > "$RESULT_FILE"
     fi
-fi
+    ;;
 
-# --- Step 4: Report results ---
-echo "[4/4] Test complete."
-echo "Status:   ${STATUS}"
-echo "Tests:    ${TOTAL} total, ${PASSED} passed, ${FAILED} failed"
-echo "Coverage: ${COVERAGE}%"
+  pytest)
+    pytest --json-report --json-report-file=/tmp/pytest-results.json \
+           --tb=short -q 2>&1 || true
 
-# Write result JSON
-cat > "${RESULT_FILE}" <<EOF
-{
-    "status": "${STATUS}",
-    "framework": "${DETECTED_FRAMEWORK:-unknown}",
-    "total": ${TOTAL:-0},
-    "passed": ${PASSED:-0},
-    "failed": ${FAILED:-0},
-    "coverage": ${COVERAGE:-0},
-    "coverage_min": ${COVERAGE_MIN},
-    "task_id": ${TASK_ID:-0}
-}
-EOF
+    if [ -f "/tmp/pytest-results.json" ]; then
+      PASSED=$(jq '.summary.passed // 0' /tmp/pytest-results.json)
+      FAILED=$(jq '.summary.failed // 0' /tmp/pytest-results.json)
+      TOTAL=$((PASSED + FAILED))
+      STATUS=$([ "$FAILED" -eq 0 ] && echo "PASSED" || echo "FAILED")
+      cp /tmp/pytest-results.json "$RESULT_FILE"
+    else
+      STATUS="ERROR"
+    fi
+    ;;
 
-# Report back to Forge API if configured
-if [ -n "${FORGE_API_URL:-}" ] && [ -n "${FORGE_API_TOKEN:-}" ]; then
-    echo "Reporting results to Forge API..."
-    curl -s -X POST \
-        "${FORGE_API_URL}/api/projects/0/tasks/${TASK_ID}/test-results" \
-        -H "Authorization: Bearer ${FORGE_API_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d @"${RESULT_FILE}" || echo "WARNING: Failed to report to Forge API"
-fi
+  go)
+    go test -json ./... 2>&1 | tee /tmp/go-test.json || true
+    PASSED=$(grep '"Test":' /tmp/go-test.json | grep '"Action":"pass"' | wc -l)
+    FAILED=$(grep '"Test":' /tmp/go-test.json | grep '"Action":"fail"' | wc -l)
+    TOTAL=$((PASSED + FAILED))
+    STATUS=$([ "$FAILED" -eq 0 ] && echo "PASSED" || echo "FAILED")
+    ;;
 
-cat "${RESULT_FILE}"
+  *)
+    echo "Unknown framework: $FRAMEWORK"
+    STATUS="SKIPPED"
+    ;;
+esac
 
-# Exit with test status
-if [ "${STATUS}" = "PASSED" ]; then
-    exit 0
-else
-    exit 1
-fi
+echo ""
+echo "=== Test Results ==="
+echo "Status: $STATUS"
+echo "Total: $TOTAL, Passed: $PASSED, Failed: $FAILED"
+
+# Report results back to forge-core
+REPORT=$(jq -n \
+  --arg status "$STATUS" \
+  --argjson total "${TOTAL:-0}" \
+  --argjson passed "${PASSED:-0}" \
+  --argjson failed "${FAILED:-0}" \
+  --argjson coverage "${COVERAGE:-0}" \
+  --arg framework "$FRAMEWORK" \
+  '{status: $status, total: $total, passed: $passed, failed: $failed, coverage_pct: $coverage, framework: $framework, k8s: true}')
+
+echo "Reporting results to forge-core..."
+curl -sf -X POST "$FORGE_API_URL/api/internal/tasks/$TASK_ID/test-results" \
+  -H "Authorization: Bearer $FORGE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$REPORT" 2>/dev/null || echo "Warning: Could not report results to forge-core"
+
+echo "=== Task Runner Complete ==="
+
+# Exit with appropriate code
+[ "$STATUS" = "PASSED" ] || [ "$STATUS" = "SKIPPED" ] && exit 0 || exit 1

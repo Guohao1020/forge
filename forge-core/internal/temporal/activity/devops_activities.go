@@ -166,6 +166,11 @@ func (a *DevOpsActivities) PushToGitHub(ctx context.Context, input PushToGitHubI
 		})
 	}
 
+	// Ensure project scaffold files exist (package.json, tsconfig, etc.)
+	// AI may generate application code without framework config files,
+	// which makes the project un-buildable. Detect and add missing scaffold.
+	files = ensureScaffoldFiles(files, proj.DefaultBranch, gh, ctx, owner, repo)
+
 	// Commit files
 	msg := input.CommitMessage
 	if msg == "" {
@@ -245,6 +250,76 @@ func (a *DevOpsActivities) SavePRInfo(ctx context.Context, input SavePRInfoInput
 	)
 	return a.taskPR.UpdatePRInfo(ctx, input.TaskID, input.PRNumber, input.PRURL, input.ReviewScore,
 		input.BranchName, input.FilesChanged, input.LinesAdded, input.LinesDeleted)
+}
+
+// MergePRInput is the input for the MergePullRequest activity.
+type MergePRInput struct {
+	TaskID    int64  `json:"task_id"`
+	TenantID  int64  `json:"tenant_id"`
+	ProjectID int64  `json:"project_id"`
+	CreatedBy int64  `json:"created_by"`
+	PRNumber  int    `json:"pr_number"`
+	Branch    string `json:"branch_name"`
+}
+
+// MergePullRequest auto-merges a PR after successful DEV deploy.
+// Happy-path only: if merge fails (conflicts, branch protection), it's non-fatal.
+func (a *DevOpsActivities) MergePullRequest(ctx context.Context, input MergePRInput) error {
+	slog.Info("MergePullRequest started", "task_id", input.TaskID, "pr_number", input.PRNumber)
+
+	// Check if auto-merge is enabled for this project
+	var autoMerge bool
+	err := a.db.QueryRow(ctx,
+		`SELECT COALESCE(auto_merge, true) FROM engine.projects WHERE id = $1`,
+		input.ProjectID,
+	).Scan(&autoMerge)
+	if err != nil {
+		return fmt.Errorf("get project auto_merge setting: %w", err)
+	}
+
+	if !autoMerge {
+		slog.Info("auto-merge disabled for project, skipping", "project_id", input.ProjectID)
+		return nil
+	}
+
+	token, err := a.authToken.GetGitHubToken(ctx, input.CreatedBy)
+	if err != nil {
+		return fmt.Errorf("get github token: %w", err)
+	}
+
+	proj, err := a.projectProv.GetByID(ctx, input.ProjectID, input.TenantID, input.CreatedBy)
+	if err != nil {
+		return fmt.Errorf("get project: %w", err)
+	}
+
+	owner, repo, err := parseRepoURL(proj.CodeRepoURL)
+	if err != nil {
+		return fmt.Errorf("parse repo url: %w", err)
+	}
+
+	gh := ghAdapter.NewClient(token)
+	commitMsg := fmt.Sprintf("Merge PR #%d (auto-merged by Forge after DEV deploy)", input.PRNumber)
+	if err := gh.MergePR(ctx, owner, repo, input.PRNumber, commitMsg); err != nil {
+		slog.Warn("MergePullRequest failed (non-fatal)", "task_id", input.TaskID, "pr", input.PRNumber, "error", err)
+		return err
+	}
+
+	// Wait for GitHub to process the merge (main branch update propagation)
+	// This ensures subsequent branch creations pick up the latest merged changes.
+	time.Sleep(5 * time.Second)
+	slog.Info("PR merged, waiting for main branch update", "task_id", input.TaskID, "pr_number", input.PRNumber)
+
+	if a.sse != nil {
+		a.sse.Broadcast(input.TaskID, task.TaskProgressEvent{
+			Type:   "pr_merged",
+			TaskID: input.TaskID,
+			Status: "COMPLETED",
+			Data:   map[string]string{"pr_number": fmt.Sprintf("%d", input.PRNumber)},
+		})
+	}
+
+	slog.Info("MergePullRequest completed", "task_id", input.TaskID, "pr_number", input.PRNumber)
+	return nil
 }
 
 // --- Helpers ---
@@ -344,4 +419,158 @@ func parseRepoURL(rawURL string) (owner, repo string, err error) {
 	}
 
 	return owner, repo, nil
+}
+
+// ensureScaffoldFiles checks if the AI-generated files include required project
+// scaffold files (package.json, tsconfig.json, etc.). If missing, it checks the
+// repo's existing files and generates scaffold files as needed. This ensures the
+// project can be built and deployed after code is pushed.
+func ensureScaffoldFiles(files []ghAdapter.FileChange, baseBranch string, gh *ghAdapter.Client, ctx context.Context, owner, repo string) []ghAdapter.FileChange {
+	// Build a set of file paths being committed
+	fileSet := make(map[string]bool, len(files))
+	for _, f := range files {
+		fileSet[f.Path] = true
+	}
+
+	// Detect if this is a Node.js/TypeScript project
+	hasNodeFiles := false
+	hasNextJS := false
+	deps := make(map[string]bool) // track dependencies used in code
+	for _, f := range files {
+		ext := ""
+		if idx := strings.LastIndex(f.Path, "."); idx >= 0 {
+			ext = f.Path[idx:]
+		}
+		switch ext {
+		case ".ts", ".tsx", ".js", ".jsx":
+			hasNodeFiles = true
+		}
+		// Detect Next.js usage from imports
+		if strings.Contains(f.Content, "next/") || strings.Contains(f.Content, "'next'") {
+			hasNextJS = true
+		}
+		// Detect common deps from imports
+		for _, dep := range []string{"react", "react-dom", "lucide-react", "next-themes"} {
+			if strings.Contains(f.Content, "'"+dep+"'") || strings.Contains(f.Content, "\""+dep+"\"") || strings.Contains(f.Content, dep+"/") {
+				deps[dep] = true
+			}
+		}
+	}
+
+	if !hasNodeFiles {
+		return files // not a Node project, no scaffold needed
+	}
+
+	// Check if package.json already exists in the repo
+	if !fileSet["package.json"] {
+		_, err := gh.GetFileContent(ctx, owner, repo, "package.json", baseBranch)
+		if err != nil {
+			// package.json doesn't exist in repo or in generated files, create it
+			slog.Info("scaffold: generating missing package.json")
+			depList := `"next": "^15.1.0", "react": "^19.0.0", "react-dom": "^19.0.0"`
+			if deps["lucide-react"] {
+				depList += `, "lucide-react": "^0.460.0"`
+			}
+			if deps["next-themes"] {
+				depList += `, "next-themes": "^0.4.4"`
+			}
+			devDeps := `"typescript": "^5.7.0", "@types/react": "^19.0.0", "@types/node": "^22.0.0"`
+			scripts := `"dev": "next dev", "build": "next build", "start": "next start"`
+			if !hasNextJS {
+				scripts = `"dev": "tsx watch src/index.ts", "build": "tsc", "start": "node dist/index.js"`
+			}
+
+			content := fmt.Sprintf(`{
+  "name": "%s",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {%s},
+  "dependencies": {%s},
+  "devDependencies": {%s}
+}`, sanitizeK8sName(repo), scripts, depList, devDeps)
+
+			files = append(files, ghAdapter.FileChange{
+				Path:    "package.json",
+				Content: content,
+				Action:  "create",
+			})
+		}
+	}
+
+	// tsconfig.json
+	if !fileSet["tsconfig.json"] {
+		_, err := gh.GetFileContent(ctx, owner, repo, "tsconfig.json", baseBranch)
+		if err != nil {
+			slog.Info("scaffold: generating missing tsconfig.json")
+			files = append(files, ghAdapter.FileChange{
+				Path: "tsconfig.json",
+				Content: `{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "baseUrl": ".",
+    "paths": {"@/*": ["./*"]}
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}`,
+				Action: "create",
+			})
+		}
+	}
+
+	// next.config.js (only for Next.js projects)
+	if hasNextJS && !fileSet["next.config.js"] && !fileSet["next.config.mjs"] && !fileSet["next.config.ts"] {
+		_, err := gh.GetFileContent(ctx, owner, repo, "next.config.js", baseBranch)
+		if err != nil {
+			slog.Info("scaffold: generating missing next.config.js")
+			files = append(files, ghAdapter.FileChange{
+				Path:    "next.config.js",
+				Content: "/** @type {import('next').NextConfig} */\nmodule.exports = {\n  output: 'standalone',\n}\n",
+				Action:  "create",
+			})
+		}
+	}
+
+	// Dockerfile update for Next.js standalone
+	if hasNextJS && !fileSet["Dockerfile"] {
+		_, err := gh.GetFileContent(ctx, owner, repo, "Dockerfile", baseBranch)
+		if err != nil {
+			slog.Info("scaffold: generating missing Dockerfile for Next.js standalone")
+			files = append(files, ghAdapter.FileChange{
+				Path: "Dockerfile",
+				Content: `FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+EXPOSE 8080
+ENV PORT=8080
+ENV HOSTNAME="0.0.0.0"
+CMD ["node", "server.js"]
+`,
+				Action: "create",
+			})
+		}
+	}
+
+	return files
 }

@@ -359,7 +359,7 @@ func (s *Service) ImportFromGitHub(ctx context.Context, tenantID, userID int64, 
 			}
 		}(brief.ID)
 
-		// Auto-trigger profile scan for the newly imported project
+		// Auto-trigger profile + entropy scans for the newly imported project
 		if s.temporalClient != nil {
 			go func(pid int64) {
 				bgCtx := context.Background()
@@ -368,7 +368,7 @@ func (s *Service) ImportFromGitHub(ctx context.Context, tenantID, userID int64, 
 					"user_id":    userID,
 				}
 				opts := temporalclient.StartWorkflowOptions{
-					ID:        fmt.Sprintf("profile-scan-%d-%d", pid, time.Now().Unix()),
+					ID:        fmt.Sprintf("profile-scan-%d-%d", pid, time.Now().UnixNano()),
 					TaskQueue: "forge-task-queue",
 				}
 				we, err := s.temporalClient.ExecuteWorkflow(bgCtx, opts, "ProfileScanWorkflow", input)
@@ -376,6 +376,25 @@ func (s *Service) ImportFromGitHub(ctx context.Context, tenantID, userID int64, 
 					slog.Warn("auto profile scan failed to start", "project_id", pid, "error", err)
 				} else {
 					slog.Info("auto profile scan started on import", "project_id", pid, "workflow_id", we.GetID())
+				}
+			}(brief.ID)
+
+			// Auto-trigger entropy scan
+			go func(pid int64) {
+				bgCtx := context.Background()
+				entropyInput := map[string]interface{}{
+					"project_id": pid,
+					"tenant_id":  tenantID,
+				}
+				opts := temporalclient.StartWorkflowOptions{
+					ID:        fmt.Sprintf("entropy-scan-%d-%d", pid, time.Now().UnixNano()),
+					TaskQueue: "forge-task-queue",
+				}
+				we, err := s.temporalClient.ExecuteWorkflow(bgCtx, opts, "EntropyScanWorkflow", entropyInput)
+				if err != nil {
+					slog.Warn("auto entropy scan failed to start", "project_id", pid, "error", err)
+				} else {
+					slog.Info("auto entropy scan started on import", "project_id", pid, "workflow_id", we.GetID())
 				}
 			}(brief.ID)
 		}

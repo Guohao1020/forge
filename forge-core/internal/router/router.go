@@ -7,6 +7,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
+	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/client"
+
 	"github.com/shulex/forge/forge-core/internal/middleware"
 	"github.com/shulex/forge/forge-core/internal/pkg/database"
 	"github.com/shulex/forge/forge-core/internal/module/artifact"
@@ -30,8 +33,9 @@ import (
 var routerStartTime = time.Now()
 
 type Deps struct {
-	DB  *pgxpool.Pool
-	RDB *goredis.Client
+	DB             *pgxpool.Pool
+	RDB            *goredis.Client
+	TemporalClient client.Client
 
 	AuthHandler    *auth.Handler
 	AuthService    *auth.Service
@@ -92,6 +96,22 @@ func Setup(deps *Deps) *gin.Engine {
 				health["redis"] = "up"
 			}
 		}
+
+		// Check Temporal
+		temporalStatus := "down"
+		aiWorkerStatus := "down"
+		if deps.TemporalClient != nil {
+			temporalStatus = "up"
+			// Check ai-worker task queue pollers
+			ctx2, cancel2 := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			defer cancel2()
+			resp, err := deps.TemporalClient.DescribeTaskQueue(ctx2, "ai-worker", enumspb.TASK_QUEUE_TYPE_ACTIVITY)
+			if err == nil && resp != nil && len(resp.Pollers) > 0 {
+				aiWorkerStatus = "up"
+			}
+		}
+		health["temporal"] = temporalStatus
+		health["ai_worker"] = aiWorkerStatus
 
 		health["uptime"] = time.Since(routerStartTime).Truncate(time.Second).String()
 
@@ -232,6 +252,7 @@ func Setup(deps *Deps) *gin.Engine {
 				protected.GET("/projects/:id/environments/:envId", deps.PipelineHandler.GetEnvironment)
 				protected.GET("/projects/:id/environments/:envId/deploys", deps.PipelineHandler.ListDeployRecords)
 				protected.POST("/projects/:id/environments/:envId/deploy", deps.PipelineHandler.TriggerDeploy)
+				protected.POST("/projects/:id/environments/:envId/rollback", deps.PipelineHandler.RollbackDeploy)
 			}
 
 			// Artifacts
@@ -255,6 +276,7 @@ func Setup(deps *Deps) *gin.Engine {
 				protected.GET("/projects/:id/versions/:vid", deps.VersionHandler.Get)
 				protected.PUT("/projects/:id/versions/:vid", deps.VersionHandler.Update)
 				protected.POST("/projects/:id/versions/:vid/release", deps.VersionHandler.Release)
+				protected.POST("/projects/:id/versions/:vid/scan", deps.VersionHandler.TriggerScan)
 			}
 
 			// Specs Center

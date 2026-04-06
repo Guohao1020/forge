@@ -32,5 +32,6 @@ type ProfileListResponse struct {
 }
 
 type ScanRequest struct {
-	Keys []string `json:"keys"` // optional, empty = full scan
+	Keys     []string `json:"keys"`     // optional, empty = full scan
+	Branches []string `json:"branches"` // optional, empty = default branch
 }

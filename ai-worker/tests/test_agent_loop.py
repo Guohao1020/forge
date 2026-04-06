@@ -313,3 +313,242 @@ class TestToolExceptionHandling:
         tools = [{"name": "bad_tool", "description": "test", "input_schema": {}}]
         result = await agent.run("test", ProjectContext(), tools=tools, tool_executor=executor)
         assert result is not None
+
+
+# ============================================================
+# _normalize_assistant_content tests
+# ============================================================
+
+class TestNormalizeAssistantContent:
+    """Tests for _normalize_assistant_content() which converts provider-specific
+    response formats into Anthropic-style content block dicts."""
+
+    def test_anthropic_content_blocks(self):
+        """Anthropic ContentBlock objects (with .type, .text, .id) convert to dicts."""
+        from src.agents.base import _normalize_assistant_content
+
+        # Simulate Anthropic ContentBlock objects
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "Here is the analysis."
+
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.id = "toolu_123"
+        tool_block.name = "query_db_schema"
+        tool_block.input = {"table_name": "users"}
+
+        response = LLMResponse(
+            content="Here is the analysis.",
+            model="claude-3",
+            provider="anthropic",
+            input_tokens=100,
+            output_tokens=50,
+            latency_ms=500,
+            raw_content=[text_block, tool_block],
+        )
+
+        result = _normalize_assistant_content(response)
+
+        assert len(result) == 2
+        assert result[0] == {"type": "text", "text": "Here is the analysis."}
+        assert result[1] == {
+            "type": "tool_use",
+            "id": "toolu_123",
+            "name": "query_db_schema",
+            "input": {"table_name": "users"},
+        }
+
+    def test_openai_message_with_content_and_tool_calls(self):
+        """OpenAI ChatCompletionMessage (with .content, .tool_calls) converts to Anthropic format."""
+        from src.agents.base import _normalize_assistant_content
+
+        # Simulate OpenAI tool call objects
+        func_obj = MagicMock()
+        func_obj.name = "read_file"
+        func_obj.arguments = '{"path": "main.go"}'
+
+        tool_call = MagicMock()
+        tool_call.id = "call_abc"
+        tool_call.function = func_obj
+
+        # Simulate OpenAI ChatCompletionMessage
+        oai_message = MagicMock()
+        oai_message.content = "Let me read that file."
+        oai_message.tool_calls = [tool_call]
+        # Ensure it does NOT have .type attribute (OpenAI messages don't)
+        del oai_message.type
+
+        response = LLMResponse(
+            content="Let me read that file.",
+            model="gpt-4",
+            provider="openai",
+            input_tokens=100,
+            output_tokens=50,
+            latency_ms=500,
+            raw_content=oai_message,
+        )
+
+        result = _normalize_assistant_content(response)
+
+        assert len(result) == 2
+        assert result[0] == {"type": "text", "text": "Let me read that file."}
+        assert result[1] == {
+            "type": "tool_use",
+            "id": "call_abc",
+            "name": "read_file",
+            "input": {"path": "main.go"},
+        }
+
+    def test_openai_message_no_tool_calls(self):
+        """OpenAI message with content only (no tool_calls) produces single text block."""
+        from src.agents.base import _normalize_assistant_content
+
+        oai_message = MagicMock()
+        oai_message.content = "The answer is 42."
+        oai_message.tool_calls = None
+        del oai_message.type
+
+        response = LLMResponse(
+            content="The answer is 42.",
+            model="gpt-4",
+            provider="openai",
+            input_tokens=100,
+            output_tokens=50,
+            latency_ms=500,
+            raw_content=oai_message,
+        )
+
+        result = _normalize_assistant_content(response)
+
+        assert len(result) == 1
+        assert result[0] == {"type": "text", "text": "The answer is 42."}
+
+    def test_already_dict_list_passthrough(self):
+        """A list of dicts (already normalized) passes through unchanged."""
+        from src.agents.base import _normalize_assistant_content
+
+        blocks = [
+            {"type": "text", "text": "Hello."},
+            {"type": "tool_use", "id": "tc1", "name": "tool", "input": {}},
+        ]
+
+        response = LLMResponse(
+            content="Hello.",
+            model="test",
+            provider="test",
+            input_tokens=100,
+            output_tokens=50,
+            latency_ms=500,
+            raw_content=blocks,
+        )
+
+        result = _normalize_assistant_content(response)
+
+        assert result == blocks
+
+    def test_empty_openai_message_fallback(self):
+        """OpenAI message with empty content and no tool_calls uses response.content fallback."""
+        from src.agents.base import _normalize_assistant_content
+
+        oai_message = MagicMock()
+        oai_message.content = None
+        oai_message.tool_calls = None
+        del oai_message.type
+
+        response = LLMResponse(
+            content="fallback text",
+            model="gpt-4",
+            provider="openai",
+            input_tokens=100,
+            output_tokens=50,
+            latency_ms=500,
+            raw_content=oai_message,
+        )
+
+        result = _normalize_assistant_content(response)
+
+        assert len(result) == 1
+        assert result[0] == {"type": "text", "text": "fallback text"}
+
+    def test_empty_openai_message_fallback_none_content(self):
+        """OpenAI message with empty everything falls back to empty string."""
+        from src.agents.base import _normalize_assistant_content
+
+        oai_message = MagicMock()
+        oai_message.content = ""
+        oai_message.tool_calls = None
+        del oai_message.type
+
+        response = LLMResponse(
+            content="",
+            model="gpt-4",
+            provider="openai",
+            input_tokens=100,
+            output_tokens=50,
+            latency_ms=500,
+            raw_content=oai_message,
+        )
+
+        result = _normalize_assistant_content(response)
+
+        assert len(result) == 1
+        assert result[0] == {"type": "text", "text": ""}
+
+    def test_list_with_unknown_objects_stringified(self):
+        """List items without .type attribute get stringified as text blocks."""
+        from src.agents.base import _normalize_assistant_content
+
+        class UnknownBlock:
+            """A plain object with no .type attribute."""
+            def __str__(self):
+                return "unknown content"
+
+        response = LLMResponse(
+            content="",
+            model="test",
+            provider="test",
+            input_tokens=0,
+            output_tokens=0,
+            latency_ms=0,
+            raw_content=[UnknownBlock()],
+        )
+
+        result = _normalize_assistant_content(response)
+
+        assert len(result) == 1
+        assert result[0]["type"] == "text"
+        assert result[0]["text"] == "unknown content"
+
+    def test_openai_tool_call_empty_arguments(self):
+        """OpenAI tool call with empty arguments string parses to empty dict."""
+        from src.agents.base import _normalize_assistant_content
+
+        func_obj = MagicMock()
+        func_obj.name = "list_files"
+        func_obj.arguments = ""
+
+        tool_call = MagicMock()
+        tool_call.id = "call_xyz"
+        tool_call.function = func_obj
+
+        oai_message = MagicMock()
+        oai_message.content = None
+        oai_message.tool_calls = [tool_call]
+        del oai_message.type
+
+        response = LLMResponse(
+            content="",
+            model="gpt-4",
+            provider="openai",
+            input_tokens=0,
+            output_tokens=0,
+            latency_ms=0,
+            raw_content=oai_message,
+        )
+
+        result = _normalize_assistant_content(response)
+
+        assert len(result) == 1
+        assert result[0]["type"] == "tool_use"
+        assert result[0]["input"] == {}

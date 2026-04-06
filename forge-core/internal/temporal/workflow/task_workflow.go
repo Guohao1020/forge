@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"fmt"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -241,6 +242,10 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 		if testInput == nil {
 			testInput = map[string]interface{}{}
 		}
+		// Inject generated files so RunTests can pass them via ConfigMap
+		if genFiles, ok := generateResult["files"]; ok {
+			testInput["generated_files"] = genFiles
+		}
 		var runTestsOutput activity.RunTestsOutput
 		testErr := workflow.ExecuteActivity(localCtx, "RunTests", input.TaskID, testInput).Get(ctx, &runTestsOutput)
 		if testErr != nil {
@@ -268,6 +273,11 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 
 	// ---- Step 6: Deploy (Push to GitHub) ----
 	// This step is best-effort: if GitHub is not connected, we skip gracefully.
+	var buildResult activity.BuildImageOutput
+	var buildErr error = fmt.Errorf("build not attempted")
+	var pushResult activity.PushToGitHubOutput
+	var prResult activity.CreatePROutput
+
 	err = workflow.ExecuteActivity(localCtx, "ExecuteStep", activity.StepInput{
 		TaskID: input.TaskID, StepType: "DEPLOY", TaskStatus: "DEPLOYING", Duration: 0,
 	}).Get(ctx, nil)
@@ -305,7 +315,6 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 			}
 
 			// Push to GitHub
-			var pushResult activity.PushToGitHubOutput
 			err = workflow.ExecuteActivity(localCtx, "PushToGitHub", activity.PushToGitHubInput{
 				TaskID:        input.TaskID,
 				TenantID:      input.TenantID,
@@ -325,7 +334,6 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 				prTitle = t
 			}
 
-			var prResult activity.CreatePROutput
 			err = workflow.ExecuteActivity(localCtx, "CreatePullRequest", activity.CreatePRInput{
 				TaskID:    input.TaskID,
 				TenantID:  input.TenantID,
@@ -374,14 +382,33 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 				LinesDeleted: linesDeleted,
 			}).Get(ctx, nil)
 
-			_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "DEPLOY", map[string]interface{}{
+			// Build artifact (non-fatal — creates record for pipeline tracking)
+			buildErr = workflow.ExecuteActivity(localCtx, "BuildDockerImage", activity.BuildImageInput{
+				TaskID:      input.TaskID,
+				TenantID:    input.TenantID,
+				ProjectID:   input.ProjectID,
+				CreatedBy:   input.CreatedBy,
+				RepoURL:     input.RepoURL,
+				Branch:      pushResult.BranchName,
+				ProjectName: input.ProjectName,
+				Version:     pushResult.BranchName,
+			}).Get(ctx, &buildResult)
+			if buildErr != nil {
+				logger.Warn("BuildDockerImage failed (non-fatal)", "task_id", input.TaskID, "error", buildErr)
+			}
+
+			stepOutput := map[string]interface{}{
 				"branch_name": pushResult.BranchName,
 				"pr_number":   prResult.PRNumber,
 				"pr_url":      prResult.PRURL,
-			}).Get(ctx, nil)
+			}
+			if buildErr == nil {
+				stepOutput["artifact_id"] = buildResult.ArtifactID
+				stepOutput["image_url"] = buildResult.ImageURL
+			}
+			_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "DEPLOY", stepOutput).Get(ctx, nil)
 
 			// After CreatePullRequest succeeds, create preview environment
-			// TODO: Replace mock with real K8s namespace when available
 			_ = workflow.ExecuteActivity(localCtx, "CreatePreview", map[string]interface{}{
 				"task_id":     input.TaskID,
 				"project_id":  input.ProjectID,
@@ -402,6 +429,76 @@ func TaskWorkflow(ctx workflow.Context, input activity.TaskWorkflowInput) error 
 			}).Get(ctx, nil)
 		}
 	}
+
+	// ---- Version Assignment + Auto-Deploy (non-fatal) ----
+	func() {
+		taskType := "feature" // default
+		if cr := input.ConfirmedRequirements; cr != nil {
+			if tt, ok := cr["task_type"].(string); ok && tt != "" {
+				taskType = tt
+			}
+		}
+
+		var versionResult activity.EnsureDraftVersionOutput
+		if err := workflow.ExecuteActivity(localCtx, "EnsureDraftVersion", activity.EnsureDraftVersionInput{
+			TenantID:  input.TenantID,
+			ProjectID: input.ProjectID,
+			CreatedBy: input.CreatedBy,
+			TaskType:  taskType,
+		}).Get(ctx, &versionResult); err != nil {
+			logger.Warn("EnsureDraftVersion failed (non-fatal)", "error", err)
+			return
+		}
+
+		if err := workflow.ExecuteActivity(localCtx, "AssignTaskToVersion", activity.AssignTaskToVersionInput{
+			TaskID:    input.TaskID,
+			TenantID:  input.TenantID,
+			VersionID: versionResult.VersionID,
+		}).Get(ctx, nil); err != nil {
+			logger.Warn("AssignTaskToVersion failed (non-fatal)", "error", err)
+		}
+
+		if buildErr == nil && buildResult.ArtifactID > 0 {
+			var deployResult activity.AutoDeployOutput
+			if err := workflow.ExecuteActivity(localCtx, "AutoDeployToDev", activity.AutoDeployInput{
+				TenantID:   input.TenantID,
+				ProjectID:  input.ProjectID,
+				TaskID:     input.TaskID,
+				ArtifactID: buildResult.ArtifactID,
+				ImageURL:   buildResult.ImageURL,
+				Version:    versionResult.Version,
+				CreatedBy:  input.CreatedBy,
+			}).Get(ctx, &deployResult); err != nil {
+				logger.Warn("AutoDeployToDev failed (non-fatal)", "error", err)
+			}
+		}
+
+		// Auto-merge PR (non-fatal, only if configured)
+		if prResult.PRNumber > 0 {
+			if mergeErr := workflow.ExecuteActivity(localCtx, "MergePullRequest", activity.MergePRInput{
+				TaskID:    input.TaskID,
+				TenantID:  input.TenantID,
+				ProjectID: input.ProjectID,
+				CreatedBy: input.CreatedBy,
+				PRNumber:  prResult.PRNumber,
+				Branch:    pushResult.BranchName,
+			}).Get(ctx, nil); mergeErr != nil {
+				logger.Warn("MergePullRequest failed (non-fatal)", "error", mergeErr)
+			}
+		}
+
+		// Signal VersionOrchestrator that this task is done (non-fatal)
+		if versionResult.VersionID > 0 {
+			orchestratorID := fmt.Sprintf("version-orchestrator-%d", versionResult.VersionID)
+			signalData := map[string]interface{}{
+				"task_id": input.TaskID,
+			}
+			signalFuture := workflow.SignalExternalWorkflow(ctx, orchestratorID, "", "task_completed", signalData)
+			if err := signalFuture.Get(ctx, nil); err != nil {
+				logger.Warn("failed to signal VersionOrchestrator", "error", err)
+			}
+		}
+	}()
 
 	// ---- Step 7: Complete ----
 	err = workflow.ExecuteActivity(localCtx, "CompleteTask", input.TaskID).Get(ctx, nil)
@@ -635,6 +732,10 @@ func TaskExecutionWorkflow(ctx workflow.Context, input activity.TaskWorkflowInpu
 		if testInput == nil {
 			testInput = map[string]interface{}{}
 		}
+		// Inject generated files so RunTests can pass them via ConfigMap
+		if genFiles, ok := generateResult["files"]; ok {
+			testInput["generated_files"] = genFiles
+		}
 		var runTestsOutput activity.RunTestsOutput
 		testErr := workflow.ExecuteActivity(localCtx, "RunTests", input.TaskID, testInput).Get(ctx, &runTestsOutput)
 		if testErr != nil {
@@ -661,6 +762,11 @@ func TaskExecutionWorkflow(ctx workflow.Context, input activity.TaskWorkflowInpu
 	}
 
 	// ---- Step: Deploy ----
+	var buildResult activity.BuildImageOutput
+	var buildErr error = fmt.Errorf("build not attempted")
+	var pushResultExec activity.PushToGitHubOutput
+	var prResultExec activity.CreatePROutput
+
 	err = workflow.ExecuteActivity(localCtx, "ExecuteStep", activity.StepInput{
 		TaskID: input.TaskID, StepType: "DEPLOY", TaskStatus: "DEPLOYING", Duration: 0,
 	}).Get(ctx, nil)
@@ -694,7 +800,6 @@ func TaskExecutionWorkflow(ctx workflow.Context, input activity.TaskWorkflowInpu
 				branchTitle = t
 			}
 
-			var pushResult activity.PushToGitHubOutput
 			err = workflow.ExecuteActivity(localCtx, "PushToGitHub", activity.PushToGitHubInput{
 				TaskID:        input.TaskID,
 				TenantID:      input.TenantID,
@@ -703,7 +808,7 @@ func TaskExecutionWorkflow(ctx workflow.Context, input activity.TaskWorkflowInpu
 				Title:         branchTitle,
 				Files:         generateResult["files"],
 				CommitMessage: commitMsg,
-			}).Get(ctx, &pushResult)
+			}).Get(ctx, &pushResultExec)
 			if err != nil {
 				return err
 			}
@@ -713,15 +818,14 @@ func TaskExecutionWorkflow(ctx workflow.Context, input activity.TaskWorkflowInpu
 				prTitle = t
 			}
 
-			var prResult activity.CreatePROutput
 			err = workflow.ExecuteActivity(localCtx, "CreatePullRequest", activity.CreatePRInput{
 				TaskID:    input.TaskID,
 				TenantID:  input.TenantID,
 				ProjectID: input.ProjectID,
 				CreatedBy: input.CreatedBy,
-				Branch:    pushResult.BranchName,
+				Branch:    pushResultExec.BranchName,
 				Title:     prTitle,
-			}).Get(ctx, &prResult)
+			}).Get(ctx, &prResultExec)
 			if err != nil {
 				return err
 			}
@@ -752,27 +856,47 @@ func TaskExecutionWorkflow(ctx workflow.Context, input activity.TaskWorkflowInpu
 
 			_ = workflow.ExecuteActivity(localCtx, "SavePRInfo", activity.SavePRInfoInput{
 				TaskID:       input.TaskID,
-				PRNumber:     prResult.PRNumber,
-				PRURL:        prResult.PRURL,
+				PRNumber:     prResultExec.PRNumber,
+				PRURL:        prResultExec.PRURL,
 				ReviewScore:  reviewScore,
-				BranchName:   pushResult.BranchName,
+				BranchName:   pushResultExec.BranchName,
 				FilesChanged: filesChanged,
 				LinesAdded:   linesAdded,
 				LinesDeleted: linesDeleted,
 			}).Get(ctx, nil)
 
-			_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "DEPLOY", map[string]interface{}{
-				"branch_name": pushResult.BranchName,
-				"pr_number":   prResult.PRNumber,
-				"pr_url":      prResult.PRURL,
-			}).Get(ctx, nil)
+			// Build artifact (non-fatal — creates record for pipeline tracking)
+			buildErr = workflow.ExecuteActivity(localCtx, "BuildDockerImage", activity.BuildImageInput{
+				TaskID:      input.TaskID,
+				TenantID:    input.TenantID,
+				ProjectID:   input.ProjectID,
+				CreatedBy:   input.CreatedBy,
+				RepoURL:     input.RepoURL,
+				Branch:      pushResultExec.BranchName,
+				ProjectName: input.ProjectName,
+				Version:     pushResultExec.BranchName,
+			}).Get(ctx, &buildResult)
+			if buildErr != nil {
+				logger.Warn("BuildDockerImage failed (non-fatal)", "task_id", input.TaskID, "error", buildErr)
+			}
+
+			stepOutput := map[string]interface{}{
+				"branch_name": pushResultExec.BranchName,
+				"pr_number":   prResultExec.PRNumber,
+				"pr_url":      prResultExec.PRURL,
+			}
+			if buildErr == nil {
+				stepOutput["artifact_id"] = buildResult.ArtifactID
+				stepOutput["image_url"] = buildResult.ImageURL
+			}
+			_ = workflow.ExecuteActivity(localCtx, "SaveStepOutput", input.TaskID, "DEPLOY", stepOutput).Get(ctx, nil)
 
 			_ = workflow.ExecuteActivity(localCtx, "CreatePreview", map[string]interface{}{
 				"task_id":     input.TaskID,
 				"project_id":  input.ProjectID,
 				"tenant_id":   input.TenantID,
-				"branch_name": pushResult.BranchName,
-				"pr_number":   prResult.PRNumber,
+				"branch_name": pushResultExec.BranchName,
+				"pr_number":   prResultExec.PRNumber,
 			}).Get(ctx, nil)
 
 			return nil
@@ -786,6 +910,76 @@ func TaskExecutionWorkflow(ctx workflow.Context, input activity.TaskWorkflowInpu
 			}).Get(ctx, nil)
 		}
 	}
+
+	// ---- Version Assignment + Auto-Deploy (non-fatal) ----
+	func() {
+		taskType := "feature" // default
+		if cr := input.ConfirmedRequirements; cr != nil {
+			if tt, ok := cr["task_type"].(string); ok && tt != "" {
+				taskType = tt
+			}
+		}
+
+		var versionResult activity.EnsureDraftVersionOutput
+		if err := workflow.ExecuteActivity(localCtx, "EnsureDraftVersion", activity.EnsureDraftVersionInput{
+			TenantID:  input.TenantID,
+			ProjectID: input.ProjectID,
+			CreatedBy: input.CreatedBy,
+			TaskType:  taskType,
+		}).Get(ctx, &versionResult); err != nil {
+			logger.Warn("EnsureDraftVersion failed (non-fatal)", "error", err)
+			return
+		}
+
+		if err := workflow.ExecuteActivity(localCtx, "AssignTaskToVersion", activity.AssignTaskToVersionInput{
+			TaskID:    input.TaskID,
+			TenantID:  input.TenantID,
+			VersionID: versionResult.VersionID,
+		}).Get(ctx, nil); err != nil {
+			logger.Warn("AssignTaskToVersion failed (non-fatal)", "error", err)
+		}
+
+		if buildErr == nil && buildResult.ArtifactID > 0 {
+			var deployResult activity.AutoDeployOutput
+			if err := workflow.ExecuteActivity(localCtx, "AutoDeployToDev", activity.AutoDeployInput{
+				TenantID:   input.TenantID,
+				ProjectID:  input.ProjectID,
+				TaskID:     input.TaskID,
+				ArtifactID: buildResult.ArtifactID,
+				ImageURL:   buildResult.ImageURL,
+				Version:    versionResult.Version,
+				CreatedBy:  input.CreatedBy,
+			}).Get(ctx, &deployResult); err != nil {
+				logger.Warn("AutoDeployToDev failed (non-fatal)", "error", err)
+			}
+		}
+
+		// Auto-merge PR (non-fatal, only if configured)
+		if prResultExec.PRNumber > 0 {
+			if mergeErr := workflow.ExecuteActivity(localCtx, "MergePullRequest", activity.MergePRInput{
+				TaskID:    input.TaskID,
+				TenantID:  input.TenantID,
+				ProjectID: input.ProjectID,
+				CreatedBy: input.CreatedBy,
+				PRNumber:  prResultExec.PRNumber,
+				Branch:    pushResultExec.BranchName,
+			}).Get(ctx, nil); mergeErr != nil {
+				logger.Warn("MergePullRequest failed (non-fatal)", "error", mergeErr)
+			}
+		}
+
+		// Signal VersionOrchestrator that this task is done (non-fatal)
+		if versionResult.VersionID > 0 {
+			orchestratorID := fmt.Sprintf("version-orchestrator-%d", versionResult.VersionID)
+			signalData := map[string]interface{}{
+				"task_id": input.TaskID,
+			}
+			signalFuture := workflow.SignalExternalWorkflow(ctx, orchestratorID, "", "task_completed", signalData)
+			if err := signalFuture.Get(ctx, nil); err != nil {
+				logger.Warn("failed to signal VersionOrchestrator", "error", err)
+			}
+		}
+	}()
 
 	// ---- Complete ----
 	err = workflow.ExecuteActivity(localCtx, "CompleteTask", input.TaskID).Get(ctx, nil)

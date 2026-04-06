@@ -41,3 +41,12 @@ export async function triggerDeploy(
     { version, artifactId }
   );
 }
+
+export async function rollbackDeploy(
+  projectId: string,
+  envId: number
+): Promise<DeployRecord> {
+  return api.post<DeployRecord>(
+    `/projects/${projectId}/environments/${envId}/rollback`
+  );
+}

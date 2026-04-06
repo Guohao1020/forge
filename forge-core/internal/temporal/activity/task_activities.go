@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,6 +23,8 @@ type TaskWorkflowInput struct {
 	CreatedBy             int64                  `json:"created_by"`
 	Requirement           string                 `json:"requirement"`
 	Title                 string                 `json:"title"`
+	ProjectName           string                 `json:"project_name"`
+	RepoURL               string                 `json:"repo_url"`
 	PlanResult            map[string]interface{} `json:"plan_result,omitempty"`
 	ConfirmedRequirements map[string]interface{} `json:"confirmed_requirements,omitempty"`
 }
@@ -207,18 +210,73 @@ func (a *TaskActivities) RunTests(ctx context.Context, taskID int64, testCases m
 	}
 
 	if a.k8s != nil {
+		// Ensure image pull secret exists in forge-jobs namespace
+		dockerConfigJSON := []byte(`{"auths":{"repo-voc-registry-vpc.cn-hangzhou.cr.aliyuncs.com":{"username":"1652058863700531@shulex","password":"shulex123123","auth":"MTY1MjA1ODg2MzcwMDUzMUBzaHVsZXg6c2h1bGV4MTIzMTIz"}}}`)
+		_ = a.k8s.EnsureImagePullSecret(ctx, "forge-jobs", "acr-secret", dockerConfigJSON)
+
 		jobName := fmt.Sprintf("test-%d-%d", taskID, time.Now().Unix())
 		// Use forge-task-runner image for real test execution
 		// The entrypoint.sh handles: clone → install deps → run tests → report
-		err := a.k8s.CreateJob(ctx, jobName, "forge-task-runner:latest",
+		taskRunnerImage := getEnvOrDefault("TASK_RUNNER_IMAGE", "repo-voc-registry-vpc.cn-hangzhou.cr.aliyuncs.com/voc-repo/forge:task-runner")
+
+		// Create ConfigMap with test files for the Job to mount
+		cmName := fmt.Sprintf("test-files-%d", taskID)
+		cmData := make(map[string]string)
+
+		// Add test files from TEST_WRITING step
+		if testFilesList, ok := testCases["test_files"].([]interface{}); ok {
+			for _, tf := range testFilesList {
+				if file, ok := tf.(map[string]interface{}); ok {
+					path, _ := file["path"].(string)
+					content, _ := file["content"].(string)
+					if path != "" && content != "" {
+						// ConfigMap keys can't have slashes - use double-underscore
+						key := strings.ReplaceAll(path, "/", "__")
+						cmData[key] = content
+					}
+				}
+			}
+		}
+
+		// Also include generated code files if passed
+		if genFiles, ok := testCases["generated_files"].([]interface{}); ok {
+			for _, gf := range genFiles {
+				if file, ok := gf.(map[string]interface{}); ok {
+					path, _ := file["path"].(string)
+					content, _ := file["content"].(string)
+					if path != "" && content != "" {
+						key := "gen__" + strings.ReplaceAll(path, "/", "__")
+						cmData[key] = content
+					}
+				}
+			}
+		}
+
+		if len(cmData) > 0 {
+			if err := a.k8s.CreateConfigMap(ctx, "forge-jobs", cmName, cmData); err != nil {
+				slog.Warn("failed to create test files configmap", "error", err)
+			}
+			defer func() {
+				// Cleanup ConfigMap after job completes
+				_ = a.k8s.DeleteConfigMap(context.Background(), "forge-jobs", cmName)
+			}()
+		}
+
+		configMaps := map[string]string{}
+		if len(cmData) > 0 {
+			configMaps[cmName] = "/workspace/files"
+		}
+		err := a.k8s.CreateJobWithVolumes(ctx, jobName, taskRunnerImage,
 			nil, // entrypoint.sh is the default ENTRYPOINT
 			map[string]string{
 				"TASK_ID":         fmt.Sprintf("%d", taskID),
 				"FRAMEWORK":       framework,
 				"COVERAGE_MIN":    "60",
-				"FORGE_API_URL":   getEnvOrDefault("FORGE_API_URL", "http://forge-core:8080"),
+				"FILES_MOUNTED":   "true",
+				"FORGE_API_URL":   getEnvOrDefault("FORGE_EXTERNAL_URL", getEnvOrDefault("FORGE_API_URL", "http://forge-core:8080")),
 				"FORGE_API_TOKEN": os.Getenv("FORGE_API_TOKEN"),
 			},
+			configMaps,
 			1800, // 30 min timeout (real tests take longer)
 		)
 		if err != nil {

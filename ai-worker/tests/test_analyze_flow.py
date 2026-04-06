@@ -699,3 +699,279 @@ class TestGenerateFallbackOptions:
         from src.activities.analyze import _generate_fallback_options
         opts = _generate_fallback_options("")
         assert len(opts) == 3  # generic fallback
+
+
+# ============================================================
+# 6. _split_thinking_and_json tests
+# ============================================================
+
+class TestSplitThinkingAndJson:
+    """Tests for _split_thinking_and_json() which separates AI output into
+    thinking text (streamed to user) and JSON structure (parsed for data)."""
+
+    def test_normal_two_part_format(self):
+        """Standard format: thinking text + ---JSON--- + JSON object."""
+        from src.activities.analyze import _split_thinking_and_json
+
+        text = (
+            "Let me analyze this requirement...\n\n"
+            "The user wants a calendar app with notes.\n\n"
+            "---JSON---\n"
+            '{"status": "clarify", "question": "What is the main use case?"}'
+        )
+        thinking, json_text = _split_thinking_and_json(text)
+
+        assert "Let me analyze this requirement" in thinking
+        assert "calendar app" in thinking
+        assert "---JSON---" not in thinking
+        assert "---JSON---" not in json_text
+        assert json_text.startswith('{"status"')
+        # Verify JSON is parseable
+        parsed = json.loads(json_text)
+        assert parsed["status"] == "clarify"
+
+    def test_no_separator_backward_compat(self):
+        """Without separator, entire text is treated as JSON (backward compat)."""
+        from src.activities.analyze import _split_thinking_and_json
+
+        text = '{"status": "confirmed", "summary": "All clear"}'
+        thinking, json_text = _split_thinking_and_json(text)
+
+        assert thinking == ""
+        assert json_text == text
+        parsed = json.loads(json_text)
+        assert parsed["status"] == "confirmed"
+
+    def test_empty_thinking_separator_at_start(self):
+        """Separator at the very beginning means empty thinking."""
+        from src.activities.analyze import _split_thinking_and_json
+
+        text = '---JSON---\n{"status": "clarify", "question": "Q?"}'
+        thinking, json_text = _split_thinking_and_json(text)
+
+        assert thinking == ""
+        assert '"status": "clarify"' in json_text
+
+    def test_multiline_thinking(self):
+        """Multi-paragraph thinking text before the separator."""
+        from src.activities.analyze import _split_thinking_and_json
+
+        text = (
+            "First paragraph of analysis.\n\n"
+            "Second paragraph with more detail.\n"
+            "- Point 1\n"
+            "- Point 2\n\n"
+            "---JSON---\n"
+            '{"status": "clarify"}'
+        )
+        thinking, json_text = _split_thinking_and_json(text)
+
+        assert "First paragraph" in thinking
+        assert "Second paragraph" in thinking
+        assert "Point 1" in thinking
+        assert json_text == '{"status": "clarify"}'
+
+    def test_only_separator_no_json(self):
+        """Separator present but nothing after it."""
+        from src.activities.analyze import _split_thinking_and_json
+
+        text = "Some thinking\n\n---JSON---\n"
+        thinking, json_text = _split_thinking_and_json(text)
+
+        assert thinking == "Some thinking"
+        assert json_text == ""
+
+    def test_multiple_separators_only_first_used(self):
+        """Only the first ---JSON--- is used as the split point."""
+        from src.activities.analyze import _split_thinking_and_json
+
+        text = (
+            "Thinking\n"
+            "---JSON---\n"
+            '{"key": "value"}\n'
+            "---JSON---\n"
+            "extra stuff"
+        )
+        thinking, json_text = _split_thinking_and_json(text)
+
+        assert thinking == "Thinking"
+        # Everything after first separator, including the second one
+        assert "---JSON---" in json_text
+        assert '{"key": "value"}' in json_text
+
+    def test_empty_string(self):
+        """Empty string returns empty thinking and empty json_text."""
+        from src.activities.analyze import _split_thinking_and_json
+
+        thinking, json_text = _split_thinking_and_json("")
+        assert thinking == ""
+        assert json_text == ""
+
+
+# ============================================================
+# 7. AnalystAgent._build_messages tests
+# ============================================================
+
+class TestAnalystBuildMessages:
+    """Tests for AnalystAgent._build_messages() which reconstructs
+    assistant messages in the expected two-part format from DB-stored data."""
+
+    def test_raw_response_in_metadata_used_directly(self):
+        """When metadata contains raw_response, use it as-is for the assistant content."""
+        agent = AnalystAgent(router=None)
+        raw_ai_output = (
+            "Some thinking...\n\n---JSON---\n"
+            '{"status": "clarify", "question": "What?"}'
+        )
+        ctx = ProjectContext()
+        ctx.conversation_history = [
+            {"role": "user", "content": "I want a login page"},
+            {
+                "role": "assistant",
+                "content": "Formatted human-readable text",
+                "metadata": {
+                    "status": "clarify",
+                    "question": "What kind of login?",
+                    "raw_response": raw_ai_output,
+                },
+            },
+        ]
+        messages = agent._build_messages("Add social login too", ctx)
+
+        assert len(messages) == 3
+        # Assistant message should use raw_response, not the formatted content
+        assert messages[1]["role"] == "assistant"
+        assert messages[1]["content"] == raw_ai_output
+        assert "---JSON---" in messages[1]["content"]
+        # Final user message
+        assert messages[2]["content"] == "Add social login too"
+
+    def test_metadata_with_status_no_raw_response(self):
+        """When metadata has status but no raw_response, reconstruct thinking + JSON."""
+        agent = AnalystAgent(router=None)
+        ctx = ProjectContext()
+        ctx.conversation_history = [
+            {"role": "user", "content": "Build a calculator"},
+            {
+                "role": "assistant",
+                "content": "Some formatted text about the calculator",
+                "metadata": {
+                    "status": "clarify",
+                    "understanding": "You want a calculator",
+                    "question": "What type?",
+                    "options": ["Basic", "Scientific"],
+                },
+            },
+        ]
+        messages = agent._build_messages("Basic please", ctx)
+
+        assert len(messages) == 3
+        assistant_content = messages[1]["content"]
+        # Should contain the thinking (original content) and JSON separator
+        assert "---JSON---" in assistant_content
+        assert "Some formatted text about the calculator" in assistant_content
+        # JSON part should contain the metadata
+        json_part = assistant_content.split("---JSON---")[1].strip()
+        parsed = json.loads(json_part)
+        assert parsed["status"] == "clarify"
+        assert parsed["question"] == "What type?"
+
+    def test_metadata_with_status_empty_content(self):
+        """When content is empty but metadata has status, use understanding as thinking."""
+        agent = AnalystAgent(router=None)
+        ctx = ProjectContext()
+        ctx.conversation_history = [
+            {
+                "role": "assistant",
+                "content": "",
+                "metadata": {
+                    "status": "clarify",
+                    "understanding": "I understand you want X",
+                    "question": "Confirm?",
+                },
+            },
+        ]
+        messages = agent._build_messages("yes", ctx)
+
+        assert len(messages) == 2
+        assistant_content = messages[0]["content"]
+        assert "---JSON---" in assistant_content
+        # Should use understanding as the thinking part
+        assert "I understand you want X" in assistant_content
+
+    def test_no_metadata_passes_content_as_is(self):
+        """Without metadata, assistant content passes through unchanged."""
+        agent = AnalystAgent(router=None)
+        ctx = ProjectContext()
+        ctx.conversation_history = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Original response text"},
+        ]
+        messages = agent._build_messages("Next question", ctx)
+
+        assert len(messages) == 3
+        assert messages[1]["content"] == "Original response text"
+
+    def test_metadata_as_json_string(self):
+        """Metadata stored as JSON string (not dict) gets parsed correctly."""
+        agent = AnalystAgent(router=None)
+        raw_ai_output = "thinking\n\n---JSON---\n{\"status\": \"clarify\"}"
+        ctx = ProjectContext()
+        ctx.conversation_history = [
+            {
+                "role": "assistant",
+                "content": "Formatted text",
+                "metadata": json.dumps({
+                    "status": "clarify",
+                    "raw_response": raw_ai_output,
+                }),
+            },
+        ]
+        messages = agent._build_messages("test", ctx)
+
+        assert len(messages) == 2
+        # Should parse JSON string metadata and find raw_response
+        assert messages[0]["content"] == raw_ai_output
+
+    def test_metadata_invalid_json_string_treated_as_no_metadata(self):
+        """Invalid JSON string metadata falls back to raw content."""
+        agent = AnalystAgent(router=None)
+        ctx = ProjectContext()
+        ctx.conversation_history = [
+            {
+                "role": "assistant",
+                "content": "The formatted response",
+                "metadata": "not-valid-json",
+            },
+        ]
+        messages = agent._build_messages("test", ctx)
+
+        assert len(messages) == 2
+        # Invalid JSON string -> meta becomes {}, no raw_response or status
+        # Falls through to plain content
+        assert messages[0]["content"] == "The formatted response"
+
+    def test_user_messages_pass_through(self):
+        """User messages are never modified, regardless of metadata."""
+        agent = AnalystAgent(router=None)
+        ctx = ProjectContext()
+        ctx.conversation_history = [
+            {"role": "user", "content": "First message", "metadata": {"some": "data"}},
+            {"role": "user", "content": "Second message"},
+        ]
+        messages = agent._build_messages("Third", ctx)
+
+        assert len(messages) == 3
+        assert messages[0]["content"] == "First message"
+        assert messages[1]["content"] == "Second message"
+        assert messages[2]["content"] == "Third"
+
+    def test_empty_history(self):
+        """Empty conversation history produces only the new user message."""
+        agent = AnalystAgent(router=None)
+        ctx = ProjectContext()
+        ctx.conversation_history = []
+        messages = agent._build_messages("Hello", ctx)
+
+        assert len(messages) == 1
+        assert messages[0] == {"role": "user", "content": "Hello"}

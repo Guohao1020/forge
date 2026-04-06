@@ -56,6 +56,7 @@ class ScanProfileInput:
     project_id: int
     user_id: int
     keys: Optional[List[str]] = None  # Dimensions to scan; None = all
+    branch: Optional[str] = None  # Git ref to scan; None = default branch
 
 
 @dataclass
@@ -104,9 +105,10 @@ def _select_files_for_dimension(
     return matched[:MAX_FILES_PER_DIMENSION]
 
 
-async def _fetch_file_tree(client: httpx.AsyncClient, project_id: int) -> List[Dict[str, Any]]:
+async def _fetch_file_tree(client: httpx.AsyncClient, project_id: int, ref: str = "") -> List[Dict[str, Any]]:
     """Fetch the file tree from forge-core API."""
-    resp = await client.get(f"/api/projects/{project_id}/code/tree")
+    params = {"ref": ref} if ref else {}
+    resp = await client.get(f"/api/projects/{project_id}/code/tree", params=params)
     if resp.status_code != 200:
         logger.warning(f"Failed to fetch file tree: status={resp.status_code}")
         return []
@@ -118,12 +120,15 @@ async def _fetch_file_tree(client: httpx.AsyncClient, project_id: int) -> List[D
 
 
 async def _fetch_file_content(
-    client: httpx.AsyncClient, project_id: int, path: str
+    client: httpx.AsyncClient, project_id: int, path: str, ref: str = ""
 ) -> str:
     """Fetch a single file's content from forge-core API."""
+    params: Dict[str, str] = {"path": path}
+    if ref:
+        params["ref"] = ref
     resp = await client.get(
         f"/api/projects/{project_id}/code/file",
-        params={"path": path},
+        params=params,
     )
     if resp.status_code != 200:
         return ""
@@ -174,9 +179,11 @@ async def scan_project_profile_activity(input: ScanProfileInput) -> ScanProfileO
         timeout=30.0,
     )
 
+    branch = input.branch or ""
+
     try:
         # Step 1: Fetch file tree
-        file_tree = await _fetch_file_tree(client, input.project_id)
+        file_tree = await _fetch_file_tree(client, input.project_id, ref=branch)
         if not file_tree:
             logger.warning(f"Empty file tree for project {input.project_id}")
             output.errors["_general"] = "Could not fetch file tree from repository"
@@ -214,7 +221,7 @@ async def scan_project_profile_activity(input: ScanProfileInput) -> ScanProfileO
                 # Fetch file contents
                 file_contents = []
                 for path in selected_files:
-                    content = await _fetch_file_content(client, input.project_id, path)
+                    content = await _fetch_file_content(client, input.project_id, path, ref=branch)
                     if content:
                         file_contents.append(f"### File: {path}\n```\n{content}\n```")
 

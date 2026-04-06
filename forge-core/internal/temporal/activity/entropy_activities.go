@@ -20,7 +20,8 @@ import (
 type EntropyScanInput struct {
 	ProjectID int64    `json:"project_id"`
 	TenantID  int64    `json:"tenant_id"`
-	Rules     []string `json:"rules"` // optional rule filters
+	Branch    string   `json:"branch"` // git ref to scan; empty = default branch
+	Rules     []string `json:"rules"`  // optional rule filters
 	AutoFix   bool     `json:"auto_fix"`
 }
 
@@ -48,8 +49,9 @@ type EntropyIssue struct {
 }
 
 type FetchProjectFilesInput struct {
-	ProjectID int64 `json:"project_id"`
-	TenantID  int64 `json:"tenant_id"`
+	ProjectID int64  `json:"project_id"`
+	TenantID  int64  `json:"tenant_id"`
+	Branch    string `json:"branch"`
 }
 
 type FetchProjectFilesOutput struct {
@@ -102,39 +104,60 @@ type AutoFixOutput struct {
 	PRURL string `json:"pr_url"`
 }
 
+// CodeFetcher provides access to project source code for scanning.
+// Injected at worker startup to avoid circular dependencies.
+type CodeFetcher struct {
+	GetTree func(ctx context.Context, projectID, tenantID int64, ref string) ([]string, error)
+	GetFile func(ctx context.Context, projectID, tenantID int64, path, ref string) (string, error)
+}
+
 // --- Activities ---
 
 type EntropyActivities struct {
-	db *pgxpool.Pool
+	db   *pgxpool.Pool
+	code *CodeFetcher
 }
 
-func NewEntropyActivities(db *pgxpool.Pool) *EntropyActivities {
-	return &EntropyActivities{db: db}
+func NewEntropyActivities(db *pgxpool.Pool, code *CodeFetcher) *EntropyActivities {
+	return &EntropyActivities{db: db, code: code}
 }
 
-// FetchProjectFiles retrieves source files from the local workspace for scanning.
+// FetchProjectFiles retrieves source files for scanning.
+// When Branch is set, uses CodeFetcher (GitHub API) to get files from the specified branch.
+// Otherwise falls back to local workspace scanning.
 func (a *EntropyActivities) FetchProjectFiles(ctx context.Context, input FetchProjectFilesInput) (*FetchProjectFilesOutput, error) {
 	info := activity.GetInfo(ctx)
 	slog.Info("FetchProjectFiles",
 		"project_id", input.ProjectID,
+		"branch", input.Branch,
 		"workflow_id", info.WorkflowExecution.ID,
 	)
 
-	// Query project details to find workspace path and language
-	var fullName, language string
+	// Query project language from tech_stack
+	var language string
 	err := a.db.QueryRow(ctx,
-		`SELECT COALESCE(p.full_name, ''), COALESCE(p.language, 'unknown')
+		`SELECT COALESCE(p.tech_stack->>'language', 'unknown')
 		 FROM engine.projects p WHERE p.id = $1`,
 		input.ProjectID,
-	).Scan(&fullName, &language)
+	).Scan(&language)
 	if err != nil {
 		return nil, fmt.Errorf("query project: %w", err)
+	}
+
+	// Use CodeFetcher for branch-aware scanning (or when local workspace is empty)
+	if a.code != nil && input.Branch != "" {
+		return a.fetchFilesFromBranch(ctx, input, language)
 	}
 
 	// Try local workspace first
 	wsDir := fmt.Sprintf("workspaces/tenant-%d/project-%d/repo", input.TenantID, input.ProjectID)
 	files, scanErr := scanLocalFiles(wsDir, language)
 	if scanErr != nil || len(files) == 0 {
+		// Fallback to CodeFetcher with default branch
+		if a.code != nil {
+			slog.Info("local workspace empty, falling back to CodeFetcher")
+			return a.fetchFilesFromBranch(ctx, input, language)
+		}
 		slog.Warn("no local files found", "ws_dir", wsDir, "error", scanErr)
 		return &FetchProjectFilesOutput{Files: []ProjectFile{}, Language: language}, nil
 	}
@@ -143,6 +166,78 @@ func (a *EntropyActivities) FetchProjectFiles(ctx context.Context, input FetchPr
 		Files:    files,
 		Language: language,
 	}, nil
+}
+
+// fetchFilesFromBranch retrieves files via CodeFetcher (GitHub API).
+func (a *EntropyActivities) fetchFilesFromBranch(ctx context.Context, input FetchProjectFilesInput, language string) (*FetchProjectFilesOutput, error) {
+	tree, err := a.code.GetTree(ctx, input.ProjectID, input.TenantID, input.Branch)
+	if err != nil {
+		return nil, fmt.Errorf("get code tree: %w", err)
+	}
+	if len(tree) == 0 {
+		return &FetchProjectFilesOutput{Files: []ProjectFile{}, Language: language}, nil
+	}
+
+	// Filter to source code files
+	extensions := sourceExtensions(language)
+	var files []ProjectFile
+	maxFiles := 50
+	maxSize := 50000
+
+	for _, path := range tree {
+		if len(files) >= maxFiles {
+			break
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		matched := false
+		for _, allowed := range extensions {
+			if ext == allowed {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		// Skip common non-source paths
+		pathLower := strings.ToLower(path)
+		if strings.Contains(pathLower, "node_modules/") || strings.Contains(pathLower, "vendor/") ||
+			strings.Contains(pathLower, ".git/") || strings.Contains(pathLower, "__pycache__/") {
+			continue
+		}
+
+		content, err := a.code.GetFile(ctx, input.ProjectID, input.TenantID, path, input.Branch)
+		if err != nil || content == "" {
+			continue
+		}
+		if len(content) > maxSize {
+			content = content[:maxSize] + "\n... (truncated)"
+		}
+		files = append(files, ProjectFile{Path: path, Content: content})
+	}
+
+	slog.Info("fetched files from branch",
+		"project_id", input.ProjectID,
+		"branch", input.Branch,
+		"files", len(files),
+	)
+	return &FetchProjectFilesOutput{Files: files, Language: language}, nil
+}
+
+// sourceExtensions returns file extensions for a given language.
+func sourceExtensions(language string) []string {
+	switch strings.ToLower(language) {
+	case "go", "golang":
+		return []string{".go"}
+	case "javascript", "typescript":
+		return []string{".js", ".ts", ".tsx", ".jsx"}
+	case "python":
+		return []string{".py"}
+	case "java":
+		return []string{".java"}
+	default:
+		return []string{".go", ".js", ".ts", ".py", ".java", ".tsx", ".jsx"}
+	}
 }
 
 // scanLocalFiles reads source files from a workspace directory.

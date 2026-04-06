@@ -177,6 +177,11 @@ func (s *Service) waitAndBroadcastAnalysis(taskID int64, we client.WorkflowRun) 
 		}
 	}
 
+	// Update ANALYZE step status to reflect progress
+	if aiStatus != "error" {
+		_ = s.taskRepo.UpdateStepStatus(ctx, taskID, "ANALYZE", "RUNNING")
+	}
+
 	// Save AI response to DB with message type for frontend routing
 	if aiMetadata == nil {
 		aiMetadata = make(map[string]interface{})
@@ -262,6 +267,12 @@ func (s *Service) ConfirmPlan(ctx context.Context, taskID, tenantID int64) (*Pla
 		}
 	}
 
+	// Fetch project metadata for workflow
+	var projectName, repoURL string
+	row := s.repo.DB().QueryRow(ctx,
+		`SELECT name, code_repo_url FROM engine.projects WHERE id = $1`, t.ProjectID)
+	_ = row.Scan(&projectName, &repoURL)
+
 	// Start PlanOnlyWorkflow asynchronously — result delivered via SSE
 	workflowID := fmt.Sprintf("plan-%d", taskID)
 	we, err := s.temporalClient.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
@@ -274,6 +285,8 @@ func (s *Service) ConfirmPlan(ctx context.Context, taskID, tenantID int64) (*Pla
 		CreatedBy:             t.CreatedBy,
 		Requirement:           t.Requirement,
 		Title:                 derefStr(t.Title),
+		ProjectName:           projectName,
+		RepoURL:               repoURL,
 		ConfirmedRequirements: confirmedReqs,
 	})
 	if err != nil {
@@ -383,6 +396,12 @@ func (s *Service) ApprovePlan(ctx context.Context, taskID, tenantID int64) error
 		}
 	}
 
+	// Fetch project metadata for workflow
+	var projectName, repoURL string
+	row := s.repo.DB().QueryRow(ctx,
+		`SELECT name, code_repo_url FROM engine.projects WHERE id = $1`, t.ProjectID)
+	_ = row.Scan(&projectName, &repoURL)
+
 	// Start TaskExecutionWorkflow (TEST_WRITING → GENERATE → REVIEW → TEST → DEPLOY)
 	workflowID := fmt.Sprintf("task-%d", taskID)
 	we, err := s.temporalClient.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
@@ -395,6 +414,8 @@ func (s *Service) ApprovePlan(ctx context.Context, taskID, tenantID int64) error
 		CreatedBy:   t.CreatedBy,
 		Requirement: t.Requirement,
 		Title:       derefStr(t.Title),
+		ProjectName: projectName,
+		RepoURL:     repoURL,
 		PlanResult:  planResult,
 	})
 	if err != nil {
@@ -404,6 +425,41 @@ func (s *Service) ApprovePlan(ctx context.Context, taskID, tenantID int64) error
 	if err := s.taskRepo.UpdateWorkflowIDs(ctx, taskID, we.GetID(), we.GetRunID()); err != nil {
 		slog.Error("failed to save workflow IDs", "task_id", taskID, "error", err)
 	}
+
+	// Signal VersionOrchestrator with new task (non-fatal)
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		var versionID int64
+		var touchedFiles []string
+		row := s.repo.DB().QueryRow(bgCtx,
+			`SELECT COALESCE(version_id, 0) FROM engine.tasks WHERE id = $1`, taskID)
+		_ = row.Scan(&versionID)
+
+		if versionID > 0 {
+			rows, _ := s.repo.DB().Query(bgCtx,
+				`SELECT COALESCE(touched_files, '[]'::jsonb) FROM engine.tasks WHERE id = $1`, taskID)
+			if rows != nil {
+				defer rows.Close()
+				if rows.Next() {
+					var filesJSON json.RawMessage
+					_ = rows.Scan(&filesJSON)
+					_ = json.Unmarshal(filesJSON, &touchedFiles)
+				}
+			}
+
+			orchestratorID := fmt.Sprintf("version-orchestrator-%d", versionID)
+			signal := map[string]interface{}{
+				"task_id":       taskID,
+				"touched_files": touchedFiles,
+			}
+			if err := s.temporalClient.SignalWorkflow(bgCtx, orchestratorID, "", "new_task", signal); err != nil {
+				slog.Info("VersionOrchestrator not running yet, will be started when version is created",
+					"version_id", versionID, "task_id", taskID)
+			}
+		}
+	}()
 
 	// Save system message
 	meta, _ := json.Marshal(map[string]string{

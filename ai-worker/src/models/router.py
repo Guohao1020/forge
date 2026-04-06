@@ -6,7 +6,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Callable, Optional
 
 from src.config import settings
 from src.models.client import PROVIDER_CALLERS, LLMResponse, stream_llm
@@ -106,6 +106,18 @@ _API_KEY_MAP = {
 }
 
 
+def _is_auth_error(exc: Exception) -> bool:
+    """Check if the exception is an authentication/authorization error (401/403).
+    These should skip to the next provider immediately without circuit breaker penalty."""
+    msg = str(exc).lower()
+    if "401" in msg or "403" in msg or "invalid_api_key" in msg or "incorrect api key" in msg:
+        return True
+    # OpenAI/Anthropic SDK specific
+    if hasattr(exc, "status_code") and getattr(exc, "status_code", 0) in (401, 403):
+        return True
+    return False
+
+
 class ModelRouter:
     """Routes LLM calls through a fallback chain with circuit breakers."""
 
@@ -170,13 +182,17 @@ class ModelRouter:
                 )
                 return response
             except Exception as exc:
-                breaker.record_failure()
                 error_msg = f"{provider}/{model}: {exc}"
                 errors.append(error_msg)
-                logger.warning("LLM call failed: %s", error_msg)
+                # Auth errors (401/403) → skip immediately, don't count as circuit failure
+                if _is_auth_error(exc):
+                    logger.warning("Auth error, skipping %s: %s", provider, exc)
+                else:
+                    breaker.record_failure()
+                    logger.warning("LLM call failed: %s", error_msg)
 
         raise RuntimeError(
-            f"All models failed for purpose={purpose.value}: {'; '.join(errors)}"
+            f"All models failed for purpose={purpose.value} - {'; '.join(errors)}"
         )
 
     async def chat_stream(
@@ -186,6 +202,7 @@ class ModelRouter:
         purpose: Purpose = Purpose.GENERATE,
         task_id: int = 0,
         channel_prefix: str = "code",
+        token_filter: Optional[Callable[[str, str], Optional[str]]] = None,
     ) -> LLMResponse:
         """Stream a chat request, publishing chunks to Redis when task_id is set.
 
@@ -196,6 +213,10 @@ class ModelRouter:
         Args:
             channel_prefix: Redis channel prefix. "code" for code generation,
                           "analyze" for requirement analysis thinking.
+            token_filter: Optional callback ``(chunk, accumulated_text) -> publish_text``.
+                         Returns text to publish (may differ from chunk),
+                         empty string to suppress this chunk, or None to stop
+                         publishing for the rest of the stream.
         """
         import redis.asyncio as aioredis
         from src.config import settings as _settings
@@ -230,15 +251,23 @@ class ModelRouter:
                     start = _time.monotonic()
                     full_text = ""
 
+                    publishing = True  # Track if filter has stopped publishing
                     async for chunk in stream_llm(
                         api_key, model, provider, system, messages
                     ):
                         full_text += chunk
-                        if redis_client and channel:
-                            try:
-                                await redis_client.publish(channel, chunk)
-                            except Exception:
-                                pass  # fire-and-forget
+                        if redis_client and channel and publishing:
+                            publish_text = chunk
+                            if token_filter is not None:
+                                publish_text = token_filter(chunk, full_text)
+                                if publish_text is None:
+                                    publishing = False  # Stop publishing for rest of stream
+                                    continue
+                            if publish_text:
+                                try:
+                                    await redis_client.publish(channel, publish_text)
+                                except Exception:
+                                    pass  # fire-and-forget
 
                     latency_ms = int((_time.monotonic() - start) * 1000)
                     breaker.record_success()
@@ -257,14 +286,17 @@ class ModelRouter:
                         latency_ms=latency_ms,
                     )
                 except Exception as exc:
-                    breaker.record_failure()
                     error_msg = f"{provider}/{model}: {exc}"
                     errors.append(error_msg)
-                    logger.warning("LLM stream failed: %s", error_msg)
+                    if _is_auth_error(exc):
+                        logger.warning("Auth error (stream), skipping %s: %s", provider, exc)
+                    else:
+                        breaker.record_failure()
+                        logger.warning("LLM stream failed: %s", error_msg)
         finally:
             if redis_client:
                 await redis_client.aclose()
 
         raise RuntimeError(
-            f"All models failed (stream) for purpose={purpose.value}: {'; '.join(errors)}"
+            f"All models failed (stream) for purpose={purpose.value} - {'; '.join(errors)}"
         )

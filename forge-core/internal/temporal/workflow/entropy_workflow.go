@@ -31,6 +31,7 @@ func EntropyScanWorkflow(ctx workflow.Context, input activity.EntropyScanInput) 
 	err := workflow.ExecuteActivity(ctx, "FetchProjectFiles", activity.FetchProjectFilesInput{
 		ProjectID: input.ProjectID,
 		TenantID:  input.TenantID,
+		Branch:    input.Branch,
 	}).Get(ctx, &fetchOutput)
 	if err != nil {
 		logger.Error("FetchProjectFiles failed", "error", err)

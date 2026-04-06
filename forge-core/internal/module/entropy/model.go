@@ -36,3 +36,8 @@ type UpdateConfigRequest struct {
 	AutoFix  *bool    `json:"autoFix"`
 	Rules    []string `json:"rules"`
 }
+
+// TriggerScanRequest is the API request for triggering an entropy scan.
+type TriggerScanRequest struct {
+	Branches []string `json:"branches"` // branches to scan; empty = default branch
+}

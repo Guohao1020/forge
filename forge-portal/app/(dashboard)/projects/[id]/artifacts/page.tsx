@@ -2,9 +2,10 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { Package, Hash, HardDrive, ExternalLink } from "lucide-react";
+import { Package, Hash, HardDrive, ExternalLink, ListTodo, Tag } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { listArtifacts, type Artifact } from "@/lib/artifact";
+import Link from "next/link";
 
 const TYPE_LABELS: Record<string, string> = {
   DOCKER_IMAGE: "Docker 镜像",
@@ -68,7 +69,7 @@ function EmptyState() {
       </div>
       <h3 className="text-base font-medium mb-1">暂无制品</h3>
       <p className="text-sm text-muted-foreground">
-        任务完成后生成的制品将在此展示
+        任务完成后自动生成
       </p>
     </div>
   );
@@ -139,6 +140,9 @@ export default function ArtifactsPage() {
                 状态
               </th>
               <th className="text-left px-4 py-3 font-medium text-muted-foreground">
+                关联任务
+              </th>
+              <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                 Registry
               </th>
               <th className="text-left px-4 py-3 font-medium text-muted-foreground">
@@ -181,6 +185,19 @@ export default function ArtifactsPage() {
                   >
                     {STATUS_LABELS[art.status] || art.status}
                   </Badge>
+                </td>
+                <td className="px-4 py-3">
+                  {art.taskId ? (
+                    <Link
+                      href={`/projects/${projectId}/tasks/${art.taskId}`}
+                      className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
+                    >
+                      <ListTodo className="h-3 w-3 shrink-0" />
+                      <span>任务 #{art.taskId}</span>
+                    </Link>
+                  ) : (
+                    <span className="text-muted-foreground/40 text-xs">—</span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   {art.registryUrl ? (

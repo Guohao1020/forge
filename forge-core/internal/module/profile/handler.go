@@ -54,20 +54,20 @@ func (h *Handler) TriggerScan(c *gin.Context) {
 	}
 
 	var req ScanRequest
-	_ = c.ShouldBindJSON(&req) // optional body with keys filter
+	_ = c.ShouldBindJSON(&req) // optional body with keys and branches
 
-	userID, _ := c.Get("userID")
+	userID, _ := c.Get("user_id")
 	uid, _ := userID.(int64)
 
-	workflowID, err := h.svc.TriggerScan(c.Request.Context(), projectID, uid, req.Keys)
+	workflowIDs, err := h.svc.TriggerScan(c.Request.Context(), projectID, uid, req.Keys, req.Branches)
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, "failed to trigger scan: "+err.Error())
 		return
 	}
 
 	response.OK(c, gin.H{
-		"status":     "scan_started",
-		"workflowId": workflowID,
+		"status":      "scan_started",
+		"workflowIds": workflowIDs,
 	})
 }
 

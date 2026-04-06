@@ -40,9 +40,47 @@ When recommendations exist, use this structure for the recommendations field:
 class PlannerAgent(BaseAgent):
     purpose = Purpose.PLAN
 
+    def __init__(self, router, confirmed_requirements=None):
+        super().__init__(router)
+        self._confirmed_requirements = confirmed_requirements
+
     def _build_system_prompt(self, context: ProjectContext) -> str:
+        import json as _json
         base = PLANNER_SYSTEM_PROMPT
         project_context = context.to_system_prompt()
         if project_context:
             base += f"\n\n## Project Context\n{project_context}"
+        # Inject confirmed requirements as structured context so the planner
+        # works from the detailed analysis, not just the raw user input.
+        if self._confirmed_requirements:
+            reqs = self._confirmed_requirements
+            base += "\n\n## Confirmed Requirements (from analysis phase)\n"
+            if reqs.get("summary"):
+                base += f"**Summary:** {reqs['summary']}\n\n"
+            if reqs.get("functional_requirements"):
+                base += "**Functional Requirements:**\n"
+                for i, r in enumerate(reqs["functional_requirements"], 1):
+                    base += f"{i}. {r}\n"
+                base += "\n"
+            if reqs.get("non_functional"):
+                nf = reqs["non_functional"]
+                if isinstance(nf, dict):
+                    base += "**Non-Functional Requirements:**\n"
+                    for k, v in nf.items():
+                        base += f"- {k}: {v}\n"
+                    base += "\n"
+            if reqs.get("acceptance_criteria"):
+                base += "**Acceptance Criteria:**\n"
+                for i, ac in enumerate(reqs["acceptance_criteria"], 1):
+                    base += f"{i}. {ac}\n"
+                base += "\n"
+            if reqs.get("out_of_scope"):
+                base += "**Out of Scope:**\n"
+                for item in reqs["out_of_scope"]:
+                    base += f"- {item}\n"
+                base += "\n"
+            if reqs.get("affected_modules"):
+                base += f"**Affected Modules:** {', '.join(reqs['affected_modules'])}\n"
+            if reqs.get("estimated_complexity"):
+                base += f"**Estimated Complexity:** {reqs['estimated_complexity']}\n"
         return base

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -88,6 +89,34 @@ func main() {
 		cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.GitHubRedirectURI, cfg.EncryptionKey)
 	authHandler := auth.NewHandler(authService)
 
+	// Generate service token for ai-worker (100-year expiry, auto-updates .env)
+	if serviceToken, err := authService.GenerateServiceToken("ai-worker"); err == nil {
+		envPath := "../ai-worker/.env"
+		if data, readErr := os.ReadFile(envPath); readErr == nil {
+			lines := strings.Split(string(data), "\n")
+			found := false
+			for i, line := range lines {
+				if strings.HasPrefix(line, "FORGE_API_TOKEN=") {
+					lines[i] = "FORGE_API_TOKEN=" + serviceToken
+					found = true
+					break
+				}
+			}
+			if !found {
+				lines = append(lines, "FORGE_API_TOKEN="+serviceToken)
+			}
+			if writeErr := os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0644); writeErr == nil {
+				slog.Info("service token written to ai-worker/.env")
+			} else {
+				slog.Warn("failed to write service token to ai-worker/.env", "error", writeErr)
+			}
+		} else {
+			slog.Warn("failed to read ai-worker/.env for service token", "error", readErr)
+		}
+	} else {
+		slog.Warn("failed to generate service token", "error", err)
+	}
+
 	// Workspace manager (local git clones + per-task worktrees)
 	workspaceMgr := workspace.NewManager(cfg.WorkspaceRoot)
 
@@ -109,8 +138,19 @@ func main() {
 		workflowStarter = temporalClient
 
 		taskRepoForWorker := task.NewRepository(db)
+		// Build CodeFetcher from project service for branch-aware file access.
+		// Uses system admin userID=1 to access GitHub tokens for API calls.
+		const systemUserID int64 = 1
+		codeFetcher := &activity.CodeFetcher{
+			GetTree: func(ctx context.Context, projectID, tenantID int64, ref string) ([]string, error) {
+				return projectService.GetCodeTree(ctx, projectID, tenantID, systemUserID, ref)
+			},
+			GetFile: func(ctx context.Context, projectID, tenantID int64, path, ref string) (string, error) {
+				return projectService.GetCodeFile(ctx, projectID, tenantID, systemUserID, path, ref)
+			},
+		}
 		_, err := forgetemporal.StartWorker(temporalClient.Inner(), db, sseHub,
-			authService, activity.NewProjectRepoAdapter(projectRepo), taskRepoForWorker, workspaceMgr, k8sClient)
+			authService, activity.NewProjectRepoAdapter(projectRepo), taskRepoForWorker, workspaceMgr, k8sClient, codeFetcher, cfg.ACRRegistry)
 		if err != nil {
 			slog.Error("failed to start temporal worker", "error", err)
 		}
@@ -176,6 +216,12 @@ func main() {
 	}
 	entropyHandler := entropy.NewHandler(entropySvc)
 
+	// Wire ScanTrigger to version service for version-scoped scanning
+	versionSvc.SetScanTrigger(&scanTriggerAdapter{
+		profileSvc: profileSvc,
+		entropySvc: entropySvc,
+	})
+
 	// Search module
 	searchHandler := search.NewHandler(db)
 
@@ -195,6 +241,7 @@ func main() {
 	r := router.Setup(&router.Deps{
 		DB:                  db,
 		RDB:                 rdb,
+		TemporalClient:      temporalInner,
 		AuthHandler:         authHandler,
 		AuthService:         authService,
 		ProjectHandler:      projectHandler,
@@ -246,4 +293,20 @@ func main() {
 	}
 
 	slog.Info("forge-core stopped")
+}
+
+// scanTriggerAdapter implements version.ScanTrigger by delegating to profile and entropy services.
+type scanTriggerAdapter struct {
+	profileSvc *profile.Service
+	entropySvc *entropy.Service
+}
+
+func (a *scanTriggerAdapter) TriggerProfileScan(ctx context.Context, projectID, userID int64, branches []string) error {
+	_, err := a.profileSvc.TriggerScan(ctx, projectID, userID, nil, branches)
+	return err
+}
+
+func (a *scanTriggerAdapter) TriggerEntropyScan(ctx context.Context, projectID, tenantID int64, branches []string) error {
+	_, err := a.entropySvc.TriggerScan(ctx, projectID, tenantID, branches)
+	return err
 }

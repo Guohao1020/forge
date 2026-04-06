@@ -103,6 +103,34 @@ func (r *Repository) CreateDeployRecord(ctx context.Context, d *DeployRecord) er
 	).Scan(&d.ID, &d.CreatedAt)
 }
 
+func (r *Repository) FindPreviousDeploy(ctx context.Context, envID, tenantID int64) (version string, artifactID *int64, err error) {
+	err = r.db.QueryRow(ctx,
+		`SELECT version, artifact_id FROM pipeline.deploy_records
+		 WHERE environment_id = $1 AND tenant_id = $2 AND status IN ('DEPLOYED', 'SIMULATED')
+		 ORDER BY completed_at DESC
+		 OFFSET 1 LIMIT 1`,
+		envID, tenantID,
+	).Scan(&version, &artifactID)
+	return
+}
+
+func (r *Repository) CreateRollbackRecord(ctx context.Context, d *DeployRecord) error {
+	return r.db.QueryRow(ctx,
+		`INSERT INTO pipeline.deploy_records (tenant_id, project_id, environment_id, artifact_id, version, status, deployed_by, started_at)
+		 VALUES ($1, $2, $3, $4, $5, 'ROLLED_BACK', $6, NOW())
+		 RETURNING id, started_at, created_at`,
+		d.TenantID, d.ProjectID, d.EnvironmentID, d.ArtifactID, d.Version, d.DeployedBy,
+	).Scan(&d.ID, &d.StartedAt, &d.CreatedAt)
+}
+
+func (r *Repository) UpdateEnvironmentVersion(ctx context.Context, envID int64, version string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE pipeline.environments SET current_version = $1, last_deploy_at = NOW() WHERE id = $2`,
+		version, envID,
+	)
+	return err
+}
+
 func (r *Repository) UpdateDeployRecord(ctx context.Context, d *DeployRecord) error {
 	_, err := r.db.Exec(ctx, `
 		UPDATE pipeline.deploy_records

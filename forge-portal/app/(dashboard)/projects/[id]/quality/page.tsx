@@ -46,7 +46,7 @@ export default function QualityPage() {
           if (res.scan) {
             setScan(res.scan);
             try {
-              setIssues(JSON.parse(res.scan.issues));
+              setIssues(JSON.parse(res.scan.issues) || []);
             } catch {
               setIssues([]);
             }

@@ -4,18 +4,31 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
 
+// ScanTrigger abstracts scan triggering to avoid circular deps.
+type ScanTrigger interface {
+	TriggerProfileScan(ctx context.Context, projectID, userID int64, branches []string) error
+	TriggerEntropyScan(ctx context.Context, projectID, tenantID int64, branches []string) error
+}
+
 type Service struct {
-	repo *Repository
+	repo    *Repository
+	scanner ScanTrigger
 }
 
 func NewService(repo *Repository) *Service {
 	return &Service{repo: repo}
+}
+
+// SetScanTrigger injects the scan trigger after construction (avoids circular deps).
+func (s *Service) SetScanTrigger(st ScanTrigger) {
+	s.scanner = st
 }
 
 // semverRegex matches patterns like "1.0", "1.2.0", "v1.0", "v2.1.3"
@@ -115,6 +128,22 @@ func (s *Service) Release(ctx context.Context, tenantID, versionID int64) (*Proj
 		}
 	}
 
+	// Auto-generate changelog from task descriptions
+	var changelogParts []string
+	for _, t := range tasks {
+		title := t.Title
+		if title == "" {
+			title = fmt.Sprintf("Task #%d", t.ID)
+		}
+		changelogParts = append(changelogParts, fmt.Sprintf("- %s (#%d)", title, t.ID))
+	}
+	changelog := strings.Join(changelogParts, "\n")
+
+	// Save changelog to version description if not already set
+	if v.Description == "" {
+		_ = s.repo.Update(ctx, versionID, tenantID, &changelog, nil)
+	}
+
 	// Create git tag
 	gitTag := v.Version
 	if err := s.repo.Release(ctx, versionID, tenantID, gitTag); err != nil {
@@ -153,4 +182,53 @@ func (s *Service) validateStatusTransition(from, to string) error {
 		}
 	}
 	return fmt.Errorf("invalid transition: %s -> %s", from, to)
+}
+
+// TriggerVersionScan triggers profile + entropy scans for all branches in a version's tasks.
+func (s *Service) TriggerVersionScan(ctx context.Context, tenantID, projectID, versionID, userID int64) ([]string, error) {
+	if s.scanner == nil {
+		return nil, fmt.Errorf("scan trigger not configured")
+	}
+
+	tasks, err := s.repo.GetTasksByVersion(ctx, versionID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("get version tasks: %w", err)
+	}
+
+	// Collect unique branch names
+	branchSet := make(map[string]bool)
+	for _, t := range tasks {
+		if t.BranchName != "" {
+			branchSet[t.BranchName] = true
+		}
+	}
+
+	if len(branchSet) == 0 {
+		return nil, fmt.Errorf("no branches found in version tasks")
+	}
+
+	var branches []string
+	for b := range branchSet {
+		branches = append(branches, b)
+	}
+
+	slog.Info("triggering version scan",
+		"version_id", versionID,
+		"branches", branches,
+	)
+
+	// Trigger both profile and entropy scans
+	var triggered []string
+	if err := s.scanner.TriggerProfileScan(ctx, projectID, userID, branches); err != nil {
+		slog.Warn("profile scan trigger failed", "error", err)
+	} else {
+		triggered = append(triggered, "profile")
+	}
+	if err := s.scanner.TriggerEntropyScan(ctx, projectID, tenantID, branches); err != nil {
+		slog.Warn("entropy scan trigger failed", "error", err)
+	} else {
+		triggered = append(triggered, "entropy")
+	}
+
+	return triggered, nil
 }

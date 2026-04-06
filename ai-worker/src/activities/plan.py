@@ -15,6 +15,7 @@ class PlanInput:
     tenant_id: int
     project_id: int
     requirement_summary: Optional[str] = None  # May come from Go or be fetched
+    confirmed_requirements: Optional[Dict[str, Any]] = None  # Structured requirements from analysis
 
 
 @dataclass
@@ -49,7 +50,7 @@ async def plan_task_activity(input: PlanInput) -> PlanOutput:
             "query_api_catalog", "query_module_graph", "read_project_file"
         )]
         router = ModelRouter()
-        agent = PlannerAgent(router)
+        agent = PlannerAgent(router, confirmed_requirements=input.confirmed_requirements)
         tool_executor = ContextToolExecutor(ctx, input.project_id)
         result = await agent.run(summary, ctx, tools=planner_tools, tool_executor=tool_executor)
 

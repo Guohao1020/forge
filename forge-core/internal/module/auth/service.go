@@ -44,6 +44,7 @@ type Claims struct {
 	TenantID int64    `json:"tid"`
 	Username string   `json:"usr"`
 	Roles    []string `json:"roles,omitempty"` // RBAC role codes
+	Service  bool     `json:"svc,omitempty"`
 }
 
 func (s *Service) Login(ctx context.Context, req *LoginRequest, ipAddr string) (*LoginResponse, error) {
@@ -117,6 +118,28 @@ func (s *Service) Login(ctx context.Context, req *LoginRequest, ipAddr string) (
 	}, nil
 }
 
+// GenerateServiceToken creates a long-lived JWT for service-to-service auth.
+// The token has a 100-year expiry and is NOT saved to active_tokens (permanent, no revocation).
+func (s *Service) GenerateServiceToken(name string) (string, error) {
+	jti := uuid.New().String()
+	expiresAt := time.Now().Add(100 * 365 * 24 * time.Hour) // 100 years
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti,
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+		UserID:   0,
+		TenantID: 1, // default tenant
+		Username: name,
+		Roles:    []string{"SERVICE"},
+		Service:  true,
+	})
+
+	return token.SignedString(s.jwtSecret)
+}
+
 func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(t *jwt.Token) (interface{}, error) {
 		// Reject algorithm confusion attacks
@@ -133,9 +156,12 @@ func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*Claim
 		return nil, errors.New("invalid token")
 	}
 
-	active, err := s.repo.IsTokenActive(ctx, claims.ID)
-	if err != nil || !active {
-		return nil, errors.New("token revoked")
+	// Service tokens are permanent and not stored in active_tokens — skip revocation check
+	if !claims.Service {
+		active, err := s.repo.IsTokenActive(ctx, claims.ID)
+		if err != nil || !active {
+			return nil, errors.New("token revoked")
+		}
 	}
 
 	return claims, nil

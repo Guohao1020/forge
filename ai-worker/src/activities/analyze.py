@@ -242,6 +242,20 @@ async def _publish_thinking(task_id: int, text: str) -> None:
         logger.debug(f"Failed to publish thinking token: {e}")
 
 
+def _split_thinking_and_json(text: str) -> tuple[str, str]:
+    """Split AI response into thinking text and JSON part.
+
+    The AnalystAgent outputs: thinking text + ---JSON--- + JSON object.
+    Returns (thinking_text, json_text). If no separator found, treats entire text as JSON.
+    """
+    separator = "---JSON---"
+    if separator in text:
+        parts = text.split(separator, 1)
+        return parts[0].strip(), parts[1].strip()
+    # Fallback: no separator — entire text is JSON (backward compat)
+    return "", text
+
+
 @activity.defn(name="analyze_requirement")
 async def analyze_requirement_activity(input: AnalyzeInput) -> AnalyzeOutput:
     logger.info(f"Analyzing requirement for task {input.task_id}")
@@ -259,18 +273,34 @@ async def analyze_requirement_activity(input: AnalyzeInput) -> AnalyzeOutput:
         router = ModelRouter()
         agent = AnalystAgent(router)
 
-        # Try streaming mode first — publishes thinking tokens to Redis for live UI
+        # Try streaming mode first — publishes thinking tokens to Redis for live UI.
+        # The streaming shows the AI's thinking process (natural language) in real-time,
+        # while the JSON structure is parsed from the final output.
+        # Uses router.chat_stream() with a token_filter that stops publishing
+        # when the ---JSON--- separator is reached.
         try:
             system_prompt = agent._build_system_prompt(ctx)
             messages = agent._build_messages(input.requirement, ctx)
+
+            def thinking_filter(chunk: str, accumulated: str):
+                """Only publish thinking text (before ---JSON---), suppress raw JSON."""
+                if "---JSON---" in accumulated:
+                    return None  # Stop publishing entirely
+                return chunk  # Publish thinking tokens
+
             llm_result = await router.chat_stream(
                 system=system_prompt,
                 messages=messages,
                 purpose=Purpose.ANALYZE,
                 task_id=input.task_id,
                 channel_prefix="analyze",
+                token_filter=thinking_filter,
             )
-            structured = agent._parse_json(llm_result.content)
+
+            # Parse the JSON part from the full output
+            _, json_text = _split_thinking_and_json(llm_result.content)
+            structured = agent._parse_json(json_text)
+
             from src.agents.base import AgentResult
             result = AgentResult(
                 content=llm_result.content,
@@ -280,18 +310,35 @@ async def analyze_requirement_activity(input: AnalyzeInput) -> AnalyzeOutput:
                 provider=llm_result.provider,
                 latency_ms=llm_result.latency_ms,
             )
+
         except Exception as e:
             logger.warning(f"Streaming analysis failed, falling back to sync: {e}")
             result = await agent.run(input.requirement, ctx)
+            # Parse thinking/json split from sync result too
+            thinking, json_text = _split_thinking_and_json(result.content)
+            if json_text != result.content:
+                result.structured = agent._parse_json(json_text)
 
         # Publish "thinking complete" event
         await _publish_thinking(input.task_id, '{"event":"thinking_end"}')
 
-        # Normalize to new single-question format
+        # Normalize to single-question format
         result.structured = normalize_clarify_response(result.structured)
+
+        # Convert options from new format (objects with label+reason) to display format
+        options = result.structured.get("options", [])
+        if options and isinstance(options[0], dict):
+            # New format: [{"label": "...", "reason": "..."}]
+            # Keep structured options in metadata for frontend to render with reasons
+            result.structured["option_details"] = options
+            # Also keep simple string options for backward compat
+            result.structured["options"] = [opt.get("label", str(opt)) for opt in options]
 
         status = result.structured.get("status", "clarify")
         risks = result.structured.get("risks", [])
+        # Store the raw AI output for conversation history reconstruction.
+        # This avoids the fragile format-guessing in AnalystAgent._build_messages().
+        result.structured["raw_response"] = result.content
         human_content = format_human_response(status, result.structured)
         return AnalyzeOutput(
             status=status,

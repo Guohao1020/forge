@@ -17,7 +17,7 @@ import (
 )
 
 // StartWorker creates and starts a Temporal worker in a goroutine.
-func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken activity.AuthTokenProvider, projectProv activity.ProjectProvider, taskPR activity.TaskPRUpdater, ws *workspace.Manager, k8sClient *k8s.Client) (worker.Worker, error) {
+func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken activity.AuthTokenProvider, projectProv activity.ProjectProvider, taskPR activity.TaskPRUpdater, ws *workspace.Manager, k8sClient *k8s.Client, codeFetcher *activity.CodeFetcher, acrRegistry string) (worker.Worker, error) {
 	w := worker.New(c, TaskQueueName, worker.Options{})
 
 	w.RegisterWorkflowWithOptions(wf.TaskWorkflow, workflow.RegisterOptions{
@@ -74,6 +74,9 @@ func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken 
 	w.RegisterActivityWithOptions(devops.SavePRInfo, sdkactivity.RegisterOptions{
 		Name: "SavePRInfo",
 	})
+	w.RegisterActivityWithOptions(devops.MergePullRequest, sdkactivity.RegisterOptions{
+		Name: "MergePullRequest",
+	})
 
 	// Version orchestrator workflow + activities
 	w.RegisterWorkflowWithOptions(wf.VersionOrchestrator, workflow.RegisterOptions{
@@ -89,6 +92,15 @@ func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken 
 	w.RegisterActivityWithOptions(versionActs.SaveTouchedFiles, sdkactivity.RegisterOptions{
 		Name: "SaveTouchedFiles",
 	})
+	w.RegisterActivityWithOptions(versionActs.EnsureDraftVersion, sdkactivity.RegisterOptions{
+		Name: "EnsureDraftVersion",
+	})
+	w.RegisterActivityWithOptions(versionActs.AssignTaskToVersion, sdkactivity.RegisterOptions{
+		Name: "AssignTaskToVersion",
+	})
+	w.RegisterActivityWithOptions(versionActs.CreateReleaseBranch, sdkactivity.RegisterOptions{
+		Name: "CreateReleaseBranch",
+	})
 
 	// Lint activities (Phase 3 — Constraint Engine)
 	lintActs := activity.NewLintActivities()
@@ -97,18 +109,26 @@ func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken 
 	})
 
 	// Build activities (S13 — artifact management)
-	buildActs := activity.NewBuildActivities(db)
+	// Public registry for docker push (convert VPC address to public)
+	acrRegistryPub := acrRegistry
+	if idx := len("repo-voc-registry-vpc"); len(acrRegistry) > idx && acrRegistry[:idx] == "repo-voc-registry-vpc" {
+		acrRegistryPub = "repo-voc-registry" + acrRegistry[idx:]
+	}
+	buildActs := activity.NewBuildActivities(db, ws, acrRegistry, acrRegistryPub)
 	w.RegisterActivityWithOptions(buildActs.BuildDockerImage, sdkactivity.RegisterOptions{
 		Name: "BuildDockerImage",
 	})
 
 	// Deploy activities (S14 — K8s deployment)
-	deployActs := activity.NewDeployActivities(db)
+	deployActs := activity.NewDeployActivities(db, k8sClient, sse)
 	w.RegisterActivityWithOptions(deployActs.GenerateK8sManifests, sdkactivity.RegisterOptions{
 		Name: "GenerateK8sManifests",
 	})
 	w.RegisterActivityWithOptions(deployActs.Rollback, sdkactivity.RegisterOptions{
 		Name: "RollbackDeploy",
+	})
+	w.RegisterActivityWithOptions(deployActs.AutoDeployToDev, sdkactivity.RegisterOptions{
+		Name: "AutoDeployToDev",
 	})
 
 	// Preview lifecycle (S17 — cloud preview environments)
@@ -124,7 +144,7 @@ func StartWorker(c client.Client, db *pgxpool.Pool, sse *task.SSEHub, authToken 
 	w.RegisterWorkflowWithOptions(wf.EntropyScanWorkflow, workflow.RegisterOptions{
 		Name: "EntropyScanWorkflow",
 	})
-	entropyActs := activity.NewEntropyActivities(db)
+	entropyActs := activity.NewEntropyActivities(db, codeFetcher)
 	w.RegisterActivityWithOptions(entropyActs.FetchProjectFiles, sdkactivity.RegisterOptions{
 		Name: "FetchProjectFiles",
 	})

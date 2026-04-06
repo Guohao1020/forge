@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.temporal.io/sdk/client"
@@ -159,40 +160,57 @@ func (s *Service) UpdateConfig(ctx context.Context, projectID, tenantID int64, r
 	return err
 }
 
-// TriggerScan starts an entropy scan via Temporal workflow.
-func (s *Service) TriggerScan(ctx context.Context, projectID, tenantID int64) (string, error) {
+// TriggerScan starts entropy scan workflows for one or more branches.
+// If branches is empty, scans the default branch (empty string = project default).
+func (s *Service) TriggerScan(ctx context.Context, projectID, tenantID int64, branches []string) ([]string, error) {
 	if s.temporal == nil {
-		return "", fmt.Errorf("temporal client not configured")
+		return nil, fmt.Errorf("temporal client not configured")
 	}
 
 	cfg, _ := s.GetConfig(ctx, projectID)
 
-	input := activity.EntropyScanInput{
-		ProjectID: projectID,
-		TenantID:  tenantID,
-		AutoFix:   cfg.AutoFix,
-	}
+	var rules []string
 	if cfg.Rules != "[]" {
-		var rules []string
-		if err := json.Unmarshal([]byte(cfg.Rules), &rules); err == nil {
-			input.Rules = rules
+		_ = json.Unmarshal([]byte(cfg.Rules), &rules)
+	}
+
+	// Default: scan with empty branch (project default branch)
+	if len(branches) == 0 {
+		branches = []string{""}
+	}
+
+	var workflowIDs []string
+	for _, branch := range branches {
+		input := activity.EntropyScanInput{
+			ProjectID: projectID,
+			TenantID:  tenantID,
+			Branch:    branch,
+			AutoFix:   cfg.AutoFix,
+			Rules:     rules,
 		}
+
+		wfID := fmt.Sprintf("entropy-scan-%d-%d", projectID, time.Now().UnixNano())
+		opts := client.StartWorkflowOptions{
+			ID:        wfID,
+			TaskQueue: "forge-task-queue",
+		}
+
+		run, err := s.temporal.ExecuteWorkflow(ctx, opts, "EntropyScanWorkflow", input)
+		if err != nil {
+			slog.Error("failed to start entropy scan", "project_id", projectID, "branch", branch, "error", err)
+			continue
+		}
+
+		slog.Info("entropy scan triggered",
+			"project_id", projectID,
+			"branch", branch,
+			"workflow_id", run.GetID(),
+		)
+		workflowIDs = append(workflowIDs, run.GetID())
 	}
 
-	workflowID := fmt.Sprintf("entropy-scan-%d-%d", projectID, tenantID)
-	opts := client.StartWorkflowOptions{
-		ID:        workflowID,
-		TaskQueue: "forge-task-queue",
+	if len(workflowIDs) == 0 {
+		return nil, fmt.Errorf("failed to start any entropy scan workflows")
 	}
-
-	run, err := s.temporal.ExecuteWorkflow(ctx, opts, "EntropyScanWorkflow", input)
-	if err != nil {
-		return "", fmt.Errorf("start entropy scan: %w", err)
-	}
-
-	slog.Info("entropy scan triggered",
-		"project_id", projectID,
-		"workflow_id", run.GetID(),
-	)
-	return run.GetID(), nil
+	return workflowIDs, nil
 }

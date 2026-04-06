@@ -87,6 +87,67 @@ async def call_anthropic(
     )
 
 
+def _convert_messages_for_openai(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert Anthropic-format messages to OpenAI-compatible format.
+
+    Handles:
+    - assistant messages with content blocks → assistant with tool_calls
+    - user messages with tool_result blocks → separate tool messages
+    - Regular text messages pass through unchanged
+    """
+    result = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+
+        # Regular string content — pass through
+        if isinstance(content, str):
+            result.append(msg)
+            continue
+
+        # Assistant message with Anthropic-style content blocks
+        if role == "assistant" and isinstance(content, list):
+            text_parts = []
+            oai_tool_calls = []
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        text_parts.append(block.get("text", ""))
+                    elif block.get("type") == "tool_use":
+                        oai_tool_calls.append({
+                            "id": block.get("id", ""),
+                            "type": "function",
+                            "function": {
+                                "name": block.get("name", ""),
+                                "arguments": json.dumps(block.get("input", {})),
+                            },
+                        })
+            oai_msg: dict[str, Any] = {"role": "assistant", "content": "\n".join(text_parts) or None}
+            if oai_tool_calls:
+                oai_msg["tool_calls"] = oai_tool_calls
+            result.append(oai_msg)
+            continue
+
+        # User message with tool_result blocks → separate tool messages
+        if role == "user" and isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    result.append({
+                        "role": "tool",
+                        "tool_call_id": block.get("tool_use_id", ""),
+                        "content": block.get("content", ""),
+                    })
+                else:
+                    # Non-tool content in user message — pass as text
+                    result.append({"role": "user", "content": str(block)})
+            continue
+
+        # Fallback: convert content to string
+        result.append({"role": role, "content": str(content)})
+
+    return result
+
+
 async def _call_openai_compatible(
     api_key: str,
     model: str,
@@ -103,7 +164,9 @@ async def _call_openai_compatible(
         kwargs["base_url"] = base_url
     client = openai.AsyncOpenAI(**kwargs)
 
-    full_messages = [{"role": "system", "content": system}] + messages
+    # Convert Anthropic-format messages to OpenAI format (handles tool rounds)
+    converted = _convert_messages_for_openai(messages)
+    full_messages = [{"role": "system", "content": system}] + converted
     create_kwargs: dict[str, Any] = {
         "model": model,
         "max_tokens": MAX_TOKENS,

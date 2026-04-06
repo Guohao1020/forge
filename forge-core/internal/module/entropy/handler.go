@@ -118,10 +118,13 @@ func (h *Handler) TriggerScan(c *gin.Context) {
 	tid, _ := c.Get("tenant_id")
 	tenantID, _ := tid.(int64)
 
-	workflowID, err := h.service.TriggerScan(c.Request.Context(), projectID, tenantID)
+	var req TriggerScanRequest
+	_ = c.ShouldBindJSON(&req) // optional body
+
+	workflowIDs, err := h.service.TriggerScan(c.Request.Context(), projectID, tenantID, req.Branches)
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	response.OK(c, gin.H{"workflow_id": workflowID, "status": "scan_started"})
+	response.OK(c, gin.H{"workflow_ids": workflowIDs, "status": "scan_started"})
 }

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Plus, Tag } from "lucide-react";
+import { Plus, Tag, FileText } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import {
   listVersions,
   createVersion,
@@ -121,10 +122,14 @@ export default function VersionListPage() {
 
       {/* Version list */}
       {versions.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground">
-          <Tag size={48} className="mx-auto mb-4 opacity-30" />
-          <p className="text-lg mb-1">暂无版本</p>
-          <p className="text-sm">创建一个版本来组织你的需求迭代</p>
+        <div className="flex flex-col items-center justify-center py-20 rounded-xl border border-border bg-card">
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-3 bg-primary/10">
+            <Tag className="h-6 w-6 text-primary" />
+          </div>
+          <h3 className="text-base font-medium mb-1">暂无版本</h3>
+          <p className="text-sm text-muted-foreground">
+            任务完成后自动创建
+          </p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -151,6 +156,14 @@ export default function VersionListPage() {
                     >
                       {config.label}
                     </span>
+                    {(v.status === "PLANNING" || v.status === "IN_PROGRESS") && (
+                      <Badge
+                        variant="secondary"
+                        className="text-[10px] bg-purple-500/10 text-purple-400 border-purple-500/20"
+                      >
+                        草稿
+                      </Badge>
+                    )}
                   </div>
                   <span className="text-xs text-muted-foreground">
                     {new Date(v.createdAt).toLocaleDateString("zh-CN")}
@@ -158,9 +171,23 @@ export default function VersionListPage() {
                 </div>
 
                 {v.description && (
-                  <p className="text-sm text-muted-foreground mb-3 truncate">
-                    {v.description}
-                  </p>
+                  <div className="mb-3">
+                    {v.status === "RELEASED" ? (
+                      <div className="text-sm text-muted-foreground">
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground/60 mb-1">
+                          <FileText className="h-3 w-3" />
+                          <span>变更日志</span>
+                        </div>
+                        <p className="text-sm text-muted-foreground whitespace-pre-line line-clamp-3">
+                          {v.description}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground truncate">
+                        {v.description}
+                      </p>
+                    )}
+                  </div>
                 )}
 
                 <div className="flex items-center gap-4">

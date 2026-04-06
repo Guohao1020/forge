@@ -2,11 +2,12 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { Rocket, Server, Clock, Play, CheckCircle2, XCircle, Loader2, RotateCcw, Tag } from "lucide-react";
+import { Rocket, Server, Clock, Play, CheckCircle2, XCircle, Loader2, RotateCcw, Tag, ChevronDown, Package, AlertTriangle, Undo2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
-import { listDeployRecords, triggerDeploy, type DeployRecord } from "@/lib/deploy";
+import { listDeployRecords, triggerDeploy, rollbackDeploy, type DeployRecord } from "@/lib/deploy";
+import { listArtifacts, type Artifact } from "@/lib/artifact";
 
 interface Environment {
   id: number;
@@ -42,6 +43,7 @@ const DEPLOY_STATUS_ICON: Record<string, React.ReactNode> = {
   DEPLOYED: <CheckCircle2 className="h-3 w-3 text-emerald-400" />,
   FAILED: <XCircle className="h-3 w-3 text-red-400" />,
   ROLLED_BACK: <RotateCcw className="h-3 w-3 text-yellow-400" />,
+  SIMULATED: <Package className="h-3 w-3 text-purple-400" />,
 };
 
 const DEPLOY_STATUS_LABELS: Record<string, string> = {
@@ -50,6 +52,11 @@ const DEPLOY_STATUS_LABELS: Record<string, string> = {
   DEPLOYED: "已部署",
   FAILED: "失败",
   ROLLED_BACK: "已回滚",
+  SIMULATED: "模拟部署",
+};
+
+const DEPLOY_STATUS_BADGE_STYLES: Record<string, string> = {
+  SIMULATED: "bg-purple-500/10 text-purple-400 border-purple-500/20",
 };
 
 function formatTime(dateStr?: string): string {
@@ -134,9 +141,15 @@ function DeployHistory({ projectId, envId }: { projectId: string; envId: number 
         <div key={rec.id} className="flex items-center gap-2 text-xs">
           {DEPLOY_STATUS_ICON[rec.status] || <Clock className="h-3 w-3 text-muted-foreground/40" />}
           <code className="font-mono text-muted-foreground">{rec.version}</code>
-          <span className="text-muted-foreground/40">
-            {DEPLOY_STATUS_LABELS[rec.status] || rec.status}
-          </span>
+          {rec.status === "SIMULATED" ? (
+            <Badge variant="secondary" className={`text-[9px] px-1.5 py-0 ${DEPLOY_STATUS_BADGE_STYLES.SIMULATED}`}>
+              模拟部署
+            </Badge>
+          ) : (
+            <span className="text-muted-foreground/40">
+              {DEPLOY_STATUS_LABELS[rec.status] || rec.status}
+            </span>
+          )}
           <span className="text-muted-foreground/30 ml-auto">{formatTime(rec.startedAt)}</span>
         </div>
       ))}
@@ -151,6 +164,8 @@ export default function DeployPage() {
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [deploying, setDeploying] = useState<number | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [artifactsLoading, setArtifactsLoading] = useState(false);
 
   const fetchEnvironments = useCallback(async () => {
     try {
@@ -167,26 +182,60 @@ export default function DeployPage() {
     }
   }, [projectId]);
 
+  const fetchArtifacts = useCallback(async () => {
+    try {
+      setArtifactsLoading(true);
+      const arts = await listArtifacts(projectId);
+      setArtifacts(arts.filter((a) => a.status === "READY"));
+    } catch {
+      setArtifacts([]);
+    } finally {
+      setArtifactsLoading(false);
+    }
+  }, [projectId]);
+
   useEffect(() => {
     fetchEnvironments();
-  }, [fetchEnvironments]);
+    fetchArtifacts();
+  }, [fetchEnvironments, fetchArtifacts]);
 
   const [deployDialogEnv, setDeployDialogEnv] = useState<number | null>(null);
-  const [deployVersion, setDeployVersion] = useState("");
+  const [selectedArtifactId, setSelectedArtifactId] = useState<number | null>(null);
+  const [showArtifactDropdown, setShowArtifactDropdown] = useState(false);
+
+  // Rollback state
+  const [rollbackEnvId, setRollbackEnvId] = useState<number | null>(null);
+  const [rollingBack, setRollingBack] = useState<number | null>(null);
+
+  const selectedArtifact = artifacts.find((a) => a.id === selectedArtifactId) || null;
 
   const handleDeploy = async (envId: number) => {
-    if (!deployVersion.trim()) return;
+    if (!selectedArtifact) return;
     try {
       setDeploying(envId);
-      await triggerDeploy(projectId, envId, deployVersion.trim());
+      await triggerDeploy(projectId, envId, selectedArtifact.version, selectedArtifact.id);
       setDeployDialogEnv(null);
-      setDeployVersion("");
+      setSelectedArtifactId(null);
       setRefreshKey((k) => k + 1);
       await fetchEnvironments();
     } catch (err) {
       console.error("Deploy failed:", err);
     } finally {
       setDeploying(null);
+    }
+  };
+
+  const handleRollback = async (envId: number) => {
+    try {
+      setRollingBack(envId);
+      await rollbackDeploy(projectId, envId);
+      setRollbackEnvId(null);
+      setRefreshKey((k) => k + 1);
+      await fetchEnvironments();
+    } catch (err) {
+      console.error("Rollback failed:", err);
+    } finally {
+      setRollingBack(null);
     }
   };
 
@@ -216,6 +265,7 @@ export default function DeployPage() {
         {environments.map((env) => {
           const isActive = env.status === "ACTIVE";
           const isDeploying = deploying === env.id;
+          const hasPreviousDeploy = !!env.last_deploy_at;
           return (
             <div
               key={env.id}
@@ -267,30 +317,118 @@ export default function DeployPage() {
                 </span>
               </div>
 
+              {/* Rollback confirmation dialog */}
+              {rollbackEnvId === env.id && (
+                <div className="space-y-2 p-2 rounded-lg border border-yellow-500/30 bg-yellow-500/5 mb-3">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-3 w-3 text-yellow-400" />
+                    <span className="text-xs text-yellow-400 font-medium">确认回滚</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    将回滚到上一个部署版本，当前版本将被替换。
+                  </p>
+                  <div className="flex gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1 text-xs h-7 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
+                      disabled={rollingBack === env.id}
+                      onClick={() => handleRollback(env.id)}
+                    >
+                      {rollingBack === env.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "确认回滚"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-xs h-7"
+                      onClick={() => setRollbackEnvId(null)}
+                    >
+                      取消
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               {/* Deploy button / dialog */}
               {deployDialogEnv === env.id ? (
                 <div className="space-y-2 p-2 rounded-lg border border-primary/30 bg-primary/5">
                   <div className="flex items-center gap-2">
-                    <Tag className="h-3 w-3 text-primary" />
-                    <span className="text-xs text-muted-foreground">部署版本</span>
+                    <Package className="h-3 w-3 text-primary" />
+                    <span className="text-xs text-muted-foreground">选择制品</span>
                   </div>
-                  <input
-                    type="text"
-                    value={deployVersion}
-                    onChange={(e) => setDeployVersion(e.target.value)}
-                    placeholder="例如: v1.0.0"
-                    className="w-full bg-muted/50 border border-border rounded px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
-                    autoFocus
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleDeploy(env.id);
-                      if (e.key === "Escape") { setDeployDialogEnv(null); setDeployVersion(""); }
-                    }}
-                  />
+
+                  {/* Artifact dropdown */}
+                  {artifactsLoading ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground/60 py-2">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      加载制品中...
+                    </div>
+                  ) : artifacts.length === 0 ? (
+                    <div className="text-xs text-muted-foreground/60 py-2 text-center">
+                      <Package className="h-4 w-4 mx-auto mb-1 opacity-40" />
+                      暂无制品，请先完成任务
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        className="w-full flex items-center justify-between bg-muted/50 border border-border rounded px-2 py-1.5 text-xs text-foreground hover:border-primary/50 transition-colors"
+                        onClick={() => setShowArtifactDropdown(!showArtifactDropdown)}
+                      >
+                        {selectedArtifact ? (
+                          <span className="flex items-center gap-1.5 truncate">
+                            <Package className="h-3 w-3 text-primary shrink-0" />
+                            <span className="font-mono">{selectedArtifact.name}</span>
+                            <span className="text-muted-foreground/60">
+                              {selectedArtifact.version}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground/50">选择要部署的制品...</span>
+                        )}
+                        <ChevronDown className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+                      </button>
+
+                      {showArtifactDropdown && (
+                        <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                          {artifacts.map((art) => (
+                            <button
+                              key={art.id}
+                              type="button"
+                              className={`w-full text-left px-2.5 py-2 text-xs hover:bg-muted/50 transition-colors border-b border-border/50 last:border-0 ${
+                                selectedArtifactId === art.id ? "bg-primary/10" : ""
+                              }`}
+                              onClick={() => {
+                                setSelectedArtifactId(art.id);
+                                setShowArtifactDropdown(false);
+                              }}
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <Package className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+                                <span className="font-medium text-foreground truncate">
+                                  {art.name}
+                                </span>
+                                <code className="font-mono text-muted-foreground/60 ml-auto shrink-0">
+                                  {art.version}
+                                </code>
+                              </div>
+                              {art.registryUrl && (
+                                <p className="text-[10px] text-muted-foreground/40 font-mono truncate mt-0.5 ml-[18px]">
+                                  {art.registryUrl}
+                                </p>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="flex gap-1.5">
                     <Button
                       size="sm"
                       className="flex-1 text-xs h-7"
-                      disabled={isDeploying || !deployVersion.trim()}
+                      disabled={isDeploying || !selectedArtifact}
                       onClick={() => handleDeploy(env.id)}
                     >
                       {isDeploying ? <Loader2 className="h-3 w-3 animate-spin" /> : "确认部署"}
@@ -299,22 +437,45 @@ export default function DeployPage() {
                       size="sm"
                       variant="ghost"
                       className="text-xs h-7"
-                      onClick={() => { setDeployDialogEnv(null); setDeployVersion(""); }}
+                      onClick={() => {
+                        setDeployDialogEnv(null);
+                        setSelectedArtifactId(null);
+                        setShowArtifactDropdown(false);
+                      }}
                     >
                       取消
                     </Button>
                   </div>
                 </div>
               ) : (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full text-xs"
-                  onClick={() => setDeployDialogEnv(env.id)}
-                >
-                  <Play className="h-3 w-3 mr-1.5" />
-                  部署
-                </Button>
+                <div className="flex gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 text-xs"
+                    onClick={() => {
+                      setDeployDialogEnv(env.id);
+                      setRollbackEnvId(null);
+                    }}
+                  >
+                    <Play className="h-3 w-3 mr-1.5" />
+                    部署
+                  </Button>
+                  {hasPreviousDeploy && rollbackEnvId !== env.id && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs text-yellow-400 border-yellow-500/20 hover:bg-yellow-500/10"
+                      onClick={() => {
+                        setRollbackEnvId(env.id);
+                        setDeployDialogEnv(null);
+                      }}
+                    >
+                      <Undo2 className="h-3 w-3 mr-1" />
+                      回滚
+                    </Button>
+                  )}
+                </div>
               )}
 
               {/* Deploy history timeline */}

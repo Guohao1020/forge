@@ -111,3 +111,28 @@ func (h *Handler) Release(c *gin.Context) {
 	}
 	response.OK(c, v)
 }
+
+// POST /api/projects/:id/versions/:vid/scan
+func (h *Handler) TriggerScan(c *gin.Context) {
+	projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid project id")
+		return
+	}
+	versionID, err := strconv.ParseInt(c.Param("vid"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid version id")
+		return
+	}
+	tenantID, _ := c.Get("tenant_id")
+	tid, _ := tenantID.(int64)
+	userID, _ := c.Get("user_id")
+	uid, _ := userID.(int64)
+
+	triggered, err := h.svc.TriggerVersionScan(c.Request.Context(), tid, projectID, versionID, uid)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	response.OK(c, gin.H{"status": "scan_started", "scans": triggered})
+}
