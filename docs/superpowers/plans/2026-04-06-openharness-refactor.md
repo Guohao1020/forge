@@ -2,13 +2,82 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 将 Forge AI Worker 从固定管线架构重构为 OpenHarness 风格的可编程 Harness 架构，并增加 Web 端 Claude Code 交互能力（流式对话、工具可视化、多轮 Agent Loop）。
+**Goal:** 将 Forge 从固定 7 步流水线架构重构为 OpenHarness 风格的**对话式 Harness 环境**。任务不再是"走管线"，而是"在 Harness 环境中对话式完成"。AI 生成的代码必须编译通过才能推送。
 
-**Architecture:** 参照 HKUDS/OpenHarness 的核心子系统设计（Engine + Tools + Skills + Hooks + Permissions），将其架构映射到 Forge 的 Temporal + Go + Python 技术栈上。保留 Temporal 作为进程间编排器，在 Python 层建立可编程 Harness 基础设施。前端增加实时 Agent 交互界面。MCP/Coordinator/Plugins/Memory 作为后续扩展，本期不实现。
+**Architecture:** 去掉 Temporal，改为 OpenHarness 的 QueryEngine (Python 进程内 Agent Loop) + Redis Pub/Sub (SSE 推送) + HTTP API (Go 触发 Python)。任务页面从 3 列布局改为 **Chat + 当前步骤指示器**，取消固定 7 步 timeline。
 
 **Dependencies added:** `pydantic>=2.0.0`, `pyyaml>=6.0`
 
-**Tech Stack:** Python 3.12 + Pydantic + asyncio + Temporal SDK + Redis Pub/Sub + SSE + Next.js + shadcn/ui
+**Tech Stack:** Python 3.12 + Pydantic + asyncio + Redis Pub/Sub + SSE + Next.js + shadcn/ui
+
+---
+
+## 架构决策记录
+
+### 决策 1: 去掉 Temporal
+
+**原因**: OpenHarness 模式下，任务就是一次完整的 Agent 对话。Agent Loop 在 Python 进程内运行（QueryEngine），不需要跨进程编排。Temporal 增加了复杂性（2 个 Docker 容器、Go/Python 跨语言活动路由、信号机制），但在 chat 模式下这些都不需要。
+
+**替代方案**:
+- **AI 任务编排**: Python QueryEngine 进程内循环（替代 TaskWorkflow）
+- **异步触发**: Go → HTTP 调用 Python `/run` 端点（替代 Temporal Activity 路由）
+- **状态持久化**: PostgreSQL 直接写（替代 Temporal 状态管理）
+- **长任务**: Python 后台 asyncio task + Redis 进度推送（替代 Temporal heartbeat）
+
+**影响范围**: 25 个 Go 文件、8 个 Python 文件引用 Temporal。分两阶段迁移：
+1. 先建 OpenHarness 引擎 + HTTP API（新路径）
+2. 再逐步废弃 Temporal 路径（旧路径保留一段时间）
+
+### 决策 2: AI 生成代码必须编译通过
+
+**规范**: 代码生成后，必须在真实环境中执行编译验证，失败则 AI 自动修复，循环直到通过或超过重试上限。
+
+**流程**:
+```
+AI 生成代码 → 真实编译(npm run build / go build / pytest) → 失败 → AI 修复 → 重新编译 → ... → 通过 → Push → Deploy
+```
+
+**实现**: 作为 Hook 注入 Agent Loop 的 `POST_GENERATION` 钩子。验证命令从项目画像的 **Build Skill** 中获取。
+
+### 决策 3: 项目画像增加 Build Skill
+
+**Project Profile 新增维度**: `build_skill` — 记录项目的编译、测试、部署命令。
+
+```json
+{
+  "build_skill": {
+    "language": "typescript",
+    "build_command": "npm run build",
+    "test_command": "npm test",
+    "lint_command": "npx eslint . --ext .ts,.tsx",
+    "install_command": "npm ci",
+    "dockerfile_template": "node-nextjs",
+    "dependency_file": "package.json",
+    "output_dir": ".next",
+    "env_vars": ["DATABASE_URL", "REDIS_URL"],
+    "pre_build_hooks": ["npm ci"],
+    "post_build_hooks": []
+  }
+}
+```
+
+**来源**: 项目接入时自动检测（tech stack detection），也可手动配置。这是**必须生成和维护的**画像维度，不是可选的。
+
+### 决策 4: 任务页面改为 Chat 模式
+
+**现在**: 3 列布局（step timeline | chat | action panel），7 步固定流水线
+
+**改为**: **全页面 Chat + 顶部步骤指示器**
+- 顶部: 当前步骤标签（动态预测的，不是固定 7 步）
+- 主体: Claude Code 风格的对话流（文本 + 工具调用卡片 + 编译结果）
+- 底部: 输入框 + 状态栏（Token 用量、当前模型）
+
+步骤不是预定义的固定列表，而是 Agent 根据当前状态**预测下一步**。例如：
+- 编译失败 → 下一步是"修复编译错误"（不是固定的"测试"）
+- Review 发现安全问题 → 下一步是"修复安全漏洞"（不是固定的"部署"）
+- 所有验证通过 → 下一步是"推送到 GitHub"
+
+**需要设计师重新设计**: 这部分 UI 变化很大，需要运行 `/plan-design-review` 做详细设计。
 
 ---
 
@@ -2687,18 +2756,535 @@ git commit -m "test(harness): integration tests — tool→hook→permission→e
 
 ---
 
+---
+
+### Task 12: Build Skill — 项目画像编译能力维度
+
+**Files:**
+- Modify: `forge-core/internal/module/profile/model.go` — 新增 `build_skill` 维度
+- Modify: `forge-core/internal/module/project/detector.go` — 自动检测 build 命令
+- Create: `ai-worker/src/openharness/hooks/builtin/build_verify_hook.py` — 编译验证钩子
+- Test: `ai-worker/tests/test_build_verify.py`
+
+- [ ] **Step 1: 新增 build_skill 画像维度**
+
+在 `forge-core/internal/module/profile/model.go` 的 Profile Keys 常量中添加:
+
+```go
+KeyBuildSkill = "build_skill"
+```
+
+Build Skill 结构:
+```json
+{
+  "language": "typescript",
+  "build_command": "npm run build",
+  "test_command": "npm test",
+  "lint_command": "npx eslint . --ext .ts,.tsx",
+  "install_command": "npm ci",
+  "dockerfile_template": "node-nextjs",
+  "dependency_file": "package.json",
+  "output_dir": ".next",
+  "pre_build_hooks": ["npm ci"],
+  "post_build_hooks": []
+}
+```
+
+- [ ] **Step 2: 自动检测 build 命令**
+
+在 `detector.go` 中添加 `DetectBuildSkill()`:
+
+```go
+func DetectBuildSkill(techStack map[string]interface{}) map[string]interface{} {
+    languages := techStack["languages"].([]interface{})
+    skill := map[string]interface{}{}
+
+    for _, lang := range languages {
+        switch lang.(string) {
+        case "go":
+            skill["language"] = "go"
+            skill["build_command"] = "go build ./..."
+            skill["test_command"] = "go test ./..."
+            skill["lint_command"] = "golangci-lint run"
+            skill["install_command"] = "go mod download"
+            skill["dockerfile_template"] = "go-alpine"
+            skill["dependency_file"] = "go.mod"
+        case "typescript", "javascript":
+            skill["language"] = "typescript"
+            skill["build_command"] = "npm run build"
+            skill["test_command"] = "npm test"
+            skill["lint_command"] = "npx eslint . --ext .ts,.tsx"
+            skill["install_command"] = "npm ci"
+            skill["dependency_file"] = "package.json"
+        case "python":
+            skill["language"] = "python"
+            skill["build_command"] = "python -m py_compile"
+            skill["test_command"] = "pytest"
+            skill["lint_command"] = "ruff check ."
+            skill["install_command"] = "pip install -r requirements.txt"
+            skill["dependency_file"] = "requirements.txt"
+        case "java":
+            skill["language"] = "java"
+            skill["build_command"] = "mvn compile"
+            skill["test_command"] = "mvn test"
+            skill["lint_command"] = "mvn checkstyle:check"
+            skill["install_command"] = "mvn dependency:resolve"
+            skill["dependency_file"] = "pom.xml"
+        }
+        if len(skill) > 0 {
+            break // Use first detected language
+        }
+    }
+    return skill
+}
+```
+
+- [ ] **Step 3: 实现编译验证钩子**
+
+```python
+# ai-worker/src/openharness/hooks/builtin/build_verify_hook.py
+"""Build verification hook — runs real compilation after code generation.
+
+AI generates code → this hook runs the build command → if fail → returns
+error with build output so the Agent can auto-fix → loop until pass.
+
+This is the core of the "AI Engineering Loop":
+  GENERATE → VERIFY → FAIL → FIX → VERIFY → ... → PASS → PUSH
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import tempfile
+import shutil
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+from ..events import HookEvent
+from ..executor import HookResult
+from src.config import settings
+
+logger = logging.getLogger(__name__)
+
+# Max seconds for a build command
+BUILD_TIMEOUT = 120
+
+
+class BuildVerifyHook:
+    """POST_GENERATION hook that compiles generated code in a sandbox."""
+
+    event = HookEvent.POST_GENERATION
+    priority = 5  # Run before constraint hook
+
+    async def execute(self, payload: dict[str, Any]) -> HookResult:
+        project_id = payload.get("project_id")
+        files = payload.get("files", [])  # [{path, content, language}]
+
+        if not project_id or not files:
+            return HookResult(hook_type="build_verify", success=True,
+                            output="No files to verify")
+
+        # Fetch build skill from project profile
+        build_skill = await self._fetch_build_skill(project_id)
+        if not build_skill:
+            return HookResult(hook_type="build_verify", success=True,
+                            output="No build_skill profile — skipping verification")
+
+        build_cmd = build_skill.get("build_command")
+        install_cmd = build_skill.get("install_command")
+        if not build_cmd:
+            return HookResult(hook_type="build_verify", success=True,
+                            output="No build_command configured — skipping")
+
+        # Write files to temp directory and run build
+        try:
+            result = await self._run_build(files, build_cmd, install_cmd)
+        except asyncio.TimeoutError:
+            return HookResult(
+                hook_type="build_verify", success=False, output="",
+                blocked=True,
+                reason=f"Build timed out after {BUILD_TIMEOUT}s",
+            )
+        except Exception as e:
+            return HookResult(
+                hook_type="build_verify", success=False, output=str(e),
+                blocked=True, reason=f"Build setup error: {e}",
+            )
+
+        if result["success"]:
+            return HookResult(
+                hook_type="build_verify", success=True,
+                output=f"Build passed: {build_cmd}",
+            )
+        else:
+            # Build failed — block and return error output for AI to fix
+            return HookResult(
+                hook_type="build_verify", success=False,
+                output=result["output"],
+                blocked=True,
+                reason=(
+                    f"Build failed: {build_cmd}\n\n"
+                    f"--- BUILD OUTPUT ---\n{result['output']}\n"
+                    f"--- END OUTPUT ---\n\n"
+                    f"Fix the compilation errors above and regenerate the code."
+                ),
+            )
+
+    async def _fetch_build_skill(self, project_id: int) -> dict | None:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(
+                    f"{settings.forge_api_url}/api/projects/{project_id}/profiles/build_skill",
+                    headers={"Authorization": f"Bearer {settings.forge_api_token}"},
+                )
+                if resp.status_code == 200:
+                    return resp.json().get("data", {}).get("profile_value", {})
+        except Exception as e:
+            logger.warning("Failed to fetch build_skill: %s", e)
+        return None
+
+    async def _run_build(
+        self, files: list[dict], build_cmd: str, install_cmd: str | None
+    ) -> dict:
+        """Write files to temp dir, run install + build, return result."""
+        work_dir = Path(tempfile.mkdtemp(prefix="forge-build-"))
+
+        try:
+            # Write generated files
+            for f in files:
+                file_path = work_dir / f["path"]
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text(f["content"], encoding="utf-8")
+
+            # Run install command (npm ci, go mod download, etc.)
+            if install_cmd:
+                proc = await asyncio.create_subprocess_shell(
+                    install_cmd, cwd=str(work_dir),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                stdout, _ = await asyncio.wait_for(
+                    proc.communicate(), timeout=BUILD_TIMEOUT
+                )
+                if proc.returncode != 0:
+                    return {
+                        "success": False,
+                        "output": f"Install failed ({install_cmd}):\n{stdout.decode()}"
+                    }
+
+            # Run build command
+            proc = await asyncio.create_subprocess_shell(
+                build_cmd, cwd=str(work_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(), timeout=BUILD_TIMEOUT
+            )
+
+            return {
+                "success": proc.returncode == 0,
+                "output": stdout.decode(errors="replace"),
+            }
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
+```
+
+- [ ] **Step 4: Write tests**
+
+```python
+# tests/test_build_verify.py
+import pytest
+from src.openharness.hooks.builtin.build_verify_hook import BuildVerifyHook
+
+@pytest.mark.asyncio
+async def test_build_verify_no_files():
+    hook = BuildVerifyHook()
+    result = await hook.execute({"project_id": 1, "files": []})
+    assert result.success
+    assert "No files" in result.output
+
+@pytest.mark.asyncio
+async def test_build_verify_no_profile():
+    hook = BuildVerifyHook()
+    # Without a running forge-core, _fetch_build_skill returns None
+    result = await hook.execute({
+        "project_id": 999,
+        "files": [{"path": "main.py", "content": "print('hello')", "language": "python"}],
+    })
+    assert result.success
+    assert "skipping" in result.output.lower()
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add forge-core/internal/module/profile/model.go forge-core/internal/module/project/detector.go \
+       ai-worker/src/openharness/hooks/builtin/build_verify_hook.py ai-worker/tests/test_build_verify.py
+git commit -m "feat(harness): Build Skill profile dimension + compilation verification hook"
+```
+
+---
+
+### Task 13: Temporal 去除 — HTTP API 替代
+
+**Files:**
+- Create: `ai-worker/src/api_server.py` — FastAPI/uvicorn HTTP 入口
+- Modify: `ai-worker/src/worker.py` — 改为 HTTP 服务器模式
+- Modify: `forge-core/cmd/forge-core/main.go` — 去掉 Temporal 初始化
+- Modify: `forge-core/internal/module/conversation/service.go` — HTTP 调用替代 Temporal
+- Modify: `docker-compose.dev.yml` — 移除 temporal + temporal-ui 容器
+
+**设计**: Go → HTTP POST → Python `/api/run` 端点 → QueryEngine 执行 → Redis Pub/Sub → Go SSE → 前端
+
+- [ ] **Step 1: Create Python HTTP API server**
+
+```python
+# ai-worker/src/api_server.py
+"""HTTP API server — replaces Temporal Worker.
+
+Go backend calls these endpoints instead of Temporal activities.
+QueryEngine runs in-process, streams events via Redis pub/sub.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from contextlib import asynccontextmanager
+
+import redis.asyncio as aioredis
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+from src.config import settings
+from src.openharness.engine.query_engine import QueryEngine
+from src.openharness.api.providers.router_adapter import ModelRouterAdapter
+from src.openharness.tools.base import ToolRegistry
+from src.openharness.tools.context_tools import register_context_tools
+from src.openharness.hooks.loader import HookRegistry
+from src.openharness.hooks.executor import HookExecutor
+from src.openharness.skills.loader import load_skill_registry
+from src.models.router import ModelRouter, Purpose
+from src.context.cache import ContextCache
+from src.openharness.engine.stream_events import (
+    AssistantTextDelta, AssistantTurnComplete,
+    ToolExecutionStarted, ToolExecutionCompleted, ErrorEvent,
+)
+
+logger = logging.getLogger(__name__)
+
+# Global state
+_engines: dict[str, QueryEngine] = {}  # session_id -> engine
+_skill_registry = None
+_redis: aioredis.Redis | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _skill_registry, _redis
+    _skill_registry = load_skill_registry("skills/")
+    _redis = aioredis.from_url(
+        f"redis://:{settings.redis_password}@{settings.redis_host}:{settings.redis_port}"
+    )
+    logger.info("AI Worker HTTP server started, %d skills loaded", len(_skill_registry.list_skills()))
+    yield
+    if _redis:
+        await _redis.aclose()
+
+
+app = FastAPI(title="Forge AI Worker", lifespan=lifespan)
+
+
+class RunRequest(BaseModel):
+    project_id: int
+    session_id: str
+    message: str
+    purpose: str = "generate"
+
+
+class RunResponse(BaseModel):
+    session_id: str
+    response: str
+    tokens_used: int
+    tool_calls_made: int
+
+
+@app.post("/api/run", response_model=RunResponse)
+async def run_agent(req: RunRequest):
+    """Run a single agent turn. Streams events via Redis pub/sub."""
+    # Get or create engine for this session
+    engine = await _get_or_create_engine(req.session_id, req.project_id, req.purpose)
+
+    channel = f"agent:stream:{req.project_id}"
+    full_response = ""
+    tool_calls = 0
+
+    async for event in engine.submit_message(req.message):
+        # Publish each event to Redis for SSE
+        event_data = _serialize_event(event)
+        if event_data and _redis:
+            await _redis.publish(channel, json.dumps(event_data))
+
+        if isinstance(event, AssistantTextDelta):
+            full_response += event.text
+        elif isinstance(event, ToolExecutionStarted):
+            tool_calls += 1
+
+    return RunResponse(
+        session_id=req.session_id,
+        response=full_response,
+        tokens_used=engine.total_usage.total_tokens,
+        tool_calls_made=tool_calls,
+    )
+
+
+@app.delete("/api/sessions/{session_id}")
+async def clear_session(session_id: str):
+    """Clear engine state for a session."""
+    if session_id in _engines:
+        _engines[session_id].clear()
+        del _engines[session_id]
+    return {"ok": True}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "skills": len(_skill_registry.list_skills()) if _skill_registry else 0}
+
+
+async def _get_or_create_engine(session_id: str, project_id: int, purpose: str) -> QueryEngine:
+    if session_id in _engines:
+        return _engines[session_id]
+
+    # Build context
+    cache = ContextCache()
+    context = await cache.get_or_build(project_id, purpose)
+
+    # Build tool registry
+    registry = ToolRegistry()
+    register_context_tools(registry, context.project_profiles, project_id)
+
+    # Build API adapter
+    router = ModelRouter()
+    purpose_enum = Purpose[purpose.upper()] if purpose.upper() in Purpose.__members__ else Purpose.GENERATE
+    api_client = ModelRouterAdapter(router, purpose=purpose_enum)
+
+    # Build hook executor
+    hook_registry = HookRegistry()
+    hook_executor = HookExecutor(hook_registry)
+
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=registry,
+        model="auto",
+        system_prompt=context.to_system_prompt(),
+        max_turns=20,
+        hook_executor=hook_executor,
+    )
+
+    _engines[session_id] = engine
+    return engine
+
+
+def _serialize_event(event) -> dict | None:
+    if isinstance(event, AssistantTextDelta):
+        return {"type": "text_delta", "text": event.text}
+    elif isinstance(event, AssistantTurnComplete):
+        return {"type": "turn_complete", "input_tokens": event.usage.input_tokens, "output_tokens": event.usage.output_tokens}
+    elif isinstance(event, ToolExecutionStarted):
+        return {"type": "tool_started", "tool_name": event.tool_name, "tool_input": event.tool_input}
+    elif isinstance(event, ToolExecutionCompleted):
+        return {"type": "tool_completed", "tool_name": event.tool_name, "output": event.output[:2000], "is_error": event.is_error}
+    elif isinstance(event, ErrorEvent):
+        return {"type": "error", "message": event.message}
+    return None
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8090)
+```
+
+- [ ] **Step 2: Update docker-compose — 移除 Temporal，添加 ai-worker HTTP**
+
+移除 `temporal` 和 `temporal-ui` services。AI Worker 改为 HTTP 服务器:
+
+```yaml
+ai-worker:
+  build: ./ai-worker
+  command: python -m src.api_server
+  ports:
+    - "8090:8090"
+  environment:
+    - REDIS_HOST=redis
+    - FORGE_API_URL=http://forge-core:8080
+```
+
+- [ ] **Step 3: Update Go backend — HTTP 调用替代 Temporal**
+
+`conversation/service.go` 中的 `ExecuteWorkflow` 改为 HTTP POST:
+
+```go
+// 替换: temporalClient.ExecuteWorkflow(ctx, ..., "analyze_requirement", input)
+// 改为:
+resp, err := http.Post("http://ai-worker:8090/api/run", "application/json",
+    bytes.NewReader(jsonBody))
+```
+
+- [ ] **Step 4: Add `fastapi` and `uvicorn` to requirements.txt**
+
+```
+fastapi>=0.115.0
+uvicorn>=0.34.0
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "refactor: remove Temporal, replace with HTTP API + QueryEngine"
+```
+
+---
+
+### Task 14: 前端重设计 — Chat 模式任务页 (需 /plan-design-review)
+
+**说明**: 这个任务需要先运行 `/plan-design-review` 让设计师重新设计任务页面。以下是设计约束:
+
+**设计约束**:
+- 去掉左侧 7 步 timeline 组件 (`step-timeline.tsx`)
+- 主体改为全宽 chat 界面（合并 Column 2 + Column 3）
+- 顶部添加**动态步骤指示器**:
+  - 不是固定列表，是当前步骤 + Agent 预测的下一步
+  - 格式: `[需求分析] → [方案规划] → [代码生成] → [✓ 编译验证] → [推送]`
+  - 已完成的步骤打勾，当前步骤高亮，未来步骤灰色
+  - 步骤可以动态增减（如"编译失败修复"）
+- Chat 中的工具调用显示为**可折叠卡片**（同 Task 10 的 ToolExecution 组件）
+- 编译验证结果显示为特殊卡片:
+  - 成功: 绿色边框 + "Build passed" + 编译输出（可展开）
+  - 失败: 红色边框 + "Build failed" + 错误输出 + "AI 正在修复..."
+
+**Action**: 运行 `/plan-design-review` 完成 UI 设计后再实现此任务。
+
+---
+
 ## Verification
 
 ### End-to-End Smoke Test
 
-1. Start `docker compose -f docker-compose.dev.yml up -d` (PostgreSQL, Redis, Temporal)
+1. Start `docker compose -f docker-compose.dev.yml up -d` (PostgreSQL, Redis — 不再需要 Temporal)
 2. Start forge-core: `cd forge-core && go run ./cmd/forge-core`
-3. Start ai-worker: `cd ai-worker && python -m src.worker`
+3. Start ai-worker: `cd ai-worker && python -m src.api_server`
 4. Start portal: `cd forge-portal && npm run dev`
-5. Navigate to project → Agent page
-6. Send a message → verify streaming text appears
-7. Verify tool calls render as cards with expandable output
-8. Verify token usage updates in status bar
+5. 创建项目 → 自动检测 build_skill 画像
+6. Navigate to Agent Terminal → 发消息
+7. 验证: 流式文本 + 工具调用卡片 + 编译验证结果
+8. 验证: 编译失败时 AI 自动修复并重试
 
 ### Unit Test Coverage
 
