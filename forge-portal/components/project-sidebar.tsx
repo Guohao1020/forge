@@ -14,6 +14,8 @@ import {
   Settings,
   Tags,
   Shield,
+  Terminal,
+  BookOpen,
 } from "lucide-react";
 import { ForgeLogo } from "./forge-logo";
 
@@ -28,6 +30,7 @@ export function ProjectSidebar({ projectId, projectName }: ProjectSidebarProps) 
 
   const navItems = [
     { href: base, label: "任务", icon: Layers, exact: true },
+    { href: `${base}/agent`, label: "Agent", icon: Terminal },
     { href: `${base}/code`, label: "代码", icon: Code2 },
     { href: `${base}/changes`, label: "变更", icon: GitCommit },
     { href: `${base}/tests`, label: "测试", icon: FlaskConical },
@@ -36,6 +39,7 @@ export function ProjectSidebar({ projectId, projectName }: ProjectSidebarProps) 
     { href: `${base}/deploy`, label: "部署", icon: Rocket },
     { href: `${base}/profile`, label: "画像", icon: Brain },
     { href: `${base}/quality`, label: "质量", icon: Shield },
+    { href: `${base}/skills`, label: "技能", icon: BookOpen },
     { href: `${base}/settings`, label: "设置", icon: Settings },
   ];
 
