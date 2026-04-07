@@ -1,6 +1,6 @@
 "use client"
 
-import { useId, useState } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 import { ChevronDown, ChevronRight } from "lucide-react"
 import { formatToolInput } from "./tool-formatters"
@@ -45,6 +45,23 @@ export function ToolExecution({
   const [expanded, setExpanded] = useState(false)
   const status = statusOf(isError, isLoading)
   const toolId = useId()
+  const toggleRef = useRef<HTMLButtonElement>(null)
+
+  // Keyboard: Esc closes the expanded panel when focus is anywhere inside
+  // the region. Restores focus to the toggle so keyboard users don't lose
+  // their place in the message list.
+  useEffect(() => {
+    if (!expanded) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault()
+        setExpanded(false)
+        toggleRef.current?.focus()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [expanded])
 
   return (
     <div
@@ -53,6 +70,7 @@ export function ToolExecution({
       aria-label={toolName}
     >
       <button
+        ref={toggleRef}
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
         aria-controls={toolId}

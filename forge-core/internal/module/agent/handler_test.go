@@ -91,6 +91,127 @@ func TestMapToJSON_EmptyMap(t *testing.T) {
 	}
 }
 
+// ---- Chat handler tests ---------------------------------------------------
+
+func newTestService(t *testing.T, aiWorker *httptest.Server) *Service {
+	t.Helper()
+	return NewService(aiWorker.URL)
+}
+
+func newChatRouter(h *Handler) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/projects/:id/agent/chat", h.Chat)
+	return r
+}
+
+func TestChat_InvalidProjectID(t *testing.T) {
+	aiWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer aiWorker.Close()
+
+	h := NewHandler(newTestService(t, aiWorker), nil)
+	r := newChatRouter(h)
+
+	body := strings.NewReader(`{"message":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/projects/not-a-number/agent/chat", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for non-numeric project id, got %d", w.Code)
+	}
+}
+
+func TestChat_InvalidJSONBody(t *testing.T) {
+	aiWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer aiWorker.Close()
+
+	h := NewHandler(newTestService(t, aiWorker), nil)
+	r := newChatRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/projects/42/agent/chat", strings.NewReader("{not json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for malformed JSON, got %d", w.Code)
+	}
+}
+
+func TestChat_AIWorkerUnavailable(t *testing.T) {
+	// Point the service at a closed server so the HTTP call fails.
+	closedServer := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	closedServer.Close() // Kill immediately
+
+	h := NewHandler(newTestService(t, closedServer), nil)
+	r := newChatRouter(h)
+
+	body := strings.NewReader(`{"message":"hello","session_id":"s1"}`)
+	req := httptest.NewRequest(http.MethodPost, "/projects/42/agent/chat", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 when ai-worker is unreachable, got %d", w.Code)
+	}
+}
+
+func TestChat_AIWorkerReturnsNon200(t *testing.T) {
+	aiWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"engine crashed"}`))
+	}))
+	defer aiWorker.Close()
+
+	h := NewHandler(newTestService(t, aiWorker), nil)
+	r := newChatRouter(h)
+
+	body := strings.NewReader(`{"message":"hello","session_id":"s1"}`)
+	req := httptest.NewRequest(http.MethodPost, "/projects/42/agent/chat", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 when ai-worker returns 500, got %d", w.Code)
+	}
+}
+
+func TestChat_SuccessReturnsSessionID(t *testing.T) {
+	aiWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/run" {
+			t.Errorf("expected /api/run, got %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"session_id":"abc-123","status":"accepted","correlation_id":"corr-1"}`))
+	}))
+	defer aiWorker.Close()
+
+	h := NewHandler(newTestService(t, aiWorker), nil)
+	r := newChatRouter(h)
+
+	body := strings.NewReader(`{"message":"build me a calculator","project_id":42}`)
+	req := httptest.NewRequest(http.MethodPost, "/projects/42/agent/chat", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Errorf("expected 202, got %d; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"session_id":"abc-123"`) {
+		t.Errorf("response body missing session_id: %s", w.Body.String())
+	}
+}
+
 // ---- Stream handler integration tests -------------------------------------
 
 // newTestHandler wires a Handler against a miniredis instance and returns a

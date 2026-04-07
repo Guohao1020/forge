@@ -79,8 +79,12 @@ export function StepRibbon({ steps, className }: StepRibbonProps) {
               "hover:bg-[var(--bg-hover)]",
               statusClass[step.status],
             )}
-            role="listitem"
             aria-current={step.status === "active" ? "step" : undefined}
+            aria-label={`${step.label}: ${step.status}${
+              step.cycle && step.maxCycles
+                ? ` (cycle ${step.cycle} of ${step.maxCycles})`
+                : ""
+            }`}
           >
             <StepIcon status={step.status} index={i} />
             <span>{step.label}</span>

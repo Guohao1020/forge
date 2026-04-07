@@ -410,7 +410,14 @@ export function AgentChat({
       )}
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-2.5 py-2 space-y-1.5">
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        aria-label="Agent conversation"
+        className="flex-1 overflow-y-auto px-2.5 py-2 space-y-1.5"
+      >
         {messages.length === 0 && (
           <div className="flex items-start justify-center pt-8">
             <div className="space-y-2 max-w-sm">

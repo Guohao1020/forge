@@ -75,8 +75,11 @@ export function StatusBar({
   costEstimate,
   className,
 }: StatusBarProps) {
+  // Rendered as a <div> (not <footer>) because <footer> has implicit
+  // role="contentinfo" which collides with the explicit role="status"
+  // the axe-core rules flag as an invalid combination.
   return (
-    <footer
+    <div
       role="status"
       aria-live="polite"
       aria-label="Session status"
@@ -131,6 +134,6 @@ export function StatusBar({
         </span>
         <span className="whitespace-nowrap">{formatCost(costEstimate)}</span>
       </div>
-    </footer>
+    </div>
   )
 }
