@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import { AuthProvider } from "@/lib/auth";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { LoadingBar } from "@/components/ui/loading-bar";
@@ -7,13 +7,15 @@ import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts";
 import { Toaster } from "sonner";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Mockup: variant-B-dense.html lines 62-63. Inter body, JetBrains Mono code.
+// Dense Engineering / Cursor IDE aesthetic.
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains-mono",
   subsets: ["latin"],
 });
 
@@ -38,7 +40,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className={`${geistSans.variable} ${geistMono.variable}`}>
+    <html lang="zh-CN" className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body className="antialiased">
         <LoadingBar />
         <KeyboardShortcutsDialog />

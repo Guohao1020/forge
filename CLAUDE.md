@@ -98,14 +98,17 @@ See `docs/references/coding-standards.md` for full conventions. Key rules:
 - Context optimization with token budget management
 
 ### Frontend (React)
-- Next.js 15 (App Router) + TypeScript
+- Next.js 16 (App Router) + React 19 + TypeScript
 - shadcn/ui + Radix UI (component library)
 - Zustand (client state) + TanStack Query (server state)
-- Tailwind CSS 4 (styling)
-- Geist Sans + Geist Mono (fonts)
+- Tailwind CSS 4 (CSS-first config via `@theme` in `globals.css`)
+- Inter + JetBrains Mono (fonts)
 - Lucide Icons (icon library)
-- Dark mode only, "深空指挥中心" visual style
-- Brand color: Forge Purple #8B5CF6
+- Light + dark theme via `.dark` class on `<html>` (user-toggled, localStorage persisted)
+- **Brand:** Variant B "Dense Engineering" — Cursor/VS Code aesthetic, 12px/1.4 body,
+  4px radius, compact IDE density. Accent `#2563eb` light / `#3b82f6` dark.
+- **Design system:** `docs/DESIGN.md` is authoritative; the mockup lives at
+  `~/.gstack/projects/voc-shulex-forge/designs/agent-terminal-shotgun-20260406/variant-B-dense.html`
 
 ### AI 生成代码的编码规范（规范中心管理）
 - AI 为目标项目生成的代码遵循规范中心的编码规范（如 Java/SQL/Redis 等）
@@ -215,4 +218,5 @@ Claude/GPT GitHub Actions  Semgrep
 - 四层自动化测试 — AI 生成测试 + 原生框架运行（替代 MeterSphere）
 - 分支全自动 — 低风险自动合并，高风险等审批
 - Grafana + Loki + Prometheus — 平台可观测性（三期评估 DeepFlow/OTel 用于 AI 生成产品）
-- "深空指挥中心" — 暗色主题 + Forge 紫 #8B5CF6 + Aurora 背景
+- "Dense Engineering" — Cursor/VS Code aesthetic, 12px IDE density, blue accent
+  (`#2563eb` light / `#3b82f6` dark), approved Variant B mockup, see `docs/DESIGN.md`

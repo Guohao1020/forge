@@ -7,9 +7,19 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  /* Font stack — Inter body, JetBrains Mono code (mockup variant-B-dense.html lines 62-63) */
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+  --font-heading: var(--font-inter);
+  /* Tailwind 4 derives fractional spacing from --spacing (0.25rem base), so
+     p-0.25 (1px), p-0.5 (2px), p-0.75 (3px), p-1.25 (5px) work out of the box.
+     No custom --spacing-* entries needed for the mockup's 1-5px gaps. */
+  /* Type scale — mockup uses 9/10/11/12px for meta/label/code (body is 12px/1.4).
+     Creates utilities text-tiny / text-meta / text-label / text-body. */
+  --text-tiny: 9px;
+  --text-meta: 10px;
+  --text-label: 11px;
+  --text-body: 12px;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -95,23 +105,71 @@
   --sidebar-border: rgba(0, 0, 0, 0.08);
   --sidebar-ring: #2563eb;
 
-  /* Agent Terminal tokens */
-  --surface: #f8f9fb;
-  --elevated: #f1f3f5;
-  --hover: #e9ecef;
-  --border-focus: rgba(37, 99, 235, 0.25);
+  /* ---- Agent Terminal / Dense Engineering tokens (mockup: variant-B-dense.html) ---- */
+
+  /* Background layers — 3-level depth hierarchy (mockup lines 25-37) */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --bg-tertiary: #f1f3f5;
+  --bg-input: #ffffff;
+  --bg-hover: #f1f3f5;
+  --bg-active: #e9ecef;
+  --bg-code: #f8f9fa;
+  --bg-tool: #f8f9fb;
+  --bg-error: #fff5f5;
+  --bg-success: #f0fdf4;
+  --bg-warning: #fffbeb;
+  --bg-info: #eff6ff;
+  --bg-badge: #e9ecef;
+
+  /* Text layers — 3-level visual hierarchy (mockup lines 39-47).
+     NOTE: --text-tertiary darkened from mockup #868e96 (3.4:1 on white, WCAG AA fail)
+     to #6b7280 (4.6:1 on white, WCAG AA pass). Documented in docs/DESIGN.md. */
+  --text-primary: #1a1a1a;
+  --text-secondary: #495057;
+  --text-tertiary: #6b7280;
+  --text-inverse: #ffffff;
+  --text-code: #d6336c;
+  --text-link: #2563eb;
+  --text-error: #c92a2a;
+  --text-success: #2b8a3e;
+  --text-warning: #e67700;
+
+  /* Borders (mockup lines 49-51) */
+  --border-primary: rgba(0, 0, 0, 0.12);
+  --border-secondary: rgba(0, 0, 0, 0.08);
+  --border-focus: #2563eb;
+
+  /* Accent family (mockup lines 53-56) */
   --accent-hover: #1d4ed8;
+  --accent-subtle: #eff6ff;
+  --accent-text: #1e40af;
+
+  /* Shadows + shell dims (mockup lines 58-69) */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.06);
+  --header-h: 40px;
+  --ribbon-h: 40px;
+  --status-h: 20px;
+  --input-h: 44px;
+
+  /* ---- Legacy aliases (retained until Stream 2 component sweep) ----
+     Keep existing components compiling while Stream 2 migrates call sites
+     from --surface/--text-muted/--text-dim/etc. to the namespaced tokens above. */
+  --surface: var(--bg-secondary);
+  --elevated: var(--bg-tertiary);
+  --hover: var(--bg-hover);
+  --text: var(--text-primary);
+  --text-muted: var(--text-secondary);
+  --text-dim: var(--text-tertiary);
+  --error: var(--text-error);
+  --error-bg: var(--bg-error);
+  --success-bg: var(--bg-success);
   --accent-glow: rgba(37, 99, 235, 0.08);
   --accent-dim: rgba(37, 99, 235, 0.05);
-  --success-bg: rgba(22, 163, 74, 0.06);
-  --error: #dc2626;
-  --error-bg: rgba(220, 38, 38, 0.05);
-  --text: #1a1a2e;
-  --text-muted: #6b7280;
-  --text-dim: #9ca3af;
-  --code-keyword: #7c3aed;
-  --code-string: #059669;
-  --code-function: #2563eb;
+  --code-keyword: #2563eb;
+  --code-string: #2b8a3e;
+  --code-function: #1d4ed8;
   --code-added-bg: rgba(22, 163, 74, 0.06);
   --code-added: #15803d;
   --code-removed-bg: rgba(220, 38, 38, 0.06);
@@ -159,45 +217,82 @@
   --sidebar-border: rgba(255, 255, 255, 0.08);
   --sidebar-ring: #3b82f6;
 
-  /* Agent Terminal tokens (dark) */
-  --surface: #111118;
-  --elevated: #1a1a24;
-  --hover: #222230;
-  --border-focus: rgba(96, 165, 250, 0.3);
+  /* ---- Agent Terminal / Dense Engineering tokens (dark, mockup lines 71-108) ---- */
+
+  /* Background layers (VS Code / Cursor dark palette) */
+  --bg-primary: #1e1e1e;
+  --bg-secondary: #252526;
+  --bg-tertiary: #2d2d2d;
+  --bg-input: #2d2d2d;
+  --bg-hover: #333333;
+  --bg-active: #3c3c3c;
+  --bg-code: #1e1e1e;
+  --bg-tool: #252526;
+  --bg-error: #2d1b1b;
+  --bg-success: #1b2d1e;
+  --bg-warning: #2d2a1b;
+  --bg-info: #1b2233;
+  --bg-badge: #3c3c3c;
+
+  /* Text layers — --text-tertiary #9ca3af = 4.9:1 on #1e1e1e (WCAG AA pass).
+     Mockup used #6d6d6d (3.9:1 fail). Documented in docs/DESIGN.md. */
+  --text-primary: #cccccc;
+  --text-secondary: #9d9d9d;
+  --text-tertiary: #9ca3af;
+  --text-inverse: #1e1e1e;
+  --text-code: #ce9178;
+  --text-link: #3b82f6;
+  --text-error: #f87171;
+  --text-success: #4ade80;
+  --text-warning: #fbbf24;
+
+  /* Borders */
+  --border-primary: rgba(255, 255, 255, 0.12);
+  --border-secondary: rgba(255, 255, 255, 0.06);
+  --border-focus: #3b82f6;
+
+  /* Accent family */
   --accent-hover: #60a5fa;
+  --accent-subtle: #1e3a5f;
+  --accent-text: #93c5fd;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.3);
+
+  /* Legacy aliases (dark overrides) */
   --accent-glow: rgba(59, 130, 246, 0.15);
   --accent-dim: rgba(59, 130, 246, 0.08);
-  --success-bg: rgba(34, 197, 94, 0.08);
-  --error: #ef4444;
-  --error-bg: rgba(239, 68, 68, 0.08);
-  --text: #e4e4e7;
-  --text-muted: #71717a;
-  --text-dim: #52525b;
-  --code-keyword: #c084fc;
+  --code-keyword: #93c5fd;
   --code-string: #86efac;
-  --code-function: #93c5fd;
+  --code-function: #60a5fa;
   --code-added-bg: rgba(34, 197, 94, 0.06);
   --code-added: #4ade80;
   --code-removed-bg: rgba(239, 68, 68, 0.06);
-  --code-removed: #ef4444;
+  --code-removed: #f87171;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+  /* Mockup body (variant-B-dense.html lines 117-120): 12px Inter, line-height 1.4,
+     antialiased. 1.4 is noticeably tighter than Tailwind's default 1.5 and is
+     deliberate for IDE-style density. */
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-size: 12px;
+    line-height: 1.4;
   }
   html {
     @apply font-sans;
   }
 }
 
-/* Subtle aurora tint on white background */
+/* Subtle aurora tint on background — Variant B blue only (login page backdrop) */
 .aurora-bg {
   background:
-    radial-gradient(ellipse at 20% 50%, rgba(139, 92, 246, 0.04), transparent 50%),
+    radial-gradient(ellipse at 20% 50%, rgba(37, 99, 235, 0.04), transparent 50%),
     radial-gradient(ellipse at 80% 20%, rgba(59, 130, 246, 0.03), transparent 50%),
     var(--background);
 }
@@ -283,7 +378,7 @@
   background: var(--muted);
   padding: 0.15rem 0.4rem;
   border-radius: 0.25rem;
-  font-family: var(--font-geist-mono), monospace;
+  font-family: var(--font-mono), monospace;
   font-size: 0.8em;
   color: var(--accent);
 }
@@ -328,7 +423,7 @@
   text-underline-offset: 2px;
 }
 .markdown-preview a:hover {
-  color: #6D28D9;
+  color: var(--accent-hover);
 }
 .markdown-preview hr {
   border: none;
