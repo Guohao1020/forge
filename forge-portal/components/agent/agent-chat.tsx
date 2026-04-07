@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils"
 import { Send, Bot, User, Code2, Eye, WifiOff } from "lucide-react"
 import { ToolExecution } from "./tool-execution"
 import { BuildCard } from "./build-card"
+import type { ConnStatus } from "./status-bar"
 
 // Agent avatar types for multi-agent pair pipeline visibility
 type AgentRole = "user" | "assistant" | "coder" | "reviewer"
@@ -37,11 +38,13 @@ interface AgentChatProps {
   projectId: string
   sessionId: string | null
   onSessionCreated?: (id: string) => void
-  // Placeholder callbacks wired in Stream 3 when the shell lifts state.
   onCodeFiles?: (files: Array<{ path: string; content: string }>) => void
   onStepsUpdate?: (
     steps: Array<{ id: string; label: string; status: string }>,
   ) => void
+  // Stream 3: state lift — page.tsx owns these for StatusBar to consume.
+  onConnStatusChange?: (status: ConnStatus) => void
+  onStatsUpdate?: (stats: { tokens: number; cost: number }) => void
   className?: string
 }
 
@@ -58,23 +61,37 @@ export function AgentChat({
   onSessionCreated,
   onCodeFiles,
   onStepsUpdate,
+  onConnStatusChange,
+  onStatsUpdate,
   className,
 }: AgentChatProps) {
-  // Silence unused-warning for Stream 3 placeholder props. The callbacks will
-  // be wired when the shell lifts state (StatusBar + PanelDivider + lifted
-  // agent state context). Referencing them here keeps the external API stable.
+  // Placeholder callbacks for Stream 4 backend integration.
   void onCodeFiles
   void onStepsUpdate
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
-  const [connected, setConnected] = useState(true)
+  // 4-state SSE connection enum (Stream 3.3). `connecting` is the initial
+  // state until onopen fires. `reconnecting` is while we back off between
+  // attempts. `failed` is terminal after repeated reconnect failures.
+  const [connStatus, setConnStatus] = useState<ConnStatus>("connecting")
+  const retryCountRef = useRef(0)
   const [tokenCount, setTokenCount] = useState(0)
   const [costEstimate, setCostEstimate] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const sendingRef = useRef(false)
+
+  // Notify parent of conn status changes for StatusBar.
+  useEffect(() => {
+    onConnStatusChange?.(connStatus)
+  }, [connStatus, onConnStatusChange])
+
+  // Notify parent of stats updates for StatusBar.
+  useEffect(() => {
+    onStatsUpdate?.({ tokens: tokenCount, cost: costEstimate })
+  }, [tokenCount, costEstimate, onStatsUpdate])
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -83,20 +100,37 @@ export function AgentChat({
     }
   }, [messages])
 
-  // SSE connection with auto-reconnect
+  // SSE connection with auto-reconnect and 4-state enum.
+  // State transitions:
+  //   mount → connecting
+  //   onopen → connected, reset retry count
+  //   onerror + retries < MAX → reconnecting → backoff → connect()
+  //   onerror + retries >= MAX → failed (terminal)
   useEffect(() => {
-    if (!sessionId) return
+    if (!sessionId) {
+      setConnStatus("connecting")
+      return
+    }
 
+    const MAX_RETRIES = 5
     let lastEventId = ""
-    let reconnectTimer: NodeJS.Timeout
+    let reconnectTimer: ReturnType<typeof setTimeout>
+    let cancelled = false
+    retryCountRef.current = 0
+    setConnStatus("connecting")
 
     function connect() {
+      if (cancelled) return
       const token = localStorage.getItem("forge_token") || ""
       const url = `/api/projects/${projectId}/agent/stream?session_id=${sessionId}${lastEventId ? `&last_event_id=${lastEventId}` : ""}&token=${token}`
       const es = new EventSource(url)
       eventSourceRef.current = es
 
-      es.onopen = () => setConnected(true)
+      es.onopen = () => {
+        if (cancelled) return
+        retryCountRef.current = 0
+        setConnStatus("connected")
+      }
 
       es.addEventListener("agent", (e: MessageEvent) => {
         lastEventId = e.lastEventId || lastEventId
@@ -107,15 +141,24 @@ export function AgentChat({
       })
 
       es.onerror = () => {
-        setConnected(false)
+        if (cancelled) return
         es.close()
-        reconnectTimer = setTimeout(connect, 3000)
+        retryCountRef.current += 1
+        if (retryCountRef.current >= MAX_RETRIES) {
+          setConnStatus("failed")
+          return
+        }
+        setConnStatus("reconnecting")
+        // Exponential backoff: 1s, 2s, 4s, 8s, 16s (capped at 16s)
+        const delay = Math.min(16000, 1000 * 2 ** (retryCountRef.current - 1))
+        reconnectTimer = setTimeout(connect, delay)
       }
     }
 
     connect()
 
     return () => {
+      cancelled = true
       eventSourceRef.current?.close()
       clearTimeout(reconnectTimer)
     }
@@ -240,13 +283,34 @@ export function AgentChat({
     }
   }
 
+  // Show a banner only for failed (terminal) or reconnecting (mid-retry).
+  // connecting (initial) and connected are silent.
+  const showBanner = connStatus === "reconnecting" || connStatus === "failed"
+  const bannerText =
+    connStatus === "failed"
+      ? "Connection lost. Please refresh the page to reconnect."
+      : "Connection lost, reconnecting…"
+
   return (
-    <div className={cn("flex flex-col h-full", className)}>
+    <div
+      className={cn(
+        "flex flex-col h-full bg-[var(--bg-primary)] min-h-0",
+        className,
+      )}
+    >
       {/* Connection banner */}
-      {!connected && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-[var(--error-bg)] text-[var(--error)] text-xs">
-          <WifiOff className="h-3.5 w-3.5" />
-          Connection lost, reconnecting...
+      {showBanner && (
+        <div
+          role="alert"
+          className={cn(
+            "flex items-center gap-2 px-4 py-2 text-[11px] font-mono shrink-0",
+            connStatus === "failed"
+              ? "bg-[var(--bg-error)] text-[var(--text-error)]"
+              : "bg-[var(--bg-warning)] text-[var(--text-warning)]",
+          )}
+        >
+          <WifiOff className="h-3 w-3" />
+          {bannerText}
         </div>
       )}
 
@@ -329,13 +393,8 @@ export function AgentChat({
         })}
       </div>
 
-      {/* Status bar — 20px dense */}
-      <div className="flex items-center justify-between px-2.5 h-5 border-t border-[var(--border)] bg-[var(--surface)] text-[11px] text-[var(--text-dim)] font-mono shrink-0">
-        <span>claude-sonnet-4-20250514</span>
-        <span>{tokenCount.toLocaleString()} tokens (${costEstimate.toFixed(4)})</span>
-      </div>
-
-      {/* Input — compact, IDE-style. Textarea auto-grows 1..8 rows. */}
+      {/* Input — compact, IDE-style. Textarea auto-grows 1..8 rows.
+          Note: status bar is lifted to page.tsx StatusBar component (Stream 3). */}
       <div className="border-t border-[var(--border-primary)] bg-[var(--bg-secondary)] px-2.5 py-2 shrink-0">
         <div className="flex items-end gap-1.5">
           <textarea
@@ -356,7 +415,14 @@ export function AgentChat({
           />
           <button
             onClick={sendMessage}
-            disabled={!input.trim() || isStreaming}
+            disabled={
+              !input.trim() ||
+              isStreaming ||
+              // Block subsequent sends when the stream isn't live. First-send
+              // (sessionId is null) is always allowed — the POST /chat
+              // response carries the session id before SSE opens.
+              (sessionId != null && connStatus !== "connected")
+            }
             className="flex items-center justify-center rounded bg-[var(--accent)] text-[var(--text-inverse)] h-7 w-7 hover:bg-[var(--accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-100"
             aria-label="Send message"
           >
