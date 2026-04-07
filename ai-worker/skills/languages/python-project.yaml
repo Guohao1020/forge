@@ -1,0 +1,35 @@
+name: python-project
+description: Python project with pyproject.toml, requirements.txt, or setup.py
+detect:
+  files:
+    - pyproject.toml
+    - requirements.txt
+    - setup.py
+    - Pipfile
+  extensions:
+    - .py
+build:
+  # Python has no compile step; "build" for us is an import-check via
+  # py_compile so syntax errors surface without running the program.
+  commands:
+    - marker: pyproject.toml
+      command: python -m compileall -q .
+    - marker: requirements.txt
+      command: python -m compileall -q .
+    - marker: setup.py
+      command: python -m compileall -q .
+  timeout_seconds: 120
+test:
+  commands:
+    - marker: pyproject.toml
+      command: pytest -q
+    - marker: requirements.txt
+      command: pytest -q
+  timeout_seconds: 300
+lint:
+  commands:
+    - marker: pyproject.toml
+      command: ruff check .
+    - marker: requirements.txt
+      command: ruff check .
+  timeout_seconds: 60

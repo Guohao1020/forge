@@ -90,3 +90,29 @@ export async function listSessionMessages(
     `/projects/${projectId}/agent/sessions/${sessionId}/messages?limit=${limit}`,
   )
 }
+
+// ---- Empty-state suggestions (Stream 4c) ---------------------------------
+
+export interface AgentSuggestion {
+  text: string
+  category?: "feature" | "fix" | "test" | "refactor"
+}
+
+interface SuggestionsResponse {
+  suggestions: AgentSuggestion[]
+  source: "heuristic" | "fallback"
+  language?: string
+}
+
+/**
+ * Fetch language-appropriate starter prompts for the Agent Terminal
+ * empty state. Always succeeds — backend falls back to defaults on any
+ * error so the empty state renders even without a tech stack hint.
+ */
+export async function getAgentSuggestions(
+  projectId: number,
+): Promise<SuggestionsResponse> {
+  return api.get<SuggestionsResponse>(
+    `/projects/${projectId}/agent/suggestions`,
+  )
+}

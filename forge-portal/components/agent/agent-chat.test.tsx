@@ -23,13 +23,34 @@ describe("AgentChat", () => {
     // @ts-expect-error — override global EventSource for jsdom.
     globalThis.EventSource = MockEventSource
     localStorage.setItem("forge_token", "fake-jwt")
-    // Stub fetch for the POST /chat call.
-    globalThis.fetch = vi.fn(async () =>
-      new Response(JSON.stringify({ session_id: "sess-123" }), {
-        status: 202,
-        headers: { "Content-Type": "application/json" },
-      }),
-    ) as typeof fetch
+    // Stub fetch for both the POST /chat call and the GET
+    // /agent/suggestions call that fires on mount. The request shape
+    // helper lets individual tests override with vi.fn(...).
+    globalThis.fetch = vi.fn(async (input: unknown) => {
+      const url = typeof input === "string" ? input : (input as Request).url
+      if (url.includes("/agent/suggestions")) {
+        // Backend envelope: { code, message, data: { suggestions, source } }
+        return new Response(
+          JSON.stringify({
+            code: 0,
+            message: "ok",
+            data: {
+              suggestions: [
+                { text: "Add user registration with JWT auth" },
+                { text: "Fix the login bug in feat/auth" },
+                { text: "Write tests for the API" },
+              ],
+              source: "fallback",
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        )
+      }
+      return new Response(
+        JSON.stringify({ code: 0, message: "ok", data: { session_id: "sess-123" } }),
+        { status: 202, headers: { "Content-Type": "application/json" } },
+      )
+    }) as typeof fetch
   })
 
   afterEach(() => {
@@ -85,9 +106,22 @@ describe("AgentChat", () => {
   })
 
   it("clicking Send POSTs to /api/projects/:id/agent/chat", async () => {
-    const mockFetch = vi.fn(async () =>
-      new Response(JSON.stringify({ session_id: "s1" }), { status: 202 }),
-    ) as typeof fetch
+    const mockFetch = vi.fn(async (input: unknown) => {
+      const url = typeof input === "string" ? input : (input as Request).url
+      if (url.includes("/agent/suggestions")) {
+        return new Response(
+          JSON.stringify({
+            code: 0, message: "ok",
+            data: { suggestions: [], source: "fallback" },
+          }),
+          { status: 200 },
+        )
+      }
+      return new Response(
+        JSON.stringify({ code: 0, message: "ok", data: { session_id: "s1" } }),
+        { status: 202 },
+      )
+    }) as typeof fetch
     globalThis.fetch = mockFetch
 
     render(<AgentChat projectId="42" sessionId={null} />)
@@ -97,10 +131,13 @@ describe("AgentChat", () => {
     fireEvent.click(send)
 
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalled()
-      const url = (mockFetch as unknown as { mock: { calls: [string][] } }).mock
-        .calls[0][0]
-      expect(url).toContain("/api/projects/42/agent/chat")
+      // Find the chat endpoint call specifically (there's also the
+      // suggestions GET fired on mount).
+      const calls = (mockFetch as unknown as { mock: { calls: Array<[string | Request]> } }).mock.calls
+      const chatCall = calls.find(([u]) =>
+        (typeof u === "string" ? u : (u as Request).url).includes("/agent/chat"),
+      )
+      expect(chatCall).toBeDefined()
     })
   })
 

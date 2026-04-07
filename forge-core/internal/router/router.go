@@ -221,6 +221,8 @@ func Setup(deps *Deps) *gin.Engine {
 				protected.DELETE("/projects/:id/agent/sessions/:sid", deps.AgentHandler.ArchiveSession)
 				protected.PATCH("/projects/:id/agent/sessions/:sid", deps.AgentHandler.RenameSession)
 				protected.GET("/projects/:id/agent/sessions/:sid/messages", deps.AgentHandler.ListSessionMessages)
+				// Contextual empty-state suggestions (Stream 4c)
+				protected.GET("/projects/:id/agent/suggestions", deps.AgentHandler.Suggestions)
 			}
 
 			// Tasks

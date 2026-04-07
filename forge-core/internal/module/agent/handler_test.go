@@ -184,6 +184,61 @@ func TestChat_AIWorkerReturnsNon200(t *testing.T) {
 	}
 }
 
+// ---- Suggestions tests (Stream 4c) ---------------------------------------
+
+func TestNormalizeLanguage_HandlesAliases(t *testing.T) {
+	cases := map[string]string{
+		"Java":       "java",
+		"python":     "python",
+		"Py":         "python",
+		"Go":         "go",
+		"golang":     "go",
+		"TypeScript": "typescript",
+		"ts":         "typescript",
+		"javascript": "javascript",
+		"Node":       "javascript",
+		"nodejs":     "javascript",
+		"rust":       "rust",
+		"  Java  ":   "java",
+		"c++":        "",
+		"":           "",
+	}
+	for input, want := range cases {
+		if got := normalizeLanguage(input); got != want {
+			t.Errorf("normalizeLanguage(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestDefaultSuggestionsFallback(t *testing.T) {
+	// Handler with nil repo → falls back to defaults without touching DB.
+	h := NewHandler(nil, nil, nil)
+	resp, err := h.generateSuggestions(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Source != "fallback" {
+		t.Errorf("expected fallback source, got %q", resp.Source)
+	}
+	if len(resp.Suggestions) != 3 {
+		t.Errorf("expected 3 default suggestions, got %d", len(resp.Suggestions))
+	}
+}
+
+func TestLanguageSuggestionsHaveAllFiveLanguages(t *testing.T) {
+	wanted := []string{"java", "python", "go", "typescript", "javascript", "rust"}
+	for _, lang := range wanted {
+		if _, ok := languageSuggestions[lang]; !ok {
+			t.Errorf("missing suggestions for language %q", lang)
+		}
+	}
+	for lang, suggestions := range languageSuggestions {
+		if len(suggestions) != 3 {
+			t.Errorf("language %q has %d suggestions, want 3", lang, len(suggestions))
+		}
+	}
+}
+
 func TestChat_SuccessReturnsSessionID(t *testing.T) {
 	aiWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/run" {

@@ -43,6 +43,7 @@ func NewHandler(service *Service, rdb *redis.Client, repo *Repository) *Handler 
 //	DELETE /projects/:id/agent/sessions/:sid            — archive a session
 //	PATCH  /projects/:id/agent/sessions/:sid            — rename a session
 //	GET    /projects/:id/agent/sessions/:sid/messages   — list durable messages (history hydration)
+//	GET    /projects/:id/agent/suggestions              — empty-state starter prompts
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/projects/:id/agent/chat", h.Chat)
 	rg.GET("/projects/:id/agent/stream", h.Stream)
@@ -51,6 +52,22 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.DELETE("/projects/:id/agent/sessions/:sid", h.ArchiveSession)
 	rg.PATCH("/projects/:id/agent/sessions/:sid", h.RenameSession)
 	rg.GET("/projects/:id/agent/sessions/:sid/messages", h.ListSessionMessages)
+	rg.GET("/projects/:id/agent/suggestions", h.Suggestions)
+}
+
+// Suggestions handles GET /projects/:id/agent/suggestions.
+// Returns 3 language-appropriate starter prompts for the Agent
+// Terminal empty state, derived from the project's tech stack. Never
+// fails — falls back to language-agnostic defaults on any error so
+// the empty state always renders.
+func (h *Handler) Suggestions(c *gin.Context) {
+	projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project id"})
+		return
+	}
+	resp, _ := h.generateSuggestions(c.Request.Context(), projectID)
+	c.JSON(http.StatusOK, resp)
 }
 
 // Chat handles POST /projects/:id/agent/chat.

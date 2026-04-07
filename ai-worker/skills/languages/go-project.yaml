@@ -1,0 +1,22 @@
+name: go-project
+description: Go project using go modules (go.mod)
+detect:
+  files:
+    - go.mod
+  extensions:
+    - .go
+build:
+  commands:
+    - marker: go.mod
+      command: go build ./...
+  timeout_seconds: 180
+test:
+  commands:
+    - marker: go.mod
+      command: go test ./...
+  timeout_seconds: 300
+lint:
+  commands:
+    - marker: go.mod
+      command: go vet ./...
+  timeout_seconds: 60

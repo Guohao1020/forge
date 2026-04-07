@@ -1,0 +1,36 @@
+name: java-project
+description: Java project using Maven or Gradle for build + test
+detect:
+  # Markers that identify this language in a project directory. The
+  # first match wins during project profile scan (see
+  # openharness/skills/project_language.py:detect_language).
+  files:
+    - pom.xml
+    - build.gradle
+    - build.gradle.kts
+  extensions:
+    - .java
+build:
+  # Prefer Maven if pom.xml exists, otherwise fall back to Gradle. The
+  # build_verify_hook picks the first command whose marker file exists
+  # in the project working dir.
+  commands:
+    - marker: pom.xml
+      command: mvn compile -q
+    - marker: build.gradle
+      command: ./gradlew compileJava --quiet
+    - marker: build.gradle.kts
+      command: ./gradlew compileJava --quiet
+  timeout_seconds: 180
+test:
+  commands:
+    - marker: pom.xml
+      command: mvn test -q
+    - marker: build.gradle
+      command: ./gradlew test --quiet
+  timeout_seconds: 300
+lint:
+  commands:
+    - marker: pom.xml
+      command: mvn spotbugs:check -q
+  timeout_seconds: 120

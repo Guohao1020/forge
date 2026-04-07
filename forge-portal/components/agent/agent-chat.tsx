@@ -8,7 +8,12 @@ import { BuildCard } from "./build-card"
 import { ThinkingIndicator } from "./thinking-indicator"
 import { SummaryCard, type BuildSummaryStatus } from "./summary-card"
 import type { ConnStatus } from "./status-bar"
-import { listSessionMessages, type AgentMessageRow } from "@/lib/agent"
+import {
+  getAgentSuggestions,
+  listSessionMessages,
+  type AgentMessageRow,
+  type AgentSuggestion,
+} from "@/lib/agent"
 
 // Agent avatar types for multi-agent pair pipeline visibility.
 // "system" is a backend-emitted notification (fix loop entry, build failure).
@@ -281,6 +286,10 @@ export function AgentChat({
   // Stream 4: backend-driven thinking indicator. Null means idle, a string
   // is the current label ("Running read_file", "Fixing code", etc.)
   const [thinkingLabel, setThinkingLabel] = useState<string | null>(null)
+  // Stream 4c: empty-state suggestions from the backend. Starts empty
+  // so the first paint doesn't flash the hardcoded defaults; the
+  // useEffect below fetches and populates on mount.
+  const [suggestions, setSuggestions] = useState<AgentSuggestion[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -295,6 +304,30 @@ export function AgentChat({
   useEffect(() => {
     onStatsUpdate?.({ tokens: tokenCount, cost: costEstimate })
   }, [tokenCount, costEstimate, onStatsUpdate])
+
+  // Stream 4c: fetch contextual empty-state suggestions once per
+  // project. Falls back silently to defaults on any error. Cached
+  // in component state so switching sessions within the same project
+  // doesn't re-fetch.
+  useEffect(() => {
+    const projectIdNum = parseInt(projectId, 10)
+    if (!Number.isFinite(projectIdNum)) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await getAgentSuggestions(projectIdNum)
+        if (!cancelled && res.suggestions?.length) {
+          setSuggestions(res.suggestions)
+        }
+      } catch {
+        // Backend unreachable — keep the empty array so the empty
+        // state uses its hardcoded fallback below.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [projectId])
 
   // Stream 4b: hydrate messages from the durable PG log when the
   // sessionId changes. Runs BEFORE the SSE subscription opens so the
@@ -642,21 +675,24 @@ export function AgentChat({
               <p className="font-mono text-[11px] text-[var(--text-tertiary)] mb-3">
                 Describe what you want to build, or try:
               </p>
-              {[
-                "Add user registration with JWT auth",
-                "Fix the login bug in feat/auth",
-                "Write tests for the API",
-              ].map((suggestion) => (
+              {(suggestions.length > 0
+                ? suggestions
+                : [
+                    { text: "Add user registration with JWT auth" },
+                    { text: "Fix the login bug in feat/auth" },
+                    { text: "Write tests for the API" },
+                  ]
+              ).map((suggestion) => (
                 <button
-                  key={suggestion}
+                  key={suggestion.text}
                   onClick={() => {
-                    setInput(suggestion)
+                    setInput(suggestion.text)
                     inputRef.current?.focus()
                   }}
                   className="block w-full text-left font-mono text-[11px] text-[var(--text-tertiary)] hover:text-[var(--accent)] transition-colors duration-100"
                 >
                   <span className="text-[var(--text-tertiary)]">→ Try:</span>{" "}
-                  <span>{suggestion}</span>
+                  <span>{suggestion.text}</span>
                 </button>
               ))}
             </div>

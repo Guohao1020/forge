@@ -1,0 +1,22 @@
+name: rust-project
+description: Rust project using Cargo (Cargo.toml)
+detect:
+  files:
+    - Cargo.toml
+  extensions:
+    - .rs
+build:
+  commands:
+    - marker: Cargo.toml
+      command: cargo build --quiet
+  timeout_seconds: 300
+test:
+  commands:
+    - marker: Cargo.toml
+      command: cargo test --quiet
+  timeout_seconds: 300
+lint:
+  commands:
+    - marker: Cargo.toml
+      command: cargo clippy --quiet -- -D warnings
+  timeout_seconds: 180

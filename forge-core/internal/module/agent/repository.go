@@ -203,6 +203,29 @@ func (r *Repository) InsertMessage(
 	return nil
 }
 
+// GetProjectTechStack returns the raw JSONB tech_stack blob for a
+// project, used by the suggestions heuristic to derive language-
+// appropriate starter prompts. Returns an empty payload on any error
+// so the caller can fall back to defaults.
+func (r *Repository) GetProjectTechStack(
+	ctx context.Context,
+	projectID int64,
+) ([]byte, error) {
+	var raw []byte
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(tech_stack, '{}'::jsonb)
+		FROM engine.projects
+		WHERE id = $1
+	`, projectID).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return []byte("{}"), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get project tech_stack: %w", err)
+	}
+	return raw, nil
+}
+
 // ListMessages returns durable messages for a session in chronological
 // order. The frontend uses this to hydrate the chat on page load before
 // subscribing to the Redis Stream for new events.
