@@ -215,6 +215,12 @@ func Setup(deps *Deps) *gin.Engine {
 			if deps.AgentHandler != nil {
 				protected.POST("/projects/:id/agent/chat", deps.AgentHandler.Chat)
 				protected.GET("/projects/:id/agent/stream", deps.AgentHandler.Stream)
+				// Dual-storage session + message endpoints (Stream 4b)
+				protected.GET("/projects/:id/agent/sessions", deps.AgentHandler.ListSessions)
+				protected.POST("/projects/:id/agent/sessions", deps.AgentHandler.CreateSession)
+				protected.DELETE("/projects/:id/agent/sessions/:sid", deps.AgentHandler.ArchiveSession)
+				protected.PATCH("/projects/:id/agent/sessions/:sid", deps.AgentHandler.RenameSession)
+				protected.GET("/projects/:id/agent/sessions/:sid/messages", deps.AgentHandler.ListSessionMessages)
 			}
 
 			// Tasks

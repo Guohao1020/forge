@@ -111,7 +111,7 @@ func TestChat_InvalidProjectID(t *testing.T) {
 	}))
 	defer aiWorker.Close()
 
-	h := NewHandler(newTestService(t, aiWorker), nil)
+	h := NewHandler(newTestService(t, aiWorker), nil, nil)
 	r := newChatRouter(h)
 
 	body := strings.NewReader(`{"message":"hello"}`)
@@ -131,7 +131,7 @@ func TestChat_InvalidJSONBody(t *testing.T) {
 	}))
 	defer aiWorker.Close()
 
-	h := NewHandler(newTestService(t, aiWorker), nil)
+	h := NewHandler(newTestService(t, aiWorker), nil, nil)
 	r := newChatRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/projects/42/agent/chat", strings.NewReader("{not json"))
@@ -149,7 +149,7 @@ func TestChat_AIWorkerUnavailable(t *testing.T) {
 	closedServer := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	closedServer.Close() // Kill immediately
 
-	h := NewHandler(newTestService(t, closedServer), nil)
+	h := NewHandler(newTestService(t, closedServer), nil, nil)
 	r := newChatRouter(h)
 
 	body := strings.NewReader(`{"message":"hello","session_id":"s1"}`)
@@ -170,7 +170,7 @@ func TestChat_AIWorkerReturnsNon200(t *testing.T) {
 	}))
 	defer aiWorker.Close()
 
-	h := NewHandler(newTestService(t, aiWorker), nil)
+	h := NewHandler(newTestService(t, aiWorker), nil, nil)
 	r := newChatRouter(h)
 
 	body := strings.NewReader(`{"message":"hello","session_id":"s1"}`)
@@ -195,7 +195,7 @@ func TestChat_SuccessReturnsSessionID(t *testing.T) {
 	}))
 	defer aiWorker.Close()
 
-	h := NewHandler(newTestService(t, aiWorker), nil)
+	h := NewHandler(newTestService(t, aiWorker), nil, nil)
 	r := newChatRouter(h)
 
 	body := strings.NewReader(`{"message":"build me a calculator","project_id":42}`)
@@ -220,7 +220,7 @@ func newTestHandler(t *testing.T) (*Handler, *miniredis.Miniredis, *redis.Client
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	h := NewHandler(nil, rdb)
+	h := NewHandler(nil, rdb, nil)
 	return h, mr, rdb
 }
 

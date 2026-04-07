@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,23 +19,38 @@ import (
 type Handler struct {
 	service *Service
 	rdb     *redis.Client
+	repo    *Repository
 }
 
-// NewHandler creates a new agent handler.
-func NewHandler(service *Service, rdb *redis.Client) *Handler {
+// NewHandler creates a new agent handler. The Repository is optional —
+// when nil, the new session/message endpoints return 503 and the
+// original Chat/Stream endpoints still work against Redis alone. This
+// lets the handler boot before the PG migration has been applied.
+func NewHandler(service *Service, rdb *redis.Client, repo *Repository) *Handler {
 	return &Handler{
 		service: service,
 		rdb:     rdb,
+		repo:    repo,
 	}
 }
 
 // RegisterRoutes adds agent routes to the router group.
 //
-//	POST /projects/:id/agent/chat   — submit a chat message (fire-and-forget)
-//	GET  /projects/:id/agent/stream — SSE stream via Redis Streams
+//	POST   /projects/:id/agent/chat                     — submit a chat message
+//	GET    /projects/:id/agent/stream                   — SSE stream via Redis Streams
+//	GET    /projects/:id/agent/sessions                 — list non-archived sessions
+//	POST   /projects/:id/agent/sessions                 — create a new session
+//	DELETE /projects/:id/agent/sessions/:sid            — archive a session
+//	PATCH  /projects/:id/agent/sessions/:sid            — rename a session
+//	GET    /projects/:id/agent/sessions/:sid/messages   — list durable messages (history hydration)
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/projects/:id/agent/chat", h.Chat)
 	rg.GET("/projects/:id/agent/stream", h.Stream)
+	rg.GET("/projects/:id/agent/sessions", h.ListSessions)
+	rg.POST("/projects/:id/agent/sessions", h.CreateSession)
+	rg.DELETE("/projects/:id/agent/sessions/:sid", h.ArchiveSession)
+	rg.PATCH("/projects/:id/agent/sessions/:sid", h.RenameSession)
+	rg.GET("/projects/:id/agent/sessions/:sid/messages", h.ListSessionMessages)
 }
 
 // Chat handles POST /projects/:id/agent/chat.
@@ -210,6 +226,183 @@ func (h *Handler) streamReader(
 			}
 		}
 	}
+}
+
+// ---- Session / message endpoints (Stream 4b dual storage) ---------------
+
+// currentUser extracts the caller's auth context from gin. Used by the
+// session endpoints to enforce per-user scoping.
+func currentUser(c *gin.Context) (tenantID int64, userID int64, ok bool) {
+	tID, tOK := c.Get("tenant_id")
+	uID, uOK := c.Get("user_id")
+	if !tOK || !uOK {
+		return 0, 0, false
+	}
+	return tID.(int64), uID.(int64), true
+}
+
+// ListSessions handles GET /projects/:id/agent/sessions.
+// Returns non-archived agent sessions for the project, sorted by
+// last_message_at DESC for the TaskSwitcher sidebar.
+func (h *Handler) ListSessions(c *gin.Context) {
+	if h.repo == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent storage not configured"})
+		return
+	}
+	projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project id"})
+		return
+	}
+	limit := 50
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	sessions, total, err := h.repo.ListSessions(c.Request.Context(), projectID, limit)
+	if err != nil {
+		slog.Error("list agent sessions failed", "error", err, "project_id", projectID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "list sessions failed"})
+		return
+	}
+	c.JSON(http.StatusOK, ListSessionsResponse{Sessions: sessions, Total: total})
+}
+
+// CreateSession handles POST /projects/:id/agent/sessions.
+func (h *Handler) CreateSession(c *gin.Context) {
+	if h.repo == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent storage not configured"})
+		return
+	}
+	projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project id"})
+		return
+	}
+	tenantID, userID, ok := currentUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	var req CreateSessionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// Empty body is fine — title and task_id are both optional.
+		if err.Error() != "EOF" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	// Frontend never sees the raw UUID until this response, so generate
+	// it server-side. The id becomes the Redis Stream key for subsequent
+	// chat messages.
+	id := uuid.NewString()
+	session, err := h.repo.CreateSession(
+		c.Request.Context(), id, tenantID, projectID, userID, req.Title, req.TaskID,
+	)
+	if err != nil {
+		slog.Error("create agent session failed", "error", err, "project_id", projectID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "create session failed"})
+		return
+	}
+	c.JSON(http.StatusCreated, session)
+}
+
+// ArchiveSession handles DELETE /projects/:id/agent/sessions/:sid.
+// Soft delete — flips the archived flag, preserves the messages.
+func (h *Handler) ArchiveSession(c *gin.Context) {
+	if h.repo == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent storage not configured"})
+		return
+	}
+	projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project id"})
+		return
+	}
+	sessionID := c.Param("sid")
+	if err := h.repo.ArchiveSession(c.Request.Context(), sessionID, projectID); err != nil {
+		slog.Error("archive agent session failed", "error", err, "session_id", sessionID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "archived"})
+}
+
+// RenameSession handles PATCH /projects/:id/agent/sessions/:sid.
+// Body: { "title": "New title" }
+func (h *Handler) RenameSession(c *gin.Context) {
+	if h.repo == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent storage not configured"})
+		return
+	}
+	projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project id"})
+		return
+	}
+	sessionID := c.Param("sid")
+
+	var req struct {
+		Title string `json:"title" binding:"required,max=200"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.repo.UpdateSessionTitle(
+		c.Request.Context(), sessionID, projectID, req.Title,
+	); err != nil {
+		slog.Error("rename agent session failed", "error", err, "session_id", sessionID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "renamed"})
+}
+
+// ListSessionMessages handles GET /projects/:id/agent/sessions/:sid/messages.
+// Returns the durable message log for history hydration on page load.
+func (h *Handler) ListSessionMessages(c *gin.Context) {
+	if h.repo == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent storage not configured"})
+		return
+	}
+	projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project id"})
+		return
+	}
+	sessionID := c.Param("sid")
+
+	// Validate the session belongs to the project before returning
+	// messages, so we can't leak other projects' history.
+	session, err := h.repo.GetSession(c.Request.Context(), sessionID, projectID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if session == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
+
+	limit := 500
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	messages, err := h.repo.ListMessages(c.Request.Context(), sessionID, limit)
+	if err != nil {
+		slog.Error("list agent messages failed", "error", err, "session_id", sessionID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "list messages failed"})
+		return
+	}
+	c.JSON(http.StatusOK, ListMessagesResponse{Messages: messages, Total: len(messages)})
 }
 
 // mapToJSON serializes a Redis Stream entry to a JSON object the browser can parse.

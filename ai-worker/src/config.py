@@ -18,6 +18,18 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_password: str = "forge_redis_2026"
 
+    # PostgreSQL (dual-storage for agent_messages, Stream 4b)
+    pg_host: str = "localhost"
+    pg_port: int = 5432
+    pg_user: str = "forge"
+    pg_password: str = "forge_pg_2026"
+    pg_database: str = "forge"
+
+    # Redis Stream MAXLEN — hot buffer size per session. Events beyond
+    # this are evicted by XADD MAXLEN ~. Durable copy lives in
+    # engine.agent_messages via the dual-write path.
+    agent_stream_maxlen: int = 500
+
     # Forge Core API
     forge_api_url: str = "http://localhost:8080"
     forge_api_token: str = ""

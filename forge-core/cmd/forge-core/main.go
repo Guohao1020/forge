@@ -239,9 +239,12 @@ func main() {
 	specsService := specs.NewService(specsRepo, rdb)
 	specsHandler := specs.NewHandler(specsService)
 
-	// Agent Terminal handler (OpenHarness)
+	// Agent Terminal handler (OpenHarness). The Repository backs the
+	// dual-storage path (PG session/message log); it's optional, so the
+	// handler still serves the core Chat/Stream endpoints if db is nil.
 	agentSvc := agent.NewService(cfg.AIWorkerURL)
-	agentHandler := agent.NewHandler(agentSvc, rdb)
+	agentRepo := agent.NewRepository(db)
+	agentHandler := agent.NewHandler(agentSvc, rdb, agentRepo)
 
 	r := router.Setup(&router.Deps{
 		DB:                  db,

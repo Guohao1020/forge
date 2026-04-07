@@ -8,6 +8,7 @@ import { BuildCard } from "./build-card"
 import { ThinkingIndicator } from "./thinking-indicator"
 import { SummaryCard, type BuildSummaryStatus } from "./summary-card"
 import type { ConnStatus } from "./status-bar"
+import { listSessionMessages, type AgentMessageRow } from "@/lib/agent"
 
 // Agent avatar types for multi-agent pair pipeline visibility.
 // "system" is a backend-emitted notification (fix loop entry, build failure).
@@ -64,6 +65,187 @@ interface AgentChatProps {
   className?: string
 }
 
+/**
+ * Replay the durable event log into ChatMessage state. Reverses the
+ * SSE streaming logic: text_delta events get concatenated into a
+ * single assistant message per turn, tool_started/completed become
+ * tool attachments on the current message, session_complete becomes
+ * a SummaryCard entry, and fix_loop_* become system messages.
+ */
+function hydrateFromDurableLog(rows: AgentMessageRow[]): {
+  messages: ChatMessage[]
+  tokens: number
+  cost: number
+} {
+  const messages: ChatMessage[] = []
+  let tokens = 0
+  let cost = 0
+
+  function parseData(raw: Record<string, unknown> | string): Record<string, unknown> {
+    if (typeof raw === "string") {
+      try {
+        return JSON.parse(raw)
+      } catch {
+        return {}
+      }
+    }
+    return raw || {}
+  }
+
+  for (const row of rows) {
+    const data = parseData(row.data)
+    const type = row.event_type
+
+    if (type === "user_message") {
+      messages.push({
+        id: String(row.id),
+        role: "user",
+        content: typeof data.text === "string" ? data.text : row.content || "",
+        timestamp: new Date(row.created_at).getTime(),
+      })
+      continue
+    }
+
+    if (type === "text_delta") {
+      const text = typeof data.text === "string" ? data.text : ""
+      const last = messages[messages.length - 1]
+      if (last && last.role === "assistant" && !last.build && !last.summary) {
+        last.content = (last.content || "") + text
+      } else {
+        messages.push({
+          id: String(row.id),
+          role: "assistant",
+          content: text,
+          timestamp: new Date(row.created_at).getTime(),
+        })
+      }
+      continue
+    }
+
+    if (type === "turn_complete") {
+      const inp = Number(data.input_tokens) || 0
+      const out = Number(data.output_tokens) || 0
+      tokens += inp + out
+      cost += inp * 0.000003 + out * 0.000015
+      continue
+    }
+
+    if (type === "tool_started") {
+      const last = messages[messages.length - 1]
+      const toolInputRaw = data.tool_input
+      let parsedInput: Record<string, unknown> = {}
+      if (typeof toolInputRaw === "string") {
+        try {
+          parsedInput = JSON.parse(toolInputRaw)
+        } catch {
+          parsedInput = {}
+        }
+      } else if (toolInputRaw && typeof toolInputRaw === "object") {
+        parsedInput = toolInputRaw as Record<string, unknown>
+      }
+      const tool: ToolCall = {
+        name: typeof data.tool_name === "string" ? data.tool_name : "",
+        input: parsedInput,
+        isLoading: true,
+      }
+      if (last && last.role !== "user") {
+        last.tools = [...(last.tools || []), tool]
+      } else {
+        messages.push({
+          id: String(row.id),
+          role: "assistant",
+          content: "",
+          timestamp: new Date(row.created_at).getTime(),
+          tools: [tool],
+        })
+      }
+      continue
+    }
+
+    if (type === "tool_completed") {
+      const last = messages[messages.length - 1]
+      if (last?.tools) {
+        const name = typeof data.tool_name === "string" ? data.tool_name : ""
+        last.tools = last.tools.map((t) =>
+          t.name === name && t.isLoading
+            ? {
+                ...t,
+                output: typeof data.output === "string" ? data.output : "",
+                isError: String(data.is_error) === "true",
+                isLoading: false,
+              }
+            : t,
+        )
+      }
+      continue
+    }
+
+    if (type === "fix_loop_started") {
+      const cycle = Number(data.cycle) || 1
+      const maxCycles = Number(data.max_cycles) || 3
+      const errors = Number(data.errors) || 0
+      messages.push({
+        id: String(row.id),
+        role: "system",
+        content:
+          errors > 0
+            ? `${errors} compilation error${errors === 1 ? "" : "s"} detected. Entering fix loop (attempt ${cycle}/${maxCycles}).`
+            : `Entering fix loop (attempt ${cycle}/${maxCycles}).`,
+        timestamp: new Date(row.created_at).getTime(),
+      })
+      continue
+    }
+
+    if (type === "fix_loop_completed") {
+      const success = String(data.success).toLowerCase() === "true"
+      const cycle = Number(data.cycle) || 1
+      messages.push({
+        id: String(row.id),
+        role: "system",
+        content: success
+          ? `Fix loop cycle ${cycle} succeeded — build is green.`
+          : `Fix loop cycle ${cycle} failed — trying again.`,
+        timestamp: new Date(row.created_at).getTime(),
+      })
+      continue
+    }
+
+    if (type === "session_complete") {
+      const rawStatus = String(data.build_status || "skipped").toLowerCase()
+      const buildStatus: BuildSummaryStatus =
+        rawStatus === "passed" || rawStatus === "failed" ? rawStatus : "skipped"
+      messages.push({
+        id: String(row.id),
+        role: "summary",
+        content: "",
+        timestamp: new Date(row.created_at).getTime(),
+        summary: {
+          filesCreated: Number(data.files_created) || 0,
+          filesModified: Number(data.files_modified) || 0,
+          buildStatus,
+          durationMs: Number(data.duration_ms) || 0,
+          tokensTotal: Number(data.tokens_total) || 0,
+          costUsd: Number(data.cost_usd) || 0,
+        },
+      })
+      continue
+    }
+
+    if (type === "error") {
+      messages.push({
+        id: String(row.id),
+        role: "assistant",
+        content: `Error: ${data.message || row.content || "unknown"}`,
+        timestamp: new Date(row.created_at).getTime(),
+        isError: true,
+      })
+      continue
+    }
+  }
+
+  return { messages, tokens, cost }
+}
+
 const roleConfig: Record<AgentRole, { icon: React.ReactNode; label: string; color: string }> = {
   user: { icon: <User className="h-3.5 w-3.5" />, label: "You", color: "text-[var(--text-primary)]" },
   assistant: { icon: <Bot className="h-3.5 w-3.5" />, label: "AI", color: "text-[var(--accent)]" },
@@ -113,6 +295,42 @@ export function AgentChat({
   useEffect(() => {
     onStatsUpdate?.({ tokens: tokenCount, cost: costEstimate })
   }, [tokenCount, costEstimate, onStatsUpdate])
+
+  // Stream 4b: hydrate messages from the durable PG log when the
+  // sessionId changes. Runs BEFORE the SSE subscription opens so the
+  // user sees their history immediately on page load / session switch.
+  // Failures are silent — the chat just starts empty, and the SSE loop
+  // still populates new events. This effect also clears state when
+  // switching sessions so the previous conversation doesn't bleed
+  // into the new one.
+  useEffect(() => {
+    if (!sessionId) {
+      setMessages([])
+      return
+    }
+    const projectIdNum = parseInt(projectId, 10)
+    if (!Number.isFinite(projectIdNum)) return
+
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { messages: rows } = await listSessionMessages(
+          projectIdNum,
+          sessionId,
+        )
+        if (cancelled) return
+        const hydrated = hydrateFromDurableLog(rows)
+        setMessages(hydrated.messages)
+        setTokenCount(hydrated.tokens)
+        setCostEstimate(hydrated.cost)
+      } catch {
+        // Durable log unavailable — start empty and let SSE populate.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [sessionId, projectId])
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {

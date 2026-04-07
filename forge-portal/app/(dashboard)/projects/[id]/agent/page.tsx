@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useParams } from "next/navigation"
-import { Settings, Terminal } from "lucide-react"
+import { PanelLeftClose, PanelLeftOpen, Settings, Terminal } from "lucide-react"
 import { AgentChat } from "@/components/agent/agent-chat"
 import { StepRibbon, type Step } from "@/components/agent/step-ribbon"
 import { CodePanel } from "@/components/agent/code-panel"
@@ -16,6 +16,7 @@ import {
   loadSplitPct,
 } from "@/components/agent/panel-divider"
 import { MobilePanelSwitcher } from "@/components/agent/mobile-panel-switcher"
+import { TaskSwitcher } from "@/components/agent/task-switcher"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 // Derive build state from the step list for the status bar.
@@ -45,7 +46,8 @@ function useIsMobile(): boolean {
 
 export default function AgentTerminalPage() {
   const params = useParams()
-  const projectId = params.id as string
+  const projectIdStr = params.id as string
+  const projectIdNum = parseInt(projectIdStr, 10)
 
   // ---- Session + agent state ----
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -63,6 +65,7 @@ export default function AgentTerminalPage() {
   // Lazy initializer reads localStorage only on the client; SSR gets the
   // default via typeof-window check inside loadSplitPct().
   const [splitPct, setSplitPct] = useState<number>(() => loadSplitPct())
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
   const mainRef = useRef<HTMLDivElement>(null)
   const isMobile = useIsMobile()
 
@@ -74,7 +77,7 @@ export default function AgentTerminalPage() {
 
   const chatPanel = (
     <AgentChat
-      projectId={projectId}
+      projectId={projectIdStr}
       sessionId={sessionId}
       onSessionCreated={setSessionId}
       onCodeFiles={setCodeFiles}
@@ -102,6 +105,17 @@ export default function AgentTerminalPage() {
         role="banner"
         className="flex items-center h-10 px-2.5 gap-2 bg-[var(--bg-secondary)] border-b border-[var(--border-primary)]"
       >
+        <button
+          onClick={() => setSidebarOpen((v) => !v)}
+          className="inline-flex items-center justify-center w-[26px] h-[26px] rounded text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors duration-100 shrink-0"
+          aria-label={sidebarOpen ? "Hide sessions sidebar" : "Show sessions sidebar"}
+        >
+          {sidebarOpen ? (
+            <PanelLeftClose className="h-3.5 w-3.5" />
+          ) : (
+            <PanelLeftOpen className="h-3.5 w-3.5" />
+          )}
+        </button>
         <div className="flex items-center gap-2 min-w-0">
           <div className="w-5 h-5 rounded-[3px] bg-[var(--accent)] flex items-center justify-center shrink-0">
             <Terminal className="h-3 w-3 text-white" />
@@ -139,29 +153,41 @@ export default function AgentTerminalPage() {
       {/* ---- ROW 2: STEP RIBBON (40px) ---- */}
       <StepRibbon steps={steps} />
 
-      {/* ---- ROW 3: MAIN (chat + divider + code) ---- */}
-      <main
-        ref={mainRef}
-        id="agent-main"
-        className="min-h-0 overflow-hidden"
-        style={{
-          // Desktop only — mobile uses MobilePanelSwitcher below. Grid is
-          // {splitPct}% | 1px divider | {100-splitPct}%. Inline style because
-          // Tailwind arbitrary value classes can't hold dynamic numeric values.
-          display: isMobile ? "block" : "grid",
-          gridTemplateColumns: `${splitPct}% 1px minmax(0, 1fr)`,
-        }}
-      >
-        {isMobile ? (
-          <MobilePanelSwitcher chat={chatPanel} code={codePanelEl} />
-        ) : (
-          <>
-            <div className="min-w-0 overflow-hidden">{chatPanel}</div>
-            <PanelDivider onChange={setSplitPct} containerRef={mainRef} />
-            <div className="min-w-0 overflow-hidden">{codePanelEl}</div>
-          </>
+      {/* ---- ROW 3: MAIN ([sidebar] + chat + divider + code) ---- */}
+      <div className="flex min-h-0 overflow-hidden">
+        {/* Session sidebar — toggled via the header button. Hidden on
+            mobile (MobilePanelSwitcher occupies the full row there). */}
+        {sidebarOpen && !isMobile && (
+          <TaskSwitcher
+            projectId={projectIdNum}
+            activeSessionId={sessionId}
+            onSessionSelect={(id) => setSessionId(id)}
+            className="w-[200px] shrink-0"
+          />
         )}
-      </main>
+
+        {/* Chat + code pane — the grid lives inside this flex child so
+            PanelDivider drag math still works against mainRef. */}
+        <main
+          ref={mainRef}
+          id="agent-main"
+          className="min-h-0 flex-1 overflow-hidden"
+          style={{
+            display: isMobile ? "block" : "grid",
+            gridTemplateColumns: `${splitPct}% 1px minmax(0, 1fr)`,
+          }}
+        >
+          {isMobile ? (
+            <MobilePanelSwitcher chat={chatPanel} code={codePanelEl} />
+          ) : (
+            <>
+              <div className="min-w-0 overflow-hidden">{chatPanel}</div>
+              <PanelDivider onChange={setSplitPct} containerRef={mainRef} />
+              <div className="min-w-0 overflow-hidden">{codePanelEl}</div>
+            </>
+          )}
+        </main>
+      </div>
 
       {/* ---- ROW 4: STATUS BAR (20px) ---- */}
       <StatusBar
