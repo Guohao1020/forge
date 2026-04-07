@@ -63,3 +63,4 @@ workspaces/
 *.exe~
 forge-core/forge-core.exe~
 forge-core/k8s/tls/
+.gstack/
