@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -131,17 +132,19 @@ func (h *Handler) Stream(c *gin.Context) {
 	}
 }
 
+// mapToJSON serializes a Redis Stream entry to a JSON object the browser can parse.
+// Values come from XREAD as `interface{}` (in practice strings) and may contain quotes,
+// backslashes, or newlines from the LLM output — naive concatenation would produce
+// invalid JSON and the EventSource would silently drop the event.
 func mapToJSON(m map[string]interface{}) string {
-	// Simple JSON serialization for flat string maps
-	result := "{"
-	first := true
+	out := make(map[string]string, len(m))
 	for k, v := range m {
-		if !first {
-			result += ","
-		}
-		result += fmt.Sprintf(`"%s":"%s"`, k, v)
-		first = false
+		out[k] = fmt.Sprint(v)
 	}
-	result += "}"
-	return result
+	b, err := json.Marshal(out)
+	if err != nil {
+		// Fall back to a minimal, always-valid envelope on the unlikely error.
+		return `{"type":"error","message":"failed to encode event"}`
+	}
+	return string(b)
 }
