@@ -1,0 +1,50 @@
+name: agent-loop
+description: Agent Loop default parameters and per-purpose overrides
+version: "1.0"
+
+defaults:
+  max_tokens: 4096
+  max_turns: 25
+  temperature: 0.3
+  timeout_seconds: 300
+
+purpose_overrides:
+  analyze:
+    max_tokens: 2048
+    max_turns: 5
+    temperature: 0.2
+
+  generate:
+    max_tokens: 8192
+    max_turns: 30
+    temperature: 0.3
+
+  review:
+    max_tokens: 4096
+    max_turns: 10
+    temperature: 0.1
+
+  plan:
+    max_tokens: 4096
+    max_turns: 8
+    temperature: 0.2
+
+  test:
+    max_tokens: 8192
+    max_turns: 15
+    temperature: 0.2
+
+  profile:
+    max_tokens: 2048
+    max_turns: 5
+    temperature: 0.1
+
+build_verify:
+  max_retries: 3
+  timeout_seconds: 120
+  cleanup_temp: true
+
+pair_pipeline:
+  max_cycles: 3
+  reviewer_model_override: null
+  require_build_pass: true

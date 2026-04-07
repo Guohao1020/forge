@@ -15,6 +15,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/k8s"
 	"go.temporal.io/sdk/client"
 
+	"github.com/shulex/forge/forge-core/internal/module/agent"
 	"github.com/shulex/forge/forge-core/internal/module/artifact"
 	"github.com/shulex/forge/forge-core/internal/module/cost"
 	"github.com/shulex/forge/forge-core/internal/module/entropy"
@@ -238,6 +239,10 @@ func main() {
 	specsService := specs.NewService(specsRepo, rdb)
 	specsHandler := specs.NewHandler(specsService)
 
+	// Agent Terminal handler (OpenHarness)
+	agentSvc := agent.NewService(cfg.AIWorkerURL)
+	agentHandler := agent.NewHandler(agentSvc, rdb)
+
 	r := router.Setup(&router.Deps{
 		DB:                  db,
 		RDB:                 rdb,
@@ -260,6 +265,7 @@ func main() {
 		SearchHandler:       searchHandler,
 		SettingsHandler:     settingsHandler,
 		WebhookHandler:      webhookHandler,
+		AgentHandler:        agentHandler,
 	})
 
 	// Graceful shutdown

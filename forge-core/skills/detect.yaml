@@ -1,0 +1,38 @@
+name: detect
+description: Technology stack detection rules
+version: "1.0"
+
+rules:
+  - language: go
+    indicators:
+      - file: "go.mod"
+      - file: "go.sum"
+    build_command: "go build ./..."
+    test_command: "go test ./..."
+    lint_command: "golangci-lint run"
+
+  - language: typescript
+    indicators:
+      - file: "tsconfig.json"
+      - file: "package.json"
+        contains: "typescript"
+    build_command: "npm run build"
+    test_command: "npm test"
+    lint_command: "npx eslint ."
+
+  - language: python
+    indicators:
+      - file: "pyproject.toml"
+      - file: "requirements.txt"
+      - file: "setup.py"
+    build_command: "python -m py_compile"
+    test_command: "python -m pytest"
+    lint_command: "ruff check ."
+
+  - language: java
+    indicators:
+      - file: "pom.xml"
+      - file: "build.gradle"
+    build_command: "mvn compile"
+    test_command: "mvn test"
+    lint_command: "mvn checkstyle:check"

@@ -1049,3 +1049,131 @@ Target: 80%+ coverage on `src/openharness/` modules.
 | B | `curl localhost:8090/api/run` 返回 Agent 响应, Go SSE 端点可推送事件 |
 | C | 浏览器 `localhost:3000/projects/1/agent` 可以发消息并看到流式回复 |
 | D | 编译失败时自动修复循环可见 (Build Failed → AI Fix → Build Pass) |
+
+---
+
+## CEO Review Amendments (2026-04-06)
+
+### Scope Expansions Accepted (5)
+1. **Multi-agent conversation visibility** — Coder/Reviewer pair pipeline visible in Agent Terminal UI
+2. **Live compilation output streaming** — Real compiler stdout/stderr streaming in build cards
+3. **Token cost counter** — Running cost display in Agent Terminal status bar
+4. **Diff view between AI fix iterations** — Inline code diffs in chat showing what changed
+5. **Harness marketplace** — Browse, import, publish skills across projects and teams
+
+### New Tasks Added
+- **Task 15: Remove Temporal** — Delete 4,653 lines of Temporal code, migrate all task routing to new Agent engine
+- **Task 16: Harness Marketplace** — Skill browsing UI, import/export, publishing flow
+
+### Architecture Fixes Required
+1. **Redis**: Use Redis pub/sub for speed + PostgreSQL event log table for persistence (dual-write)
+2. **Security**: Switch HookExecutor from `subprocess_shell` to `subprocess_exec`. Require explicit `shell: true` flag for hooks that need shell features.
+3. **Streaming**: ModelRouterAdapter MUST use `chat_stream()` not `chat()` for real token-by-token streaming
+4. **Permissions**: Wire PermissionChecker into QueryEngine tool execution path
+5. **Skills**: Add Jinja2-style template rendering ({{ project.language }}, {{ project.standards }}) to SkillLoader
+6. **Observability**: Add request correlation IDs (generated in Go, passed to Python, included in all logs and SSE events). Structured JSON logging on FastAPI server.
+7. **SSE**: Auto-reconnect with last-event-id. Debounce send button. Disable during streaming.
+8. **CI Hook**: Max 3 retry attempts with exponential backoff + circuit breaker on CI auto-fix loop
+
+### Error Handling Gaps to Fix
+- FileNotFoundError + PermissionError in HookExecutor._run_command_hook
+- RateLimitError + JSONDecodeError in API client
+- ConnectionError for Redis in Go SSE handler + Python publisher
+- MaxTurnsExceeded surfaced to user as "Agent reached maximum iterations"
+- Empty model response handling in ModelRouterAdapter
+- Session-not-found 404 in FastAPI /api/sessions/{id}
+
+### Deployment Note
+- Add ai-worker FastAPI service (port 8090) to docker-compose.dev.yml
+- Add automated E2E test covering: user message → Go API → Python engine → Redis → Go SSE → browser
+
+## Eng Review Amendments (2026-04-06)
+
+### Architecture Fixes
+1. **Unified agent loop**: Migrate existing 6 agents (analyst, coder, reviewer, planner, test_writer, profiler) to use QueryEngine. Delete BaseAgent after migration. One codepath, not two.
+2. **Async Go→Python**: Change Go agent handler from synchronous HTTP POST to fire-and-forget. Go sends 202 Accepted, Python publishes results to Redis Streams. No blocked goroutines.
+3. **Skill namespacing**: Add namespace prefixes (`forge:` for built-in, `community:` for marketplace). Collision detection on register.
+4. **Context window management**: Add sliding window + summarization to QueryEngine. Prevent unbounded message history from exploding LLM costs at 50+ turns.
+
+### Test Requirements Added
+- All Phase B/C/D tasks must include test specs (TDD pattern from Phase A)
+- 38 test gaps identified in coverage diagram, all to be covered during implementation
+- 3 E2E tests needed: chat flow, build verify flow, auto-fix loop flow
+- 3 critical failure modes need explicit error handling + tests: compiler missing, disk full, pair pipeline exhaustion
+
+## Design Review Amendments (2026-04-06)
+
+### CEO Expansion Placement
+1. **Multi-agent conversation**: Inline in chat panel. Coder = blue avatar (accent color). Reviewer = purple avatar (code-keyword color). Single conversation thread with multiple participants.
+2. **Live compiler output**: Inside build card, expandable. Max 300px height with internal scroll. Monospace font (Geist Mono).
+3. **Token cost counter**: Status bar right side. Format: `12,847 tokens ($0.23)`. Uses text-muted color.
+4. **Diff view**: Code panel tab toggle. Tab bar: `[file.ts] [api.ts] | Diff`. Diff mode shows before/after with green (added) / red (removed) highlights using code-added/code-added-bg tokens.
+5. **Marketplace**: Separate page `/projects/:id/skills`. List view with search. Featured skills as cards.
+
+### Interaction State Table
+
+```
+FEATURE              | LOADING                    | EMPTY                           | ERROR                        | SUCCESS           | PARTIAL
+---------------------|----------------------------|---------------------------------|------------------------------|-------------------|------------------
+Chat Panel           | Skeleton bubbles (3)       | Welcome + 3 suggested prompts   | Red banner "Connection lost, reconnecting..." | Messages rendered | Streaming text with pulsing cursor
+Step Ribbon          | 3 gray placeholder pills   | Single "Ready" pill             | Failed step turns red + ✗    | Green + ✓         | Active = blue glow + cycle badge
+Code Panel           | Shimmer placeholder lines  | "No files yet" + code icon      | "Failed to load" + retry btn | File tabs + syntax| Partial file with streaming indicator
+Build Card           | "Building..." + spinner    | N/A                             | Red bg + error log (scrollable max 300px) | Green bg + "Build passed" | Compiler output streaming line-by-line
+Tool Exec Card       | Tool name + spinner        | N/A                             | Red outline + error message  | Green checkmark + collapsible output | Running indicator
+Status Bar           | "Connecting..."            | Model name + "0 tokens ($0.00)" | "Disconnected" in red        | Model + tokens + cost | Real-time token/cost counter
+Input Box            | Disabled + "AI is thinking..."| Placeholder: "Describe what you want to build..." | Disabled + error tooltip | Enabled | Disabled during streaming
+Multi-Agent (Pair)   | "Pair review starting..."  | N/A (only active during pair pipeline) | "Review agent error" inline | Coder/Reviewer messages with avatars | One agent streaming
+Cost Counter         | "$0.00"                    | "$0.00"                         | Last known value + "stale"   | Running total     | Updating per-message
+Diff View            | Skeleton diff lines        | "No changes yet"                | "Diff unavailable"           | Side-by-side diff | Partial diff during streaming
+```
+
+### Animation Spec ("Calm Engineering")
+- **Duration**: 150ms ease-out for all transitions
+- **Content appear**: fade-in (opacity 0→1, 150ms)
+- **Panel slide**: translateX for code panel show/hide (200ms ease-out)
+- **Step ribbon**: background-color transition (150ms) for state changes
+- **Build card expand**: max-height transition (200ms ease-out)
+- **Streaming cursor**: pulsing block cursor, 1s cycle, Geist Mono
+- **New message**: slide-up 4px + fade-in (150ms)
+- **No bounces, no springs, no elastic easing.** Professional, not playful.
+
+### Responsive Spec
+- **>1024px (desktop)**: Full three-panel layout. Chat 60%, Code 40%.
+- **768-1024px (tablet)**: Code panel collapsible via toggle button. Chat goes 100% when code hidden.
+- **<768px (mobile)**: Code panel hidden behind bottom sheet/drawer. Step ribbon horizontal scroll. Chat full-width. Input pinned to bottom.
+- **Theme toggle**: Always visible in header across all breakpoints.
+
+### Accessibility Requirements
+- **Keyboard**: Cmd/Ctrl+Enter to send. Tab to navigate panels. Escape to collapse expanded cards.
+- **ARIA**: Step ribbon items have role="listitem" with aria-current="step" for active. Build cards have role="alert" for pass/fail.
+- **Touch**: 44px minimum touch targets for all interactive elements on mobile.
+- **Screen readers**: Chat messages announce agent name + content. Build results announce pass/fail status.
+
+### Resolved Design Decisions
+- Chat message grouping: consecutive same-agent messages in one bubble
+- Multi-agent avatars: Coder = blue circle + code icon, Reviewer = purple circle + eye icon
+- Code panel diff toggle: tab bar item alongside file tabs
+- Marketplace layout: list view with search bar, cards for featured only
+- Streaming cursor: pulsing block cursor, 1s cycle, Geist Mono
+- Build card max height: 300px with internal scroll
+- Session history: sidebar shows past sessions for this task
+
+### Approved Mockups
+
+| Screen/Section | Mockup Path | Direction | Notes |
+|----------------|-------------|-----------|-------|
+| Agent Terminal (full) | ~/.gstack/projects/voc-shulex-forge/designs/agent-terminal-shotgun-20260406/variant-B-dense.html | Dense Engineering (IDE-style) | 40px header, 12px body, 4px radius, Cursor/VS Code inspired |
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 2 | ISSUES_OPEN | 5 expansions accepted, 1 critical gap (CI infinite loop), 3 cross-model tensions resolved |
+| Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 4 | CLEAN (PLAN) | 5 issues, 0 critical gaps. Dual loop unified, async Go->Python, skill namespacing, test gaps covered, context window managed. |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | CLEAN (FULL) | score: 4/10 -> 8/10, 10 decisions made. Interaction states, animations, responsive, a11y, expansion placement all specified. |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
+
+- **OUTSIDE VOICE:** CEO review ran Claude subagent. Found 10 issues, 3 new (fake streaming, orphaned permissions, static skills). All resolved.
+- **UNRESOLVED:** 0 decisions pending
+- **VERDICT:** CEO + ENG + DESIGN CLEARED — ready to implement

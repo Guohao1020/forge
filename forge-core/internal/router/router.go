@@ -17,6 +17,7 @@ import (
 	"github.com/shulex/forge/forge-core/internal/module/entropy"
 	"github.com/shulex/forge/forge-core/internal/module/search"
 	"github.com/shulex/forge/forge-core/internal/module/settings"
+	"github.com/shulex/forge/forge-core/internal/module/agent"
 	"github.com/shulex/forge/forge-core/internal/module/webhook"
 	"github.com/shulex/forge/forge-core/internal/module/auth"
 	"github.com/shulex/forge/forge-core/internal/module/conversation"
@@ -55,6 +56,7 @@ type Deps struct {
 	SearchHandler       *search.Handler
 	SettingsHandler     *settings.Handler
 	WebhookHandler      *webhook.Handler
+	AgentHandler        *agent.Handler
 }
 
 func Setup(deps *Deps) *gin.Engine {
@@ -208,6 +210,12 @@ func Setup(deps *Deps) *gin.Engine {
 			protected.GET("/projects/:id/code/branches", deps.ProjectHandler.ListBranches)
 			protected.GET("/projects/:id/code/prs", deps.ProjectHandler.ListPRs)
 			protected.GET("/projects/:id/code/prs/:prNumber", deps.ProjectHandler.GetPRDetail)
+
+			// Agent Terminal
+			if deps.AgentHandler != nil {
+				protected.POST("/projects/:id/agent/chat", deps.AgentHandler.Chat)
+				protected.GET("/projects/:id/agent/stream", deps.AgentHandler.Stream)
+			}
 
 			// Tasks
 			if deps.TaskHandler != nil {

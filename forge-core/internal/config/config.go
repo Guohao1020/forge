@@ -18,8 +18,11 @@ type Config struct {
 	GitHubClientSecret string
 	GitHubRedirectURI  string
 
-	// Temporal
+	// Temporal (deprecated, being replaced by Agent Terminal)
 	TemporalAddress string
+
+	// AI Worker (OpenHarness Agent Terminal)
+	AIWorkerURL string
 
 	// Encryption
 	EncryptionKey string
@@ -53,6 +56,7 @@ func Load() *Config {
 		GitHubRedirectURI:  getEnv("GITHUB_REDIRECT_URI", "http://localhost:3000/auth/github/callback"),
 
 		TemporalAddress: getEnv("TEMPORAL_ADDRESS", "localhost:7233"),
+		AIWorkerURL:     getEnv("AI_WORKER_URL", "http://localhost:8090"),
 
 		EncryptionKey: getEnv("ENCRYPTION_KEY", ""),
 
