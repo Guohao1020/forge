@@ -11,15 +11,15 @@
   --font-sans: var(--font-inter);
   --font-mono: var(--font-jetbrains-mono);
   --font-heading: var(--font-inter);
+  /* Type scale: use Tailwind 4 arbitrary values (`text-[9px]`, `text-[10px]`,
+     `text-[11px]`, `text-[12px]`) in component markup rather than named tokens.
+     Named --text-tiny / --text-label / --text-body tokens collide with
+     Tailwind's reserved typography namespace and are unreliable across cache
+     clears; hardcoded pixel sizes in JSX with DESIGN.md as the reference are
+     clearer and more stable. See docs/DESIGN.md "Typography". */
   /* Tailwind 4 derives fractional spacing from --spacing (0.25rem base), so
      p-0.25 (1px), p-0.5 (2px), p-0.75 (3px), p-1.25 (5px) work out of the box.
      No custom --spacing-* entries needed for the mockup's 1-5px gaps. */
-  /* Type scale — mockup uses 9/10/11/12px for meta/label/code (body is 12px/1.4).
-     Creates utilities text-tiny / text-meta / text-label / text-body. */
-  --text-tiny: 9px;
-  --text-meta: 10px;
-  --text-label: 11px;
-  --text-body: 12px;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

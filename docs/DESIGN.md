@@ -21,14 +21,20 @@ with the one exception documented under **WCAG corrections** below.
 
 - **Body:** Inter, 12px, line-height 1.4 (mockup lines 62, 117-120)
 - **Code:** JetBrains Mono, 11px in UI chrome (tool labels, gutters), 10-11px inline code
-- **Tailwind class vs mockup token:**
+- **Tailwind class for each size (use arbitrary values, not named tokens):**
 
-| Mockup | Tailwind | `--text-*` | Use |
-|---|---|---|---|
-| 9px | `text-tiny` | `--text-tiny` | msg-model badge, code-gutter, meta chrome |
-| 10px | `text-meta` | `--text-meta` | msg-time, tool-status, code-breadcrumb |
-| 11px | `text-label` | `--text-label` | msg-name, tool-label, step, code-view |
-| 12px | `text-body` / default | `--text-body` | msg-text (body copy), headers |
+| Size | Tailwind | Use |
+|---|---|---|
+| 9px | `text-[9px]` | msg-model badge, code-gutter, tiny meta chrome |
+| 10px | `text-[10px]` | msg-time, tool-status, code-breadcrumb |
+| 11px | `text-[11px]` | msg-name, tool-label, step, code-view |
+| 12px | `text-[12px]` or default | msg-text (body copy), headers |
+
+**Why arbitrary values, not named tokens (`text-tiny`, `text-label`, etc.):** Tailwind 4 treats
+`--text-*` as its reserved typography namespace for the built-in scale (`text-xs`, `text-sm`,
+`text-base`, `text-lg`). Adding custom entries is unreliable across cache clears and HMR. The
+mockup uses hardcoded pixel sizes, and so do we. This doc is the source of truth for which
+size goes where.
 
 **Do not use `text-sm` (14px) anywhere in Agent Terminal chrome.** 14px breaks the IDE density.
 `text-sm` is still fine for login page, settings forms, and high-density reading panels
