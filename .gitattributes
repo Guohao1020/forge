@@ -1,0 +1,6 @@
+# Force LF line endings for shell scripts and Dockerfiles.
+# Windows checkouts via core.autocrlf=true would otherwise inject CRLF,
+# breaking /bin/sh inside Linux containers (`bad interpreter: ^M`).
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.Dockerfile text eol=lf
