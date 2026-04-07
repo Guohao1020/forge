@@ -55,10 +55,14 @@ services:
     build: ./ai-worker
     container_name: forge-ai-worker
     env_file: ./ai-worker/.env
+    ports:
+      - "8090:8090"
     environment:
       - TEMPORAL_HOST=temporal:7233
       - FORGE_API_URL=http://host.docker.internal:8080
       - REDIS_HOST=redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - temporal
     restart: unless-stopped

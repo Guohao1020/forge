@@ -20,8 +20,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source
 COPY src/ src/
 
+# Entry point script: runs uvicorn (FastAPI on :8090) + Temporal worker side-by-side
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
 # Non-root user
 RUN useradd -m forge
 USER forge
 
-CMD ["python", "-B", "-m", "src.worker"]
+EXPOSE 8090
+
+CMD ["/app/start.sh"]
