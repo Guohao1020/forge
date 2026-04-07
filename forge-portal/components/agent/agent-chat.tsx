@@ -83,7 +83,8 @@ export function AgentChat({
     let reconnectTimer: NodeJS.Timeout
 
     function connect() {
-      const url = `/api/projects/${projectId}/agent/stream?session_id=${sessionId}${lastEventId ? `&last_event_id=${lastEventId}` : ""}`
+      const token = localStorage.getItem("forge_token") || ""
+      const url = `/api/projects/${projectId}/agent/stream?session_id=${sessionId}${lastEventId ? `&last_event_id=${lastEventId}` : ""}&token=${token}`
       const es = new EventSource(url)
       eventSourceRef.current = es
 
@@ -196,9 +197,13 @@ export function AgentChat({
     setInput("")
 
     try {
+      const token = localStorage.getItem("forge_token")
       const resp = await fetch(`/api/projects/${projectId}/agent/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           session_id: sessionId,
           message: userMsg.content,
