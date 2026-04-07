@@ -46,7 +46,7 @@ export function ProjectCard({ project, onStarToggled }: ProjectCardProps) {
   });
 
   return (
-    <Link href={`/projects/${project.id}`} className="block group">
+    <Link href={`/projects/${project.id}/agent`} className="block group">
       <div className="relative rounded-xl border border-border bg-card p-5 transition-all duration-200 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5">
         {/* Star button */}
         <Button

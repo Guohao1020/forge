@@ -29,8 +29,7 @@ export function ProjectSidebar({ projectId, projectName }: ProjectSidebarProps) 
   const base = `/projects/${projectId}`;
 
   const navItems = [
-    { href: base, label: "任务", icon: Layers, exact: true },
-    { href: `${base}/agent`, label: "Agent", icon: Terminal },
+    { href: `${base}/agent`, label: "Agent", icon: Terminal, exact: true },
     { href: `${base}/code`, label: "代码", icon: Code2 },
     { href: `${base}/changes`, label: "变更", icon: GitCommit },
     { href: `${base}/tests`, label: "测试", icon: FlaskConical },

@@ -238,12 +238,12 @@ export function AgentChat({
       )}
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
-            <div className="text-center space-y-4 max-w-md">
-              <Bot className="h-10 w-10 mx-auto text-[var(--accent)] opacity-50" />
-              <p className="text-sm text-[var(--text-muted)]">
+            <div className="text-center space-y-3 max-w-sm">
+              <Bot className="h-8 w-8 mx-auto text-[var(--accent)] opacity-40" />
+              <p className="text-xs text-[var(--text-muted)]">
                 Describe what you want to build
               </p>
               <div className="flex flex-wrap gap-2 justify-center">
@@ -276,7 +276,7 @@ export function AgentChat({
                     </span>
                   </div>
                   {msg.content && (
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                    <div className="text-xs leading-relaxed whitespace-pre-wrap">
                       {msg.content}
                       {isStreaming && msg === messages[messages.length - 1] && msg.role !== "user" && (
                         <span className="inline-block w-1.5 h-4 bg-[var(--accent)] ml-0.5 animate-blink" />
@@ -311,15 +311,15 @@ export function AgentChat({
         })}
       </div>
 
-      {/* Status bar */}
-      <div className="flex items-center justify-between px-4 py-1.5 border-t border-[var(--border)] bg-[var(--surface)] text-xs text-[var(--text-dim)]">
+      {/* Status bar — 20px dense */}
+      <div className="flex items-center justify-between px-2.5 h-5 border-t border-[var(--border)] bg-[var(--surface)] text-[11px] text-[var(--text-dim)] font-mono shrink-0">
         <span>claude-sonnet-4-20250514</span>
         <span>{tokenCount.toLocaleString()} tokens (${costEstimate.toFixed(4)})</span>
       </div>
 
-      {/* Input */}
-      <div className="border-t border-[var(--border)] p-3">
-        <div className="flex items-end gap-2">
+      {/* Input — compact, IDE-style */}
+      <div className="border-t border-[var(--border)] px-2.5 py-2 shrink-0">
+        <div className="flex items-end gap-1.5">
           <textarea
             ref={inputRef}
             value={input}
@@ -328,19 +328,19 @@ export function AgentChat({
             placeholder={isStreaming ? "AI is thinking..." : "Describe what you want to build..."}
             disabled={isStreaming}
             rows={1}
-            className="flex-1 resize-none rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] disabled:opacity-50 transition-colors duration-150"
+            className="flex-1 resize-none rounded border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 text-xs focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] disabled:opacity-50 transition-colors duration-150"
           />
           <button
             onClick={sendMessage}
             disabled={!input.trim() || isStreaming}
-            className="flex items-center justify-center rounded bg-[var(--accent)] text-white p-2 hover:bg-[var(--accent-hover)] disabled:opacity-50 transition-colors duration-150"
+            className="flex items-center justify-center rounded bg-[var(--accent)] text-white p-1.5 hover:bg-[var(--accent-hover)] disabled:opacity-50 transition-colors duration-150"
             aria-label="Send message"
           >
-            <Send className="h-4 w-4" />
+            <Send className="h-3.5 w-3.5" />
           </button>
         </div>
-        <div className="text-[0.65rem] text-[var(--text-dim)] mt-1">
-          {isStreaming ? "" : "Ctrl+Enter to send"}
+        <div className="text-[10px] text-[var(--text-dim)] mt-0.5">
+          {isStreaming ? "" : "⌘+Enter to send"}
         </div>
       </div>
     </div>
