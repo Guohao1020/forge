@@ -169,6 +169,11 @@ def _serialize_event(event: Any, correlation_id: str) -> Dict[str, str]:
         ToolExecutionStarted,
         ToolExecutionCompleted,
         ErrorEvent,
+        ThinkingStarted,
+        ThinkingStopped,
+        FixLoopStarted,
+        FixLoopCompleted,
+        SessionComplete,
     )
 
     base = {"correlation_id": correlation_id}
@@ -194,6 +199,28 @@ def _serialize_event(event: Any, correlation_id: str) -> Dict[str, str]:
         base["type"] = "error"
         base["message"] = event.message
         base["recoverable"] = str(event.recoverable)
+    elif isinstance(event, ThinkingStarted):
+        base["type"] = "thinking_started"
+        base["label"] = event.label
+    elif isinstance(event, ThinkingStopped):
+        base["type"] = "thinking_stopped"
+    elif isinstance(event, FixLoopStarted):
+        base["type"] = "fix_loop_started"
+        base["cycle"] = str(event.cycle)
+        base["max_cycles"] = str(event.max_cycles)
+        base["errors"] = str(event.errors)
+    elif isinstance(event, FixLoopCompleted):
+        base["type"] = "fix_loop_completed"
+        base["cycle"] = str(event.cycle)
+        base["success"] = str(event.success)
+    elif isinstance(event, SessionComplete):
+        base["type"] = "session_complete"
+        base["files_created"] = str(event.files_created)
+        base["files_modified"] = str(event.files_modified)
+        base["build_status"] = event.build_status
+        base["duration_ms"] = str(event.duration_ms)
+        base["tokens_total"] = str(event.tokens_total)
+        base["cost_usd"] = f"{event.cost_usd:.4f}"
     else:
         base["type"] = "unknown"
         base["data"] = str(event)

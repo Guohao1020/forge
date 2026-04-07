@@ -2,13 +2,17 @@
 
 import { useEffect, useRef, useState, useCallback } from "react"
 import { cn } from "@/lib/utils"
-import { Send, Bot, User, Code2, Eye, WifiOff } from "lucide-react"
+import { Send, Bot, User, Code2, Eye, WifiOff, AlertTriangle, RotateCw } from "lucide-react"
 import { ToolExecution } from "./tool-execution"
 import { BuildCard } from "./build-card"
+import { ThinkingIndicator } from "./thinking-indicator"
+import { SummaryCard, type BuildSummaryStatus } from "./summary-card"
 import type { ConnStatus } from "./status-bar"
 
-// Agent avatar types for multi-agent pair pipeline visibility
-type AgentRole = "user" | "assistant" | "coder" | "reviewer"
+// Agent avatar types for multi-agent pair pipeline visibility.
+// "system" is a backend-emitted notification (fix loop entry, build failure).
+// "summary" is a terminal SessionComplete card.
+type AgentRole = "user" | "assistant" | "coder" | "reviewer" | "system" | "summary"
 
 interface ChatMessage {
   id: string
@@ -17,6 +21,18 @@ interface ChatMessage {
   timestamp: number
   tools?: ToolCall[]
   build?: BuildInfo
+  isError?: boolean
+  retryContent?: string
+  summary?: SessionSummary
+}
+
+interface SessionSummary {
+  filesCreated: number
+  filesModified: number
+  buildStatus: BuildSummaryStatus
+  durationMs: number
+  tokensTotal: number
+  costUsd: number
 }
 
 interface ToolCall {
@@ -49,10 +65,12 @@ interface AgentChatProps {
 }
 
 const roleConfig: Record<AgentRole, { icon: React.ReactNode; label: string; color: string }> = {
-  user: { icon: <User className="h-3.5 w-3.5" />, label: "You", color: "text-[var(--text)]" },
+  user: { icon: <User className="h-3.5 w-3.5" />, label: "You", color: "text-[var(--text-primary)]" },
   assistant: { icon: <Bot className="h-3.5 w-3.5" />, label: "AI", color: "text-[var(--accent)]" },
   coder: { icon: <Code2 className="h-3.5 w-3.5" />, label: "Coder", color: "text-[var(--accent)]" },
-  reviewer: { icon: <Eye className="h-3.5 w-3.5" />, label: "Reviewer", color: "text-[var(--code-keyword)]" },
+  reviewer: { icon: <Eye className="h-3.5 w-3.5" />, label: "Reviewer", color: "text-[var(--accent-text)]" },
+  system: { icon: <AlertTriangle className="h-3.5 w-3.5" />, label: "System", color: "text-[var(--text-warning)]" },
+  summary: { icon: <Bot className="h-3.5 w-3.5" />, label: "AI", color: "text-[var(--accent)]" },
 }
 
 export function AgentChat({
@@ -78,6 +96,9 @@ export function AgentChat({
   const retryCountRef = useRef(0)
   const [tokenCount, setTokenCount] = useState(0)
   const [costEstimate, setCostEstimate] = useState(0)
+  // Stream 4: backend-driven thinking indicator. Null means idle, a string
+  // is the current label ("Running read_file", "Fixing code", etc.)
+  const [thinkingLabel, setThinkingLabel] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -224,57 +245,131 @@ export function AgentChat({
 
       case "error":
         setIsStreaming(false)
+        setThinkingLabel(null)
         setMessages(prev => [...prev, {
           id: crypto.randomUUID(),
           role: "assistant",
           content: `Error: ${data.message}`,
           timestamp: Date.now(),
+          isError: true,
         }])
         break
+
+      case "thinking_started":
+        setThinkingLabel(data.label || "Thinking")
+        break
+
+      case "thinking_stopped":
+        setThinkingLabel(null)
+        break
+
+      case "fix_loop_started": {
+        const cycle = parseInt(data.cycle) || 1
+        const maxCycles = parseInt(data.max_cycles) || 3
+        const errors = parseInt(data.errors) || 0
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: "system",
+          content:
+            errors > 0
+              ? `${errors} compilation error${errors === 1 ? "" : "s"} detected. Entering fix loop (attempt ${cycle}/${maxCycles}).`
+              : `Entering fix loop (attempt ${cycle}/${maxCycles}).`,
+          timestamp: Date.now(),
+        }])
+        break
+      }
+
+      case "fix_loop_completed": {
+        const success = data.success === "True" || data.success === "true"
+        const cycle = parseInt(data.cycle) || 1
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: "system",
+          content: success
+            ? `Fix loop cycle ${cycle} succeeded — build is green.`
+            : `Fix loop cycle ${cycle} failed — trying again.`,
+          timestamp: Date.now(),
+        }])
+        break
+      }
+
+      case "session_complete": {
+        setIsStreaming(false)
+        setThinkingLabel(null)
+        const rawStatus = (data.build_status || "skipped").toLowerCase()
+        const buildStatus: BuildSummaryStatus =
+          rawStatus === "passed" || rawStatus === "failed" ? rawStatus : "skipped"
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: "summary",
+          content: "",
+          timestamp: Date.now(),
+          summary: {
+            filesCreated: parseInt(data.files_created) || 0,
+            filesModified: parseInt(data.files_modified) || 0,
+            buildStatus,
+            durationMs: parseInt(data.duration_ms) || 0,
+            tokensTotal: parseInt(data.tokens_total) || 0,
+            costUsd: parseFloat(data.cost_usd) || 0,
+          },
+        }])
+        break
+      }
     }
   }
 
-  const sendMessage = useCallback(async () => {
-    if (!input.trim() || isStreaming || sendingRef.current) return
-    sendingRef.current = true
+  const sendMessage = useCallback(
+    async (overrideContent?: string) => {
+      const contentToSend = overrideContent ?? input.trim()
+      if (!contentToSend || isStreaming || sendingRef.current) return
+      sendingRef.current = true
 
-    const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: input.trim(),
-      timestamp: Date.now(),
-    }
-    setMessages(prev => [...prev, userMsg])
-    setInput("")
-
-    try {
-      const token = localStorage.getItem("forge_token")
-      const resp = await fetch(`/api/projects/${projectId}/agent/chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { "Authorization": `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          session_id: sessionId,
-          message: userMsg.content,
-        }),
-      })
-      const data = await resp.json()
-      if (data.session_id && !sessionId) {
-        onSessionCreated?.(data.session_id)
-      }
-    } catch {
-      setMessages(prev => [...prev, {
+      const userMsg: ChatMessage = {
         id: crypto.randomUUID(),
-        role: "assistant",
-        content: "Failed to send message. Check your connection.",
+        role: "user",
+        content: contentToSend,
         timestamp: Date.now(),
-      }])
-    } finally {
-      sendingRef.current = false
-    }
-  }, [input, isStreaming, sessionId, projectId, onSessionCreated])
+      }
+      setMessages(prev => [...prev, userMsg])
+      if (!overrideContent) setInput("")
+
+      try {
+        const token = localStorage.getItem("forge_token")
+        const resp = await fetch(`/api/projects/${projectId}/agent/chat`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            session_id: sessionId,
+            message: contentToSend,
+          }),
+        })
+        const data = await resp.json()
+        if (data.session_id && !sessionId) {
+          onSessionCreated?.(data.session_id)
+        }
+      } catch {
+        // Preserve the original content on the error bubble so the Retry
+        // button can resend exactly what the user typed.
+        setMessages(prev => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "Failed to send message. Check your connection.",
+            timestamp: Date.now(),
+            isError: true,
+            retryContent: contentToSend,
+          },
+        ])
+      } finally {
+        sendingRef.current = false
+      }
+    },
+    [input, isStreaming, sessionId, projectId, onSessionCreated],
+  )
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -344,6 +439,20 @@ export function AgentChat({
         )}
 
         {messages.map(msg => {
+          // Summary cards render as a single full-width card with no avatar.
+          if (msg.role === "summary" && msg.summary) {
+            return (
+              <SummaryCard
+                key={msg.id}
+                filesCreated={msg.summary.filesCreated}
+                filesModified={msg.summary.filesModified}
+                buildStatus={msg.summary.buildStatus}
+                durationMs={msg.summary.durationMs}
+                tokensTotal={msg.summary.tokensTotal}
+                costUsd={msg.summary.costUsd}
+              />
+            )
+          }
           const config = roleConfig[msg.role]
           return (
             <div key={msg.id} className="space-y-2 animate-in fade-in slide-in-from-bottom-1 duration-150">
@@ -353,17 +462,33 @@ export function AgentChat({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className={cn("text-xs font-medium", config.color)}>
+                    <span className={cn("text-[11px] font-medium", config.color)}>
                       {config.label}
                     </span>
                   </div>
                   {msg.content && (
-                    <div className="text-xs leading-relaxed whitespace-pre-wrap">
+                    <div
+                      className={cn(
+                        "text-[12px] leading-relaxed whitespace-pre-wrap",
+                        msg.isError && "text-[var(--text-error)]",
+                        msg.role === "system" && "text-[var(--text-warning)] font-mono text-[11px]",
+                      )}
+                    >
                       {msg.content}
                       {isStreaming && msg === messages[messages.length - 1] && msg.role !== "user" && (
                         <span className="inline-block w-1.5 h-4 bg-[var(--accent)] ml-0.5 animate-blink" />
                       )}
                     </div>
+                  )}
+                  {msg.isError && msg.retryContent && (
+                    <button
+                      onClick={() => sendMessage(msg.retryContent)}
+                      className="mt-1 inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--accent)] transition-colors duration-100"
+                      aria-label="Retry sending message"
+                    >
+                      <RotateCw className="h-3 w-3" />
+                      Retry
+                    </button>
                   )}
                   {msg.tools?.map((tool, i) => (
                     <div key={i} className="mt-2">
@@ -391,6 +516,14 @@ export function AgentChat({
             </div>
           )
         })}
+
+        {/* Backend-driven thinking indicator — renders under the last AI
+            message while the pair pipeline is in a tool/build/review phase. */}
+        {thinkingLabel && (
+          <div className="pl-8 -mt-1">
+            <ThinkingIndicator label={thinkingLabel} />
+          </div>
+        )}
       </div>
 
       {/* Input — compact, IDE-style. Textarea auto-grows 1..8 rows.
@@ -414,7 +547,7 @@ export function AgentChat({
             style={{ maxHeight: "120px", overflowY: "auto" }}
           />
           <button
-            onClick={sendMessage}
+            onClick={() => sendMessage()}
             disabled={
               !input.trim() ||
               isStreaming ||

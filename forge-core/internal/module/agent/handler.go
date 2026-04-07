@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -61,6 +62,13 @@ func (h *Handler) Chat(c *gin.Context) {
 	c.JSON(http.StatusAccepted, resp)
 }
 
+// streamEvent is a single Redis Stream entry delivered from the reader
+// goroutine to the writer loop.
+type streamEvent struct {
+	ID     string
+	Values map[string]interface{}
+}
+
 // Stream handles GET /projects/:id/agent/stream.
 // Reads events from Redis Streams and pushes them as SSE.
 //
@@ -68,6 +76,13 @@ func (h *Handler) Chat(c *gin.Context) {
 //
 //	session_id (required) — which session to stream
 //	last_event_id        — for SSE reconnection, resume from this Redis entry ID
+//
+// Architecture: a dedicated goroutine owns the blocking XREAD loop and sends
+// each entry through `events`. The writer loop sits on a `select` over
+// ctx.Done, heartbeat ticks, events, and errors, so heartbeats keep firing
+// even when XREAD is blocked and the goroutine exits cleanly on client
+// disconnect. The earlier `select { default: XREAD }` pattern busy-looped
+// at 1 call/sec per connection because default always fired first.
 func (h *Handler) Stream(c *gin.Context) {
 	sessionID := c.Query("session_id")
 	if sessionID == "" {
@@ -91,41 +106,106 @@ func (h *Handler) Stream(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// Heartbeat ticker
+	// Heartbeat ticker — fires every 15s so idle connections don't time out.
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
+
+	// events is the bridge between the Redis reader goroutine and the SSE
+	// writer loop. errCh carries non-nil Redis errors and terminates the
+	// connection. Both channels are closed by the goroutine on exit so the
+	// writer loop can detect termination via zero-value receives.
+	events := make(chan streamEvent, 16)
+	errCh := make(chan error, 1)
+
+	go h.streamReader(ctx, streamKey, lastEventID, events, errCh)
 
 	for {
 		select {
 		case <-ctx.Done():
+			// Client disconnected or server shutdown. The reader goroutine
+			// also sees ctx.Done() and exits; we don't need to drain events.
 			return
-		case <-heartbeat.C:
-			fmt.Fprintf(c.Writer, ": heartbeat\n\n")
-			c.Writer.Flush()
-		default:
-			// Read from Redis Stream with 1s block timeout
-			entries, err := h.rdb.XRead(ctx, &redis.XReadArgs{
-				Streams: []string{streamKey, lastEventID},
-				Count:   10,
-				Block:   1 * time.Second,
-			}).Result()
 
-			if err == redis.Nil || err == context.DeadlineExceeded {
-				continue
+		case <-heartbeat.C:
+			if _, err := fmt.Fprintf(c.Writer, ": heartbeat\n\n"); err != nil {
+				return
 			}
+			c.Writer.Flush()
+
+		case ev, ok := <-events:
+			if !ok {
+				// Reader closed the channel — either ctx cancelled or an
+				// unrecoverable error already sent on errCh.
+				return
+			}
+			data := mapToJSON(ev.Values)
+			if _, err := fmt.Fprintf(c.Writer, "id: %s\nevent: agent\ndata: %s\n\n", ev.ID, data); err != nil {
+				return
+			}
+			c.Writer.Flush()
+
+		case err := <-errCh:
 			if err != nil {
 				slog.Error("redis XREAD failed", "error", err, "stream", streamKey)
 				fmt.Fprintf(c.Writer, "event: error\ndata: {\"message\":\"stream error\"}\n\n")
 				c.Writer.Flush()
+			}
+			return
+		}
+	}
+}
+
+// streamReader runs in its own goroutine and owns the blocking XREAD loop.
+// It sends every Redis Stream entry to `events` and any unrecoverable error
+// to `errCh`, then closes both channels so the writer loop can terminate.
+func (h *Handler) streamReader(
+	ctx context.Context,
+	streamKey string,
+	lastEventID string,
+	events chan<- streamEvent,
+	errCh chan<- error,
+) {
+	defer close(events)
+	defer close(errCh)
+
+	for {
+		// Respect cancellation before issuing another blocking call.
+		if ctx.Err() != nil {
+			return
+		}
+
+		entries, err := h.rdb.XRead(ctx, &redis.XReadArgs{
+			Streams: []string{streamKey, lastEventID},
+			Count:   10,
+			Block:   1 * time.Second,
+		}).Result()
+
+		// XREAD returns redis.Nil when the block interval expires with no
+		// new data — this is the normal idle path, not an error. Loop back
+		// to the ctx check and issue another blocking read.
+		if err == redis.Nil || errors.Is(err, context.DeadlineExceeded) {
+			continue
+		}
+		if err != nil {
+			// Context cancellation is expected during shutdown — exit
+			// silently without forwarding the error.
+			if ctx.Err() != nil {
 				return
 			}
+			select {
+			case errCh <- err:
+			case <-ctx.Done():
+			}
+			return
+		}
 
-			for _, stream := range entries {
-				for _, msg := range stream.Messages {
-					lastEventID = msg.ID
-					data := mapToJSON(msg.Values)
-					fmt.Fprintf(c.Writer, "id: %s\nevent: agent\ndata: %s\n\n", msg.ID, data)
-					c.Writer.Flush()
+		for _, stream := range entries {
+			for _, msg := range stream.Messages {
+				lastEventID = msg.ID
+				select {
+				case events <- streamEvent{ID: msg.ID, Values: msg.Values}:
+				case <-ctx.Done():
+					return
 				}
 			}
 		}

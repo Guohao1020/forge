@@ -329,6 +329,15 @@
 }
 .animate-blink { animation: blink 0.8s step-end infinite; }
 
+/* ThinkingIndicator — 3 dots pulsing in sequence, 1.4s total cycle */
+@keyframes thinking-pulse {
+  0%, 80%, 100% { opacity: 0.25; transform: scale(0.9); }
+  40% { opacity: 1; transform: scale(1.1); }
+}
+.animate-thinking-dot-1 { animation: thinking-pulse 1.4s ease-in-out infinite; }
+.animate-thinking-dot-2 { animation: thinking-pulse 1.4s ease-in-out infinite; animation-delay: 0.2s; }
+.animate-thinking-dot-3 { animation: thinking-pulse 1.4s ease-in-out infinite; animation-delay: 0.4s; }
+
 /* Markdown Preview — Light Theme */
 .markdown-preview {
   color: var(--foreground);

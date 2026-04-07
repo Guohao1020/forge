@@ -42,10 +42,66 @@ class ErrorEvent:
     recoverable: bool
 
 
+@dataclass(frozen=True)
+class ThinkingStarted:
+    """Emitted when the agent starts a sustained thinking/tool phase.
+
+    Frontend renders this as a pulsing indicator under the current AI
+    message. Optional `label` overrides the default "Thinking..." text
+    (e.g. "Running read_file...", "Analyzing project...").
+    """
+    label: str = "Thinking"
+
+
+@dataclass(frozen=True)
+class ThinkingStopped:
+    """Emitted when the agent finishes a thinking/tool phase."""
+    pass
+
+
+@dataclass(frozen=True)
+class FixLoopStarted:
+    """Emitted when the pair pipeline enters a build-fix cycle.
+
+    `cycle` is 1-indexed, `max_cycles` is the configured limit, `errors`
+    is a best-effort count of compilation errors in the last build output.
+    """
+    cycle: int
+    max_cycles: int
+    errors: int = 0
+
+
+@dataclass(frozen=True)
+class FixLoopCompleted:
+    """Emitted when a fix-loop cycle finishes (successful build or
+    reviewer decision)."""
+    cycle: int
+    success: bool
+
+
+@dataclass(frozen=True)
+class SessionComplete:
+    """Emitted when an agent turn finishes, regardless of success/failure.
+
+    Carries the aggregate stats the SummaryCard needs.
+    """
+    files_created: int
+    files_modified: int
+    build_status: str  # "passed" | "failed" | "skipped"
+    duration_ms: int
+    tokens_total: int
+    cost_usd: float
+
+
 StreamEvent = Union[
     AssistantTextDelta,
     AssistantTurnComplete,
     ToolExecutionStarted,
     ToolExecutionCompleted,
     ErrorEvent,
+    ThinkingStarted,
+    ThinkingStopped,
+    FixLoopStarted,
+    FixLoopCompleted,
+    SessionComplete,
 ]
