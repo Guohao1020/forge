@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react"
 import { cn } from "@/lib/utils"
-import { Send, Bot, User, Code2, Eye, AlertTriangle, WifiOff } from "lucide-react"
+import { Send, Bot, User, Code2, Eye, WifiOff } from "lucide-react"
 import { ToolExecution } from "./tool-execution"
 import { BuildCard } from "./build-card"
 
@@ -37,8 +37,11 @@ interface AgentChatProps {
   projectId: string
   sessionId: string | null
   onSessionCreated?: (id: string) => void
+  // Placeholder callbacks wired in Stream 3 when the shell lifts state.
   onCodeFiles?: (files: Array<{ path: string; content: string }>) => void
-  onStepsUpdate?: (steps: Array<{ id: string; label: string; status: string }>) => void
+  onStepsUpdate?: (
+    steps: Array<{ id: string; label: string; status: string }>,
+  ) => void
   className?: string
 }
 
@@ -57,6 +60,11 @@ export function AgentChat({
   onStepsUpdate,
   className,
 }: AgentChatProps) {
+  // Silence unused-warning for Stream 3 placeholder props. The callbacks will
+  // be wired when the shell lifts state (StatusBar + PanelDivider + lifted
+  // agent state context). Referencing them here keeps the external API stable.
+  void onCodeFiles
+  void onStepsUpdate
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
@@ -213,7 +221,7 @@ export function AgentChat({
       if (data.session_id && !sessionId) {
         onSessionCreated?.(data.session_id)
       }
-    } catch (e) {
+    } catch {
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
         role: "assistant",
@@ -243,25 +251,30 @@ export function AgentChat({
       )}
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-2.5 py-2 space-y-1.5">
         {messages.length === 0 && (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center space-y-3 max-w-sm">
-              <Bot className="h-8 w-8 mx-auto text-[var(--accent)] opacity-40" />
-              <p className="text-xs text-[var(--text-muted)]">
-                Describe what you want to build
+          <div className="flex items-start justify-center pt-8">
+            <div className="space-y-2 max-w-sm">
+              <p className="font-mono text-[11px] text-[var(--text-tertiary)] mb-3">
+                Describe what you want to build, or try:
               </p>
-              <div className="flex flex-wrap gap-2 justify-center">
-                {["Add user registration", "Fix the login bug", "Write tests for the API"].map(suggestion => (
-                  <button
-                    key={suggestion}
-                    onClick={() => setInput(suggestion)}
-                    className="text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors duration-150"
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
+              {[
+                "Add user registration with JWT auth",
+                "Fix the login bug in feat/auth",
+                "Write tests for the API",
+              ].map((suggestion) => (
+                <button
+                  key={suggestion}
+                  onClick={() => {
+                    setInput(suggestion)
+                    inputRef.current?.focus()
+                  }}
+                  className="block w-full text-left font-mono text-[11px] text-[var(--text-tertiary)] hover:text-[var(--accent)] transition-colors duration-100"
+                >
+                  <span className="text-[var(--text-tertiary)]">→ Try:</span>{" "}
+                  <span>{suggestion}</span>
+                </button>
+              ))}
             </div>
           </div>
         )}
@@ -322,29 +335,35 @@ export function AgentChat({
         <span>{tokenCount.toLocaleString()} tokens (${costEstimate.toFixed(4)})</span>
       </div>
 
-      {/* Input — compact, IDE-style */}
-      <div className="border-t border-[var(--border)] px-2.5 py-2 shrink-0">
+      {/* Input — compact, IDE-style. Textarea auto-grows 1..8 rows. */}
+      <div className="border-t border-[var(--border-primary)] bg-[var(--bg-secondary)] px-2.5 py-2 shrink-0">
         <div className="flex items-end gap-1.5">
           <textarea
             ref={inputRef}
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isStreaming ? "AI is thinking..." : "Describe what you want to build..."}
+            placeholder={
+              isStreaming
+                ? "AI is thinking..."
+                : "Describe what you want to build..."
+            }
             disabled={isStreaming}
-            rows={1}
-            className="flex-1 resize-none rounded border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 text-xs focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] disabled:opacity-50 transition-colors duration-150"
+            rows={Math.min(8, Math.max(1, input.split("\n").length))}
+            aria-label="Chat with Forge Agent"
+            className="flex-1 resize-none rounded border border-[var(--border-primary)] bg-[var(--bg-input)] px-2 py-1.5 text-[12px] leading-[1.4] font-sans focus:border-[var(--border-focus)] focus:outline-none disabled:opacity-50 transition-colors duration-100"
+            style={{ maxHeight: "120px", overflowY: "auto" }}
           />
           <button
             onClick={sendMessage}
             disabled={!input.trim() || isStreaming}
-            className="flex items-center justify-center rounded bg-[var(--accent)] text-white p-1.5 hover:bg-[var(--accent-hover)] disabled:opacity-50 transition-colors duration-150"
+            className="flex items-center justify-center rounded bg-[var(--accent)] text-[var(--text-inverse)] h-7 w-7 hover:bg-[var(--accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-100"
             aria-label="Send message"
           >
-            <Send className="h-3.5 w-3.5" />
+            <Send className="h-3 w-3" />
           </button>
         </div>
-        <div className="text-[10px] text-[var(--text-dim)] mt-0.5">
+        <div className="font-mono text-[10px] text-[var(--text-tertiary)] mt-1">
           {isStreaming ? "" : "⌘+Enter to send"}
         </div>
       </div>

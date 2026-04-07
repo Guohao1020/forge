@@ -1,8 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useId, useState } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, ChevronRight, Check, Loader2, AlertCircle } from "lucide-react"
+import { ChevronDown, ChevronRight } from "lucide-react"
+import { formatToolInput } from "./tool-formatters"
 
 interface ToolExecutionProps {
   toolName: string
@@ -12,48 +13,101 @@ interface ToolExecutionProps {
   isLoading?: boolean
 }
 
-export function ToolExecution({ toolName, toolInput, output, isError, isLoading }: ToolExecutionProps) {
-  const [expanded, setExpanded] = useState(false)
+type ToolStatus = "ok" | "err" | "running"
 
-  const icon = isLoading
-    ? <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--accent)]" />
-    : isError
-      ? <AlertCircle className="h-3.5 w-3.5 text-[var(--error)]" />
-      : <Check className="h-3.5 w-3.5 text-[var(--success)]" />
+function statusOf(isError?: boolean, isLoading?: boolean): ToolStatus {
+  if (isLoading) return "running"
+  if (isError) return "err"
+  return "ok"
+}
+
+// Mockup variant-B-dense.html lines 417-502. Border is ALWAYS --border-primary.
+// Status is encoded as a right-side badge, never a border color tint.
+const statusClass: Record<ToolStatus, string> = {
+  ok: "text-[var(--text-success)] bg-[var(--bg-success)]",
+  err: "text-[var(--text-error)] bg-[var(--bg-error)]",
+  running: "text-[var(--accent-text)] bg-[var(--accent-subtle)]",
+}
+
+const statusLabel: Record<ToolStatus, string> = {
+  ok: "ok",
+  err: "error",
+  running: "running",
+}
+
+export function ToolExecution({
+  toolName,
+  toolInput,
+  output,
+  isError,
+  isLoading,
+}: ToolExecutionProps) {
+  const [expanded, setExpanded] = useState(false)
+  const status = statusOf(isError, isLoading)
+  const toolId = useId()
 
   return (
-    <div className={cn(
-      "rounded border text-xs transition-all duration-150",
-      isError ? "border-[var(--error)]/30" : "border-[var(--border)]",
-    )}>
+    <div
+      className="my-1 overflow-hidden rounded border border-[var(--border-primary)] bg-[var(--bg-tool)]"
+      role="region"
+      aria-label={toolName}
+    >
       <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 w-full px-3 py-2 hover:bg-[var(--hover)] transition-colors duration-150"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        aria-controls={toolId}
+        className={cn(
+          "flex items-center w-full gap-1.5 px-2 py-1 bg-[var(--bg-tertiary)] border-b border-[var(--border-secondary)] transition-colors duration-100",
+          "hover:bg-[var(--bg-hover)]",
+        )}
       >
-        {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-        {icon}
-        <span className="font-mono font-medium">{toolName}</span>
-        {!expanded && toolInput && (
-          <span className="text-[var(--text-dim)] truncate ml-1">
-            {JSON.stringify(toolInput).slice(0, 60)}
+        {expanded ? (
+          <ChevronDown className="h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />
+        ) : (
+          <ChevronRight className="h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />
+        )}
+        <span className="font-mono text-[11px] font-medium text-[var(--text-secondary)]">
+          {toolName}
+        </span>
+        {!expanded && (
+          <span className="font-mono text-[10px] text-[var(--text-tertiary)] truncate ml-1 flex-1 text-left">
+            {formatToolInput(toolName, toolInput)}
           </span>
         )}
+        <span
+          className={cn(
+            "ml-auto font-mono text-[10px] px-1.5 py-px rounded",
+            statusClass[status],
+          )}
+          aria-label={`Status: ${statusLabel[status]}`}
+        >
+          {statusLabel[status]}
+        </span>
       </button>
+
       {expanded && (
-        <div className="px-3 pb-2 space-y-2">
+        <div id={toolId} className="p-2 space-y-2">
           <div>
-            <div className="text-[var(--text-dim)] mb-1">Input:</div>
-            <pre className="font-mono text-[0.7rem] bg-[var(--surface)] rounded p-2 overflow-x-auto">
+            <div className="font-mono text-[10px] text-[var(--text-tertiary)] mb-1">
+              Input
+            </div>
+            <pre className="font-mono text-[10px] bg-[var(--bg-code)] rounded p-2 overflow-x-auto text-[var(--text-secondary)]">
               {JSON.stringify(toolInput, null, 2)}
             </pre>
           </div>
           {output && (
             <div>
-              <div className="text-[var(--text-dim)] mb-1">Output:</div>
-              <pre className={cn(
-                "font-mono text-[0.7rem] rounded p-2 overflow-x-auto max-h-[200px] overflow-y-auto",
-                isError ? "bg-[var(--error-bg)] text-[var(--error)]" : "bg-[var(--surface)]",
-              )}>
+              <div className="font-mono text-[10px] text-[var(--text-tertiary)] mb-1">
+                Output
+              </div>
+              <pre
+                className={cn(
+                  "font-mono text-[10px] rounded p-2 overflow-x-auto max-h-[200px] overflow-y-auto",
+                  isError
+                    ? "bg-[var(--bg-error)] text-[var(--text-error)]"
+                    : "bg-[var(--bg-code)] text-[var(--text-secondary)]",
+                )}
+              >
                 {output}
               </pre>
             </div>
