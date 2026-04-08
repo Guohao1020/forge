@@ -15,11 +15,41 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// chatStore is the minimal slice of Repository that Handler.Chat and
+// Handler.Stream depend on. Defining it as an interface lets unit
+// tests inject a fake without standing up a real PostgreSQL —
+// *Repository automatically satisfies it because Go interfaces are
+// structural. All other endpoints continue to use the concrete
+// *Repository field.
+//
+// GetSession is the same call the dual-storage tenant ownership check
+// uses (TASK 6 of agent-base-loop-reduction): it scopes by project_id
+// in SQL and the handler additionally checks tenant_id + created_by in
+// memory before allowing access. This is data-privacy critical.
+type chatStore interface {
+	CreateSession(
+		ctx context.Context,
+		id string,
+		tenantID int64,
+		projectID int64,
+		createdBy int64,
+		title *string,
+		taskID *int64,
+	) (*AgentSession, error)
+	GetSession(ctx context.Context, sessionID string, projectID int64) (*AgentSession, error)
+	InsertMessage(ctx context.Context, m *AgentMessage) error
+}
+
 // Handler handles agent HTTP endpoints.
 type Handler struct {
 	service *Service
 	rdb     *redis.Client
 	repo    *Repository
+	// chat is the dual-storage hook used by Chat(). It is the same value
+	// as repo when wired through NewHandler, but can be overridden in
+	// tests via NewHandlerForTest to inject a fake without spinning up
+	// PostgreSQL.
+	chat chatStore
 }
 
 // NewHandler creates a new agent handler. The Repository is optional —
@@ -27,10 +57,26 @@ type Handler struct {
 // original Chat/Stream endpoints still work against Redis alone. This
 // lets the handler boot before the PG migration has been applied.
 func NewHandler(service *Service, rdb *redis.Client, repo *Repository) *Handler {
-	return &Handler{
+	h := &Handler{
 		service: service,
 		rdb:     rdb,
 		repo:    repo,
+	}
+	if repo != nil {
+		h.chat = repo
+	}
+	return h
+}
+
+// NewHandlerForTest is a test-only constructor that wires a fake
+// chatStore directly. It exists so handler_test.go can validate the
+// dual-storage path (TASK 5: persist user_message before ai-worker)
+// without a live PostgreSQL.
+func NewHandlerForTest(service *Service, rdb *redis.Client, chat chatStore) *Handler {
+	return &Handler{
+		service: service,
+		rdb:     rdb,
+		chat:    chat,
 	}
 }
 
@@ -71,7 +117,21 @@ func (h *Handler) Suggestions(c *gin.Context) {
 }
 
 // Chat handles POST /projects/:id/agent/chat.
-// Forwards the message to the AI worker and returns 202 Accepted.
+//
+// Durability contract (TASK 5 of agent-base-loop-reduction):
+//
+//  1. If req.SessionID is empty, allocate a new session row first so PG
+//     stays the source of truth and the user_message can satisfy the
+//     agent_messages.session_id FK.
+//  2. Persist the user_message to PG BEFORE calling ai-worker. PG write
+//     failure → 500 (we have not contacted ai-worker yet, so the user can
+//     safely retry). ai-worker failure → 502, but the user_message is
+//     already durable and will hydrate on the next sidebar load.
+//
+// Repository is optional: when h.repo is nil (PG not configured / migration
+// 024 not applied), Chat falls back to the legacy fire-and-forget path so
+// the binary still boots in dev. The dual-storage promise only holds when
+// the repository is wired.
 func (h *Handler) Chat(c *gin.Context) {
 	projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -85,13 +145,101 @@ func (h *Handler) Chat(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.service.SubmitMessage(c.Request.Context(), projectID, req)
-	if err != nil {
-		slog.Error("failed to submit agent message", "error", err, "project_id", projectID)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "AI worker unavailable"})
+	// Legacy path: no chat store wired, fall through to fire-and-forget.
+	// Preserves dev/boot ergonomics when migration 024 has not run yet.
+	if h.chat == nil {
+		resp, err := h.service.SubmitMessage(c.Request.Context(), projectID, req)
+		if err != nil {
+			slog.Error("failed to submit agent message", "error", err, "project_id", projectID)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "AI worker unavailable"})
+			return
+		}
+		c.JSON(http.StatusAccepted, resp)
 		return
 	}
 
+	tenantID, userID, ok := currentUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// Step 1: ensure a session exists AND belongs to the caller.
+	//
+	// New conversations come in with an empty SessionID — Handler creates
+	// the row, which inherently belongs to the caller.
+	//
+	// Existing conversations carry SessionID — we MUST verify ownership
+	// before writing into someone else's session. Plan TASK 6 / G2.
+	if req.SessionID == "" {
+		newID := uuid.NewString()
+		session, err := h.chat.CreateSession(ctx, newID, tenantID, projectID, userID, nil, nil)
+		if err != nil {
+			slog.Error("create agent session failed", "error", err, "project_id", projectID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "create session failed"})
+			return
+		}
+		req.SessionID = session.ID
+	} else {
+		_, status := h.authorizeSessionAccess(ctx, req.SessionID, projectID, tenantID, userID)
+		switch status {
+		case sessionOK:
+			// fall through to step 2
+		case sessionForbidden:
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		case sessionLookupFailed:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "session lookup failed"})
+			return
+		default:
+			// sessionMissing should be impossible here because h.chat != nil
+			// (we checked at the top of Chat). Treat as forbidden out of paranoia.
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		}
+	}
+
+	// Step 2: persist the user_message before contacting ai-worker. If PG
+	// write fails we abort with 500 — we have not yet reached out, so the
+	// user can safely retry without producing a duplicate downstream call.
+	userRole := "user"
+	msgContent := req.Message
+	if err := h.chat.InsertMessage(ctx, &AgentMessage{
+		SessionID: req.SessionID,
+		EventType: "user_message",
+		Role:      &userRole,
+		Content:   &msgContent,
+	}); err != nil {
+		slog.Error("persist user message failed", "error", err, "session_id", req.SessionID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "persist message failed"})
+		return
+	}
+
+	// Step 3: forward to ai-worker. On failure return 502 — the user
+	// message is already durable, so the next sidebar load will hydrate it
+	// and the user can resend without losing context.
+	resp, err := h.service.SubmitMessage(ctx, projectID, req)
+	if err != nil {
+		slog.Error("failed to submit agent message",
+			"error", err,
+			"project_id", projectID,
+			"session_id", req.SessionID,
+		)
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":      "AI worker unavailable",
+			"session_id": req.SessionID,
+		})
+		return
+	}
+
+	// ai-worker echoes its own session_id; on a fresh conversation it
+	// should match what we just inserted. Prefer the locally-created id
+	// if ai-worker returns blank for any reason.
+	if resp.SessionID == "" {
+		resp.SessionID = req.SessionID
+	}
 	c.JSON(http.StatusAccepted, resp)
 }
 
@@ -110,6 +258,14 @@ type streamEvent struct {
 //	session_id (required) — which session to stream
 //	last_event_id        — for SSE reconnection, resume from this Redis entry ID
 //
+// Security (TASK 6 / G3): when the chat store is wired we MUST verify
+// the caller owns the session before subscribing to its Redis stream.
+// Without this check, any authenticated user who knows or guesses
+// another user's session_id can read their live conversation in real
+// time. The check matches Chat()'s ownership rules: tenant_id and
+// created_by must both match the caller. We deliberately return 403
+// (not 404) to avoid leaking session existence across tenants.
+//
 // Architecture: a dedicated goroutine owns the blocking XREAD loop and sends
 // each entry through `events`. The writer loop sits on a `select` over
 // ctx.Done, heartbeat ticks, events, and errors, so heartbeats keep firing
@@ -121,6 +277,36 @@ func (h *Handler) Stream(c *gin.Context) {
 	if sessionID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id required"})
 		return
+	}
+
+	// Tenant ownership gate. Only enforced when chat store is wired —
+	// the legacy Redis-only path stays open for dev/boot scenarios.
+	if h.chat != nil {
+		projectID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project id"})
+			return
+		}
+		tenantID, userID, ok := currentUser(c)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+			return
+		}
+		_, status := h.authorizeSessionAccess(c.Request.Context(), sessionID, projectID, tenantID, userID)
+		switch status {
+		case sessionOK:
+			// authorized — fall through to SSE setup
+		case sessionForbidden:
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		case sessionLookupFailed:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "session lookup failed"})
+			return
+		default:
+			// sessionMissing should not occur because h.chat != nil; treat as forbidden.
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		}
 	}
 
 	lastEventID := c.Query("last_event_id")
@@ -256,6 +442,68 @@ func currentUser(c *gin.Context) (tenantID int64, userID int64, ok bool) {
 		return 0, 0, false
 	}
 	return tID.(int64), uID.(int64), true
+}
+
+// sessionOwnershipStatus is the result of authorizeSessionAccess.
+type sessionOwnershipStatus int
+
+const (
+	sessionOK sessionOwnershipStatus = iota
+	sessionMissing
+	sessionForbidden
+	sessionLookupFailed
+)
+
+// authorizeSessionAccess loads a session via the chatStore and verifies
+// the caller owns it. Returns the session pointer when status==sessionOK.
+//
+// CRITICAL — TASK 6 of agent-base-loop-reduction: this is the data
+// privacy gate for Chat and Stream. The session row is scoped by
+// project_id in SQL, but a malicious user could craft a request with
+// their own project_id and someone else's session_id. We additionally
+// check that session.TenantID matches the caller's tenant AND that
+// session.CreatedBy matches the caller's user_id.
+//
+// We deliberately collapse "session not found in this project" and
+// "session belongs to another tenant/user" into the same outcome
+// (sessionForbidden → 403). Returning 404 vs 403 differently would
+// leak existence information across tenants.
+func (h *Handler) authorizeSessionAccess(
+	ctx context.Context,
+	sessionID string,
+	projectID int64,
+	tenantID int64,
+	userID int64,
+) (*AgentSession, sessionOwnershipStatus) {
+	if h.chat == nil {
+		// No store wired — the caller must decide whether to allow the
+		// legacy unsafe path or refuse. We surface this as missing.
+		return nil, sessionMissing
+	}
+	session, err := h.chat.GetSession(ctx, sessionID, projectID)
+	if err != nil {
+		slog.Error("session lookup failed",
+			"error", err,
+			"session_id", sessionID,
+			"project_id", projectID,
+		)
+		return nil, sessionLookupFailed
+	}
+	if session == nil {
+		return nil, sessionForbidden
+	}
+	if session.TenantID != tenantID || session.CreatedBy != userID {
+		slog.Warn("cross-tenant session access denied",
+			"session_id", sessionID,
+			"session_tenant", session.TenantID,
+			"session_owner", session.CreatedBy,
+			"caller_tenant", tenantID,
+			"caller_user", userID,
+			"project_id", projectID,
+		)
+		return nil, sessionForbidden
+	}
+	return session, sessionOK
 }
 
 // ListSessions handles GET /projects/:id/agent/sessions.
