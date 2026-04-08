@@ -588,6 +588,139 @@ AI 生成 migration 的约束:
 
 ---
 
+### 3.7 Agent Module Runtime (Stream 4 + Base Loop Reduction)
+
+Agent Terminal 是 AI 引擎面向用户的执行层。它实现了 Coder → BuildVerify
+→ Reviewer 的 pair 循环 (受 OpenSwarm Worker/Reviewer 模式启发), 通过 Redis
+Streams 把每一步的进展实时推到前端 SSE, 通过 PostgreSQL `engine.agent_messages`
+做耐久历史。本节描述运行时拓扑、双存储数据流、跨租户安全模型, 和 Stream 4c
+语言检测的接入点。
+
+#### 拓扑
+
+```
++-----------------+         +------------------------+         +-------------------+
+|   Browser SSE   | <-----  |  forge-core (Go :8080) | <-----  |  ai-worker         |
+| EventSource     |         |  /api/.../agent/stream |   POST  |  (Python :8090)    |
++-----------------+         |  /api/.../agent/chat   | ------> |  uvicorn FastAPI   |
+                            +-----------+------------+         |  + Temporal worker |
+                                        |                       +---------+---------+
+                                        | XREAD                           |
+                                        v                                  | XADD + asyncpg
+                                +---------------+                          v
+                                | Redis Streams | <----------------+ +-----------+
+                                | agent:stream:*|                  | | PostgreSQL|
+                                +---------------+                  | | engine.   |
+                                                                   | | agent_*   |
+                                                                   | +-----------+
+                                                                   |
+                                                                   | dual write
+                                                                   +
+```
+
+ai-worker 容器同时跑两个进程, 由 `start.sh` POSIX 包装脚本启动:
+1. **uvicorn** (`src.api_server:app` on `:8090`) — FastAPI HTTP 入口, forge-core
+   `service.go` 通过 `POST /api/run` 触发
+2. **Temporal worker** (`python -m src.worker`) — 处理 long-running activities,
+   与 base loop 并存
+
+`start.sh` 用 `kill -0 + sleep 2` 轮询子进程存活 (POSIX, 不依赖 bash 的
+`wait -n` — python:3.12-slim 基础镜像的 `/bin/sh` 是 dash), 任一子进程退出
+时整体退出, 让 docker `restart: unless-stopped` 接管恢复。
+
+#### 双存储数据流 (Dual Storage)
+
+每条 agent 事件 (text_delta / tool_started / fix_loop_completed / ...)
+都同时写两处:
+
+```
+LLM 生成 → ai-worker QueryEngine → 事件流
+                 |
+                 +---> Redis XADD agent:stream:{sid} (MAXLEN ~500)  → SSE 热路径
+                 |     forge-core Stream handler XREAD → SSE → 浏览器
+                 |
+                 +---> asyncpg INSERT engine.agent_messages          → 耐久历史
+                       前端刷新时 GET /sessions/{sid}/messages → 完整重放
+```
+
+Redis 是热缓冲, MAXLEN 由 `settings.agent_stream_maxlen` 限制 (默认 500), 防止
+长会话撑爆内存。PostgreSQL 是 source of truth, 前端水化历史时只读 PG, Redis
+故障不影响新会话的耐久性。
+
+**Handler.Chat 的耐久性契约 (G1 — 2026-04-08 base loop reduction TASK 5):**
+forge-core 的 `Handler.Chat` 在调用 ai-worker 之前, 先把 user_message 写进 PG
+(经 `chatStore.InsertMessage`)。如果 PG 写失败 → 立刻 500, 不调 ai-worker
+(避免 retry 双计费 LLM); 如果 ai-worker 失败 → 502, 但 user_message 已经
+durable, 下次 sidebar 加载历史能看到, 用户重发不丢上下文。
+
+#### 跨租户安全模型 (G2/G3 — TASK 6)
+
+`Handler.Chat` 和 `Handler.Stream` 共享同一个 `authorizeSessionAccess` helper:
+
+```go
+session := chat.GetSession(ctx, sessionID, projectID)  // SQL 已按 project_id 过滤
+if session == nil ||
+   session.TenantID != caller.TenantID ||
+   session.CreatedBy != caller.UserID {
+    return 403  // 不返 404 — 避免泄露 session 存在性
+}
+```
+
+- **G2 (Chat)**: 防止跨租户写入。攻击者拿到别人的 session_id 也无法把消息塞进
+  受害者的会话。
+- **G3 (Stream)**: 防止跨租户**读取**实时 SSE 流。这是更严重的洞 — 没有这个
+  检查的话, 任何认证用户都可以订阅别人的 agent 流, 实时读对方的对话。
+- 不存在的 session 也返 403 (不是 404), 避免通过状态码差异枚举 session id。
+
+校验失败会输出 `WARN cross-tenant session access denied
+session_tenant=X session_owner=Y caller_tenant=Z caller_user=W`, 直接喂到
+审计日志。
+
+#### Stream 4c 语言检测接入 (TASK 7-8)
+
+`run_pair_pipeline` 在 entry 调用 `detect_language(project_dir)` 自动选 build
+工具。机制:
+
+1. `PairPipelineConfig.project_dir` 设了 + `build_command` 留 None →
+   loader 加载 `skills/languages/*.yaml` (java/python/go/node/rust)
+2. `detect_language` 按 `detect.files` (pom.xml, go.mod, package.json...) 匹配
+3. 写回 `config.build_command` + `config.detected_language` + `config.build_timeout`
+4. `BuildVerifyHook.run` 收到 `project_dir`, 在原地跑 build (不再用 temp dir)
+5. **预检** (TASK 8 / G4): 如果 `build_command` 是已知工具
+   (`go`/`mvn`/`gradle`/`npm`/`yarn`/`pnpm`/`cargo`), hook 在调 subprocess 之前
+   验证对应 marker 文件 (`go.mod`/`pom.xml`/...) 存在于 work_dir 或 LLM 即将
+   生成的文件里, 否则返 `BuildVerify preflight failed`, 避免在错的目录下跑
+   `go build` 几十秒后报模糊错
+
+显式 `build_command` 永远 win — e2e 测试可以钉死一个已知工具。
+
+#### Base loop e2e 烟测
+
+`ai-worker/tests/e2e/test_pair_pipeline_real_llm.py` 是整条 base loop 的
+回归测试。它真调 DASHSCOPE qwen3-coder-plus + qwen-max, 真编 Go module,
+真过 reviewer。`pyproject.toml` 用 `addopts = "-m 'not e2e'"` 默认排除,
+opt-in 命令:
+
+```bash
+cd ai-worker
+export DASHSCOPE_API_KEY=$(grep '^DASHSCOPE_API_KEY=' .env | cut -d= -f2-)
+pytest -m e2e tests/e2e/ -v
+```
+
+需要 host 上有 `go` 二进制 + 真实的 DASHSCOPE key。无 key 自动 skip。
+
+#### 已知遗留 (本轮 PR 之外)
+
+- `api_server.py` 的 `/api/run` **仍然走裸 QueryEngine**, 不通过 pair_pipeline。
+  pair pipeline 的 fix loop / reviewer / BuildVerify 只能通过直接 import 触发
+  (e2e 走的就是这条路径)。把 `/api/run` 切到 pair pipeline 是下一个 PR
+  的工作 — 见 TODOS.md。
+- `src/agents/*.py` 是 Temporal activities 时代的 6 个 agent 实现, 仍然被
+  `src/activities/` 和测试套件引用。OpenHarness QueryEngine 计划取代它们,
+  迁移留到独立 PR — 见 TODOS.md。
+
+---
+
 ## 4. 鉴权中心技术设计
 
 ### 4.1 认证体系
