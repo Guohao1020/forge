@@ -7,3 +7,11 @@ requires-python = ">=3.12"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# e2e tests hit real external services (DASHSCOPE LLM, the local
+# Go toolchain, real network). They are slow, cost real money, and
+# require DASHSCOPE_API_KEY in the environment. Excluded from the
+# default run; opt in with `pytest -m e2e`.
+markers = [
+    "e2e: end-to-end tests that hit real external services (LLM, network, toolchain)",
+]
+addopts = "-m 'not e2e'"
