@@ -16,9 +16,15 @@ import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from ..hooks.builtin.build_verify_hook import BuildVerifyHook, BuildVerifyResult
+from ..skills.project_language import (
+    LanguageProfile,
+    detect_language,
+    load_all_language_profiles,
+)
 from .messages import ConversationMessage, TextBlock
 from .stream_events import (
     ErrorEvent,
@@ -45,6 +51,15 @@ class PairPipelineConfig:
     build_timeout: int = 120
     coder_model: Optional[str] = None
     reviewer_model: Optional[str] = None
+    # Stream 4c integration: when project_dir is provided and
+    # build_command is left None, run_pair_pipeline calls
+    # detect_language(project_dir) to populate build_command + language
+    # at pipeline entry. Explicit build_command always wins.
+    project_dir: Optional[Path] = None
+    language_profiles_dir: str = "skills/languages"
+    # Filled in by run_pair_pipeline after detection. Read-only from
+    # the caller's perspective.
+    detected_language: Optional[str] = None
 
 
 @dataclass
@@ -78,7 +93,49 @@ async def run_pair_pipeline(
     Yields StreamEvents (including the new FixLoopStarted/Completed and
     SessionComplete events for the frontend fix-loop visualization and
     SummaryCard) and CycleResults as they occur.
+
+    Stream 4c language detection (TASK 7): if config.project_dir is set
+    and config.build_command is None, the pipeline loads language
+    profiles from config.language_profiles_dir and asks
+    detect_language() for the right build command. Explicit
+    build_command always overrides detection. The detected language
+    name is written back to config.detected_language so callers and
+    tests can introspect what was matched.
     """
+    # Stream 4c wiring: detect language at pipeline entry so the
+    # downstream BuildVerifyHook gets the right toolchain. Explicit
+    # build_command always wins so e2e tests can pin a known command.
+    if config.build_command is None and config.project_dir is not None:
+        try:
+            profiles = load_all_language_profiles(config.language_profiles_dir)
+            profile = detect_language(config.project_dir, profiles)
+            if profile is not None:
+                detected_cmd = profile.build_command_for(config.project_dir)
+                if detected_cmd:
+                    config.build_command = detected_cmd
+                    config.detected_language = profile.name
+                    config.build_timeout = profile.build_timeout
+                    logger.info(
+                        "Stream 4c language detection: %s -> %s",
+                        profile.name, detected_cmd,
+                    )
+                else:
+                    logger.warning(
+                        "language %s detected but no build_command resolved "
+                        "for %s — pipeline will skip BuildVerify",
+                        profile.name, config.project_dir,
+                    )
+            else:
+                logger.info(
+                    "no language profile matched %s — pipeline will skip BuildVerify",
+                    config.project_dir,
+                )
+        except Exception as e:
+            # Detection is best-effort: a malformed YAML or filesystem
+            # error must not crash the whole pipeline. Fall through with
+            # build_command=None and BuildVerify will be skipped.
+            logger.warning("language detection failed: %s", e)
+
     start_ts = time.monotonic()
     initial_code = dict(code_files or {})
     current_code = dict(initial_code)
@@ -146,7 +203,14 @@ async def run_pair_pipeline(
                 build_command=config.build_command,
                 timeout_seconds=config.build_timeout,
             )
-            build_result = await hook.run(code_files=current_code)
+            # Pass project_dir so the hook runs in-place against real
+            # markers (go.mod, pom.xml, package.json) instead of a
+            # throwaway temp dir. Hook handles None gracefully by
+            # falling back to a temp dir.
+            build_result = await hook.run(
+                code_files=current_code,
+                project_dir=config.project_dir,
+            )
             yield ThinkingStopped()
         final_build_status = "passed" if build_result.success else "failed"
 

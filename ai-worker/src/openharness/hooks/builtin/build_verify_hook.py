@@ -3,6 +3,17 @@
 Reads the build command from project skill config (detect.yaml).
 Creates a temp directory, writes generated code, runs the compiler,
 returns pass/fail with the full compiler output.
+
+Preflight (TASK 8 of agent-base-loop-reduction): before invoking the
+subprocess we sanity-check that the work directory looks plausible for
+the chosen build command. The flagship check is "if the build command
+starts with `go`, the work directory MUST contain go.mod". Without
+this guard, a misconfigured pipeline (e.g. detection went wrong, or
+the LLM emitted code into the wrong subdir) silently runs `go build`
+in an empty dir and surfaces opaque "no Go files in /tmp/foo" errors
+that look like LLM mistakes. The preflight catches this class of
+operator error early and reports it as an explicit
+`PreflightFailed` outcome.
 """
 
 from __future__ import annotations
@@ -13,12 +24,39 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..events import HookEvent
 from ..executor import HookResult
 
 logger = logging.getLogger(__name__)
+
+
+# Marker files we expect to see when a given build tool runs. The
+# preflight check below uses this map to refuse running `go build` in
+# a directory without go.mod, `mvn` without pom.xml, etc. Plan TASK 8
+# explicitly requires the go entry; the others are zero-cost coverage
+# for the same class of bug across the rest of the language profiles.
+_BUILD_MARKERS: Dict[str, Tuple[str, ...]] = {
+    "go": ("go.mod",),
+    "mvn": ("pom.xml",),
+    "gradle": ("build.gradle", "build.gradle.kts", "settings.gradle"),
+    "./gradlew": ("build.gradle", "build.gradle.kts", "settings.gradle"),
+    "npm": ("package.json",),
+    "yarn": ("package.json",),
+    "pnpm": ("package.json",),
+    "cargo": ("Cargo.toml",),
+}
+
+
+def _required_markers_for(build_command: str) -> Tuple[str, ...]:
+    """Return the marker files a given build_command needs in its work
+    directory, or () if we don't recognize the tool (in which case the
+    preflight is a no-op and we let the subprocess speak for itself)."""
+    if not build_command:
+        return ()
+    first = build_command.strip().split()[0]
+    return _BUILD_MARKERS.get(first, ())
 
 
 @dataclass
@@ -61,6 +99,40 @@ class BuildVerifyHook:
         cleanup = project_dir is None
 
         try:
+            # Preflight: refuse to launch the build tool if its required
+            # marker is missing from the work dir (after the LLM-generated
+            # files have been written, in case the LLM emitted the marker
+            # itself). Plan TASK 8 / G4: catches misconfigured pipelines
+            # that would otherwise produce opaque tool errors.
+            #
+            # The check runs against the union of (existing files in
+            # work_dir) ∪ (files we are about to write), so an LLM that
+            # emits go.mod alongside main.go is allowed through.
+            required = _required_markers_for(self.build_command)
+            if required:
+                generated_paths = set(code_files.keys())
+                marker_satisfied = False
+                for marker in required:
+                    if (work_dir / marker).exists() or marker in generated_paths:
+                        marker_satisfied = True
+                        break
+                if not marker_satisfied:
+                    msg = (
+                        f"BuildVerify preflight failed: build command "
+                        f"'{self.build_command}' requires one of "
+                        f"{list(required)} in {work_dir}, but none were "
+                        f"found and the generated files do not include any. "
+                        f"Pipeline misconfigured — language detection may "
+                        f"have returned the wrong toolchain, or the work "
+                        f"directory points at the wrong place."
+                    )
+                    logger.warning(msg)
+                    return BuildVerifyResult(
+                        success=False,
+                        output=msg,
+                        command=self.build_command,
+                    )
+
             # Write generated files
             for rel_path, content in code_files.items():
                 full_path = work_dir / rel_path
