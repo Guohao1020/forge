@@ -3,7 +3,7 @@
 > **Code name:** chronos (Greek personification of time). This refactor "folds time" — collapsing the pair_pipeline-era workaround into the A2-era real agent architecture in one single branch.
 
 **Started:** 2026-04-09
-**Status:** In progress (Phase 0, 1, 2, 3, 4, 5 written; Phase 6-7 pending)
+**Status:** In progress (Phase 0, 1, 2, 3, 4, 5, 6 written; Phase 7 pending)
 **Branch:** `feat/agent-variant-b-single-agent` (off `main`)
 
 ---
@@ -56,7 +56,7 @@ Go 1.22 (forge-core workspace module + secrets service), Python 3.12 (ai-worker 
 | 3 | T2 File Tools | 8 | 2 | ✅ written | [phase-3-file-tools.md](phase-3-file-tools.md) |
 | 4 | Bash + SetPhase + Stream Events | 8 | 2 | ✅ written | [phase-4-bash-events.md](phase-4-bash-events.md) |
 | 5 | Agent Loop + api_server + Prompts | 7 | 1, 3, 4 | ✅ written | [phase-5-agent-loop.md](phase-5-agent-loop.md) |
-| 6 | Frontend Changes | 9 | 5 | ⏳ pending | phase-6-frontend.md |
+| 6 | Frontend Changes | 9 | 5 | ✅ written | [phase-6-frontend.md](phase-6-frontend.md) |
 | 7 | E2E Smoke + Deploy | 3 | 6 | ⏳ pending | phase-7-deploy.md |
 
 **Total:** ~58 tasks across 8 phases.
