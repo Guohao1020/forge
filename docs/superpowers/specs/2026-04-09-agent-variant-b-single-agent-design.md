@@ -259,7 +259,8 @@ Specific manifestations:
 
 ## 3. Workspace manager layer
 
-New Go module: `forge-core/internal/module/workspace/`.
+**Extending the existing `forge-core/internal/workspace/` package** — not
+creating a parallel module.
 
 ### 3.1 Module responsibility
 
@@ -268,24 +269,161 @@ key lifecycle, dependency pre-install coordination, reset-on-new-session.
 Does **not** own agent session state, conversation history, or tool
 execution — those stay in `agent/`.
 
-### 3.2 Files
+### 3.2 Current-state baseline and the extension plan
 
-| File | Responsibility |
-|---|---|
-| `model.go` | `Workspace`, `DeployKey`, `WorkspaceStatus` structs |
-| `repository.go` | `engine.workspaces` and `engine.project_deploy_keys` DAO |
-| `service.go` | `EnsureReady(ctx, projectID) (*Workspace, error)` main entry |
-| `git.go` | Thin wrapper over `os/exec` for git commands (not go-git) |
-| `keys.go` | ed25519 generation, AES-GCM encrypt/decrypt, GitHub deploy key upload |
-| `sandbox_prep.go` | RPC client that asks ai-worker to pre-install deps |
-| `service_test.go`, etc. | Unit + integration tests |
+A `workspace.Manager` already exists at `forge-core/internal/workspace/manager.go`
+and is wired into `main.go:122`, consumed by `project.NewService` (line
+126), the async Worker (line 154), and `agent.NewService` (line 245).
+It provides:
+
+- `NewManager(root)` — defaults to `/data/forge/workspaces`
+- `ProjectDir(tenantID, projectID) → tenant-{N}/project-{N}/repo`
+- `TaskDir(tenantID, projectID, taskID) → tenant-{N}/project-{N}/tasks/task-{N}`
+- `EnsureClone(ctx, tenantID, projectID, repoURL, token, defaultBranch) → dir, error` — HTTPS + token auth via `injectToken()`
+- `CreateWorktree(ctx, ..., branchName) → dir, error` — git worktree per task
+- `WriteFiles(taskDir, []FileToWrite) → error`
+- `CleanupTask(ctx, ...) → error`
+
+The existing `EnsureClone` is a straightforward "clone if missing, pull
+if present" with no state table, no error state, no deploy-key logic —
+it uses HTTPS + GitHub token injected into the URL. The existing path
+convention `tenant-{N}/project-{N}/repo` is the one the other code paths
+(project service, worker) already assume, and we keep it. The spec's
+original `{tenant_id}/{project_id}/` was a wrong guess by the spec author
+and is corrected here.
+
+**Extension, not replacement:**
+- Keep `ProjectDir`, `TaskDir`, `CreateWorktree`, `WriteFiles`,
+  `CleanupTask`, `FileToWrite` as-is. They are used by other modules
+  (project service, async worker) that are out of scope for this spec.
+- **Replace** `EnsureClone` with a new `EnsureReady` method that owns
+  the state machine, deploy-key lifecycle, and dependency pre-install.
+  The old signature `EnsureClone(..., repoURL, token, defaultBranch)`
+  is deleted; callers are migrated to `EnsureReady(ctx, tenantID, projectID)`
+  which reads repoURL and defaultBranch from the project record via an
+  injected `ProjectLookup` interface, and obtains auth via deploy keys
+  instead of tokens.
+- **Replace** the top-level `injectToken()` helper — HTTPS+token auth
+  is removed entirely in favor of SSH deploy keys. Any call site that
+  still wants HTTPS+token is a bug; audit the three known consumers
+  (project service, worker, agent service) and update them.
+
+**Caller migration:**
+- `project.NewService`: currently takes `workspaceMgr *workspace.Manager`
+  and calls `EnsureClone` during project registration. This call is
+  removed — workspace creation is lazy, triggered by the first agent
+  message, not by project registration. Project registration only
+  stores the repo URL and branch in the project row.
+- Worker (`activity.NewProjectRepoAdapter`): audit and update the
+  `EnsureClone` calls to `EnsureReady`. Worker still needs task
+  worktrees, which keep working via `CreateWorktree`.
+- `agent.NewService`: already takes `workspaceMgr`. Update to call
+  `EnsureReady` before each session start.
+
+### 3.3 New files inside `forge-core/internal/workspace/`
+
+| File | Status | Responsibility |
+|---|---|---|
+| `manager.go` | Modified | `EnsureClone` replaced by `EnsureReady`, `injectToken` removed, keep `ProjectDir`/`TaskDir`/`CreateWorktree`/`WriteFiles`/`CleanupTask` |
+| `manager_test.go` | Modified | Remove `EnsureClone` tests, add `EnsureReady` tests |
+| `state.go` | **New** | `Workspace`, `DeployKey`, `WorkspaceStatus` structs, `engine.workspaces` + `engine.project_deploy_keys` DAO |
+| `ensure.go` | **New** | `EnsureReady(ctx, tenantID, projectID) (*Workspace, error)` state machine |
+| `git.go` | **New** | Thin wrapper over `os/exec` for git ssh-aware commands |
+| `keys.go` | **New** | ed25519 generation, AES-GCM encrypt/decrypt, GitHub deploy key upload |
+| `prep.go` | **New** | HTTP client that POSTs to ai-worker's `/api/workspace/prep` |
+| `state_test.go`, `ensure_test.go`, `keys_test.go` | **New** | Unit + integration tests |
 
 **Not using go-git:** go-git's HTTPS and SSH support is good enough for
 reads but has known edge cases around auth agent forwarding, symlink
-handling, and large repos. The stability and compatibility delta of
-shelling out to system `git` is worth the small syscall overhead.
+handling, and large repos. Keeping the existing pattern of shelling out
+to system `git` via `os/exec` (as `manager.go` already does) is worth
+the small syscall overhead.
 
-### 3.3 Data model
+### 3.4 Shared workspace volume (forge-core host ↔ ai-worker container)
+
+This is a cross-process detail the spec must nail down: forge-core and
+ai-worker need **read/write access to the same workspace tree** from
+different namespaces.
+
+**Current deployment layout** (from `docker-compose.dev.yml:60-66`):
+
+- `forge-ai-worker` container has:
+  ```
+  environment:
+    - FORGE_WORKSPACE_ROOT=/data/forge/workspaces
+  volumes:
+    - ${FORGE_WORKSPACE_ROOT_HOST:-./workspaces}:/data/forge/workspaces
+  ```
+- `forge-core` runs on the **host** (not in the compose network —
+  ai-worker reaches it via `host.docker.internal:8080`), and reads
+  `FORGE_WORKSPACE_ROOT` from its own env (defaults to `./workspaces`
+  relative to the working directory at startup).
+
+So:
+
+- forge-core sees paths like `./workspaces/tenant-1/project-25/repo`
+  (host-relative)
+- ai-worker sees paths like `/data/forge/workspaces/tenant-1/project-25/repo`
+  (container-absolute)
+- Both point to the **same files on disk**, via the bind mount. Any
+  file forge-core writes (e.g., `git clone` output) is immediately
+  visible inside ai-worker, and vice versa.
+
+**Protocol for the `workspace_path` RPC field:**
+
+`RunRequest.workspace_path` is always a **relative path** fragment,
+unambiguous across namespaces. It looks like:
+
+```
+tenant-1/project-25/repo
+```
+
+- forge-core's agent service computes this by calling
+  `filepath.Rel(cfg.WorkspaceRoot, workspace.ProjectDir(t, p))`.
+- ai-worker resolves it by joining with its own `FORGE_WORKSPACE_ROOT`.
+- Both sides agree on the layout scheme (`tenant-{N}/project-{N}/repo`).
+
+This is the Stream 4c protocol already implemented in
+`ai-worker/src/api_server.py:_route_and_stream`:
+
+```python
+ws_root = os.environ.get("FORGE_WORKSPACE_ROOT", "/data/forge/workspaces")
+resolved = os.path.join(ws_root, req.workspace_path)
+if os.path.isdir(resolved):
+    ...
+```
+
+No changes to that resolution logic. The spec's §5.7 and §3.7
+references to `workspace_path` use this relative-fragment contract.
+
+**Production deployment note:** If forge-core ever moves into a
+container in the same compose network, both containers bind the same
+host volume at `/data/forge/workspaces` and the scheme still works
+without code change — the relative fragment is the constant.
+
+### 3.5 Auth migration: token → deploy key
+
+Currently `manager.EnsureClone` uses `injectToken(repoURL, token)` to
+stuff a GitHub PAT into the HTTPS URL. This is replaced wholesale:
+
+- `injectToken` is **deleted**.
+- All git invocations go through a new `gitCommand()` helper in `git.go`
+  that sets `GIT_SSH_COMMAND` to point at the project's deploy-key
+  tempfile (see §3.6) and uses the SSH URL form
+  `git@github.com:{owner}/{repo}.git`.
+- The `ProjectLookup` interface, injected into the workspace Manager
+  at construction time, returns `(sshURL, defaultBranch)` for a given
+  `(tenantID, projectID)`.
+- Existing stored `repoURL` values in the `project` table are HTTPS
+  URLs (`https://github.com/{owner}/{repo}.git`); the workspace package
+  converts them to SSH form via a one-line helper
+  `toSSHURL(httpsURL)`. No database migration needed.
+- If a project row has a URL that can't be converted (non-github, weird
+  scheme), `EnsureReady` returns `error` status with
+  `last_error="repo_url_unsupported"`. Out of scope to support arbitrary
+  git hosts this release — GitHub only.
+
+### 3.6 Data model
 
 Migrations added as new files in `forge-core/migrations/` (or the
 project's convention for goose/Flyway):
@@ -320,14 +458,17 @@ CREATE TABLE engine.project_deploy_keys (
 );
 ```
 
-### 3.4 `EnsureReady` state machine
+### 3.7 `EnsureReady` state machine
+
+Three persisted states only: `pending` | `ready` | `error`. Resync is
+an **in-memory transition**, not a fourth row state.
 
 ```
          ┌──────────┐
          │ no record│
          └────┬─────┘
               │ first call: INSERT status='pending'
-              │             (ON CONFLICT acquires PG advisory lock)
+              │             (+ PG advisory lock on (tenant_id, project_id))
               ▼
          ┌──────────┐      clone | prep fails
          │ pending  │ ─────────────────┐
@@ -336,22 +477,48 @@ CREATE TABLE engine.project_deploy_keys (
               │ deps preinstall ok     │
               ▼                        ▼
          ┌──────────┐               ┌──────────┐
-         │  ready   │◀──┐           │  error   │
-         └────┬─────┘   │           └────┬─────┘
-              │         │                │ next call
-              │         │                │ retries
-              │ next    │ fetch+reset    │ from scratch
-              │ call    │ succeeds       │ (wipe dir,
-              ▼         │                │ re-clone)
-         ┌──────────┐   │                │
-         │  resync  │───┘                │
-         │ (fetch + │                    │
-         │  reset   │                    │
-         │  hard)   │                    │
-         └──────────┘                    │
-                                         │
-         (next EnsureReady call) ◀───────┘
+         │  ready   │               │  error   │
+         └────┬─────┘               └────┬─────┘
+              │                          │ next call wipes dir,
+              │ next call on new         │ re-runs clone + prep
+              │ session:                 │ from 'pending' transition
+              │   1. fetch               │
+              │   2. reset --hard        │
+              │   3. row stays 'ready'   │
+              │      (update updated_at) │
+              │                          │
+              └────────────┐             │
+                           │             │
+                           ▼             ▼
+                     ┌──────────┐  (row state may go
+                     │  ready   │   back to 'pending'
+                     │ (fresh   │   during re-clone if
+                     │  commit) │   wipe is needed)
+                     └──────────┘
 ```
+
+**Row state semantics:**
+
+- `pending`: actively being created or re-created. Other callers must
+  wait on the PG advisory lock.
+- `ready`: workspace directory exists, has git metadata, deps prepared.
+  Further `EnsureReady` calls may do fetch+reset without changing row
+  state.
+- `error`: last attempt failed. Next `EnsureReady` call transitions
+  row back to `pending`, wipes directory, re-runs clone + prep. Session
+  that sees `error` surfacing (first call to fail) emits `ErrorEvent`
+  and halts; next session's call may recover.
+
+**Advisory lock protocol:**
+
+```sql
+SELECT pg_advisory_xact_lock(hashtext('workspace:' || $tenant_id || ':' || $project_id));
+-- then read/insert/update engine.workspaces row
+-- lock auto-released at transaction end
+```
+
+Using `pg_advisory_xact_lock` rather than `pg_try_*` because we want
+concurrent callers to block, not fail.
 
 - **`pending` row is persisted** so concurrent callers observe it.
 - **PG advisory lock** on `(tenant_id, project_id)` serializes concurrent
@@ -365,7 +532,7 @@ CREATE TABLE engine.project_deploy_keys (
   decides "is this a new session?" and passes a flag. The workspace
   service does not know about sessions.
 
-### 3.5 SSH deploy key lifecycle
+### 3.8 SSH deploy key lifecycle
 
 **Generation (first EnsureReady call for a project with no key row):**
 
@@ -419,7 +586,7 @@ supports it (update `private_key_enc`, call GitHub API to delete old
 `github_key_id` and upload new one, update row). Manual operational
 procedure for now.
 
-### 3.6 Dependency pre-install
+### 3.9 Dependency pre-install
 
 Because the `bash` sandbox blocks network (§4.8), `npm install` / `go
 mod download` / `mvn dependency:go-offline` cannot run from agent bash
@@ -452,11 +619,12 @@ agent bash output, and the user can decide to add a language profile.
 This is a **known soft failure** — the agent degrades gracefully rather
 than blocking on unknown projects.
 
-### 3.7 Path plumbing to ai-worker
+### 3.10 Path plumbing to ai-worker
 
 `RunRequest.workspace_path` already exists in `ai-worker/src/api_server.py`
 as a relative path resolved against `FORGE_WORKSPACE_ROOT` env var on the
-ai-worker side. This stays. Changes:
+ai-worker side (the Stream 4c protocol described in §3.4). This stays.
+Changes:
 
 - `workspace_path` becomes **required**, not optional. Any request
   without it is a 400.
@@ -464,12 +632,22 @@ ai-worker side. This stays. Changes:
   removed. All requests flow through `QueryEngine` with the workspace
   path populated.
 - Agent service (`forge-core/internal/module/agent/service.go`) calls
-  `workspaceMgr.EnsureReady(ctx, projectID)` synchronously before
-  submitting the RunRequest to ai-worker. If EnsureReady fails, the
-  agent session fails with an `ErrorEvent` and the RunRequest is never
-  sent.
+  `workspaceMgr.EnsureReady(ctx, tenantID, projectID)` synchronously
+  before submitting the RunRequest to ai-worker. If EnsureReady fails,
+  the agent session fails with an `ErrorEvent` and the RunRequest is
+  never sent.
+- The relative fragment sent on the wire is computed as
+  `filepath.Rel(cfg.WorkspaceRoot, workspace.ProjectDir(tenantID, projectID))`,
+  which evaluates to `tenant-{N}/project-{N}/repo`.
+- In ai-worker's `_route_and_stream`, the `is_dir()` check on the
+  resolved workspace path is **defensive-only**. It should never fire
+  in normal operation because forge-core always calls EnsureReady
+  first. If it does fire, it's an operational bug (mount not set up,
+  race condition between forge-core commit and ai-worker read), so
+  it returns 500 and logs loudly — ai-worker does **not** try to
+  create the workspace itself.
 
-### 3.8 Concurrency semantics
+### 3.11 Concurrency semantics
 
 - **Two concurrent EnsureReady for same project:** Serialized by PG
   advisory lock. Second caller observes `ready` after first finishes
@@ -484,7 +662,7 @@ ai-worker side. This stays. Changes:
   creation. This is enforced in the Go agent service, not in the
   workspace service.
 
-### 3.9 Failure-mode matrix
+### 3.12 Failure-mode matrix
 
 | Failure point | Status | last_error | Behavior |
 |---|---|---|---|
@@ -882,7 +1060,6 @@ The sandbox invocation:
 ```
 bwrap \
   --unshare-all \
-  --share-net=false \
   --die-with-parent \
   --ro-bind /usr /usr \
   --ro-bind /lib /lib \
@@ -903,8 +1080,20 @@ bwrap \
   -- bash -c {command}
 ```
 
-- `--unshare-all`: new user, mount, PID, UTS, IPC, cgroup namespaces.
-- `--share-net=false`: no network. This is intentional (see §4.8).
+- `--unshare-all`: unshares **all** namespaces including the network
+  namespace. This is what gives the sandbox no network access —
+  the network namespace is isolated, so the sandbox sees only its own
+  empty `lo` interface and no routes.
+- **Do NOT add `--share-net`.** `--share-net` is a bare toggle (no
+  argument) that *re-enables* the network namespace after
+  `--unshare-all`. It is **not** a "disable network" flag. Writing
+  `--share-net=false` would either be interpreted as "re-enable
+  network" (catastrophic silent failure) or rejected as an unknown
+  option, depending on bwrap version. The correct way to keep network
+  off is to simply omit `--share-net` entirely after `--unshare-all`.
+  An adversarial test (§7.1) explicitly verifies
+  `ping -c 1 -W 1 8.8.8.8` fails from inside the sandbox to catch
+  any regression here.
 - `--die-with-parent`: if ai-worker crashes, the sandbox dies with it.
 - `/usr`, `/lib`, `/lib64`, `/bin`, `/sbin` read-only bound so standard
   binaries work.
@@ -1052,54 +1241,28 @@ in unit tests for each branch.
 
 ### 4.11 `SetPhaseTool`
 
-```python
-name = "set_phase"
-description = (
-    "Signal which phase you're currently in. The UI step ribbon will "
-    "highlight that phase. Available phases: Analyze (understanding "
-    "requirements and code), Plan (deciding changes), Generate (writing "
-    "code), Build (compiling), Test (running tests), Review (verifying "
-    "own work), Deploy (committing or preparing deployment). Call this "
-    "when you start a new phase. You can go backwards (e.g., Build -> "
-    "Generate to fix a compile error)."
-)
+`SetPhaseTool` extends `BaseTool` directly (not `SimpleTool`) so it can
+yield `PhaseChanged` as an explicit typed event rather than leaking
+phase semantics into the frontend's generic tool-event handling.
 
+```python
 Phase = Literal["Analyze", "Plan", "Generate", "Build", "Test", "Review", "Deploy"]
 
 class SetPhaseInput(BaseModel):
     phase: Phase
 
-class SetPhaseTool(SimpleTool):
-    async def _execute_simple(self, arguments, context):
-        # The phase_changed event is emitted by query.py's agent loop
-        # when it sees this tool's name, since SimpleTool can't yield
-        # events. Trade-off: slight coupling, but only one tool.
-        # Alternative rejected: make SetPhaseTool subclass BaseTool
-        # directly and yield PhaseChanged, for symmetry with BashTool.
-        return ToolResult(output=f"Phase set to {arguments.phase}")
-```
-
-**Trade-off note:** There's a tension here. `BashTool` yields its own
-events because it extends `BaseTool`. `SetPhaseTool` could do the same
-for symmetry. It doesn't, because:
-
-- The phase value is already in `tool_input`, the agent loop already
-  yields `ToolExecutionStarted(tool_name="set_phase", tool_input={...})`,
-  and frontend can derive `phase_changed` from that without a separate
-  event type...
-
-...except the frontend then needs to know that `set_phase` is
-semantically different from other tools. That's the kind of "hidden
-coupling" the silicon-valley standard rejects.
-
-**Final decision:** `SetPhaseTool` extends `BaseTool` directly (not
-`SimpleTool`) and yields a `PhaseChanged` event explicitly. Spending
-10 lines on symmetry is worth it. The final code:
-
-```python
 class SetPhaseTool(BaseTool):
     name = "set_phase"
-    description = "..."
+    description = (
+        "Signal which phase you're currently in. The UI step ribbon "
+        "will highlight that phase. Available phases: Analyze "
+        "(understanding requirements and code), Plan (deciding "
+        "changes), Generate (writing code), Build (compiling), Test "
+        "(running tests), Review (verifying own work), Deploy "
+        "(committing or preparing deployment). Call this when you "
+        "start a new phase. You can go backwards (e.g., Build -> "
+        "Generate to fix a compile error)."
+    )
     input_model = SetPhaseInput
 
     async def execute(self, arguments, context):
@@ -1109,6 +1272,14 @@ class SetPhaseTool(BaseTool):
     def is_read_only(self, arguments):
         return True
 ```
+
+**Why not `SimpleTool`:** a `SimpleTool` subclass can only yield a
+`ToolResult`, not `StreamEvent`s. Making the agent loop derive
+`PhaseChanged` from `ToolExecutionStarted(tool_name="set_phase")` would
+spread phase semantics across two files (tool + loop dispatch) and
+violate the silicon-valley rule against hardcoded special cases in the
+loop. Spending 10 lines to extend `BaseTool` directly keeps the tool
+self-contained, symmetric with `BashTool`, and free of hidden coupling.
 
 ### 4.12 Tool registry construction
 
@@ -1290,7 +1461,42 @@ elif isinstance(event, PhaseChanged):
 
 ### 5.6 Session complete logic
 
+`ToolExecutionStarted` carries `tool_input`; `ToolExecutionCompleted`
+does not (only `tool_name`, `output`, `is_error`). The SessionCollector
+observes both: it stashes bash commands by `tool_use_id` on start, then
+looks them up on completion. This keeps the event types minimal.
+
 ```python
+_BUILD_LIKE_FIRST_TOKENS = {
+    "go",        # go build, go test, go vet
+    "mvn",       # mvn compile, mvn test
+    "gradle",    # gradle build
+    "gradlew",   # ./gradlew build
+    "npm",       # npm run build, npm test
+    "pnpm",
+    "yarn",
+    "pytest",
+    "cargo",     # cargo build, cargo test
+    "make",      # make build, make test
+    "ctest",
+    "dotnet",    # dotnet build
+    "tsc",       # TypeScript compile
+    "javac",
+}
+
+def _is_build_like(command: str) -> bool:
+    """Return True if the first whitespace-delimited token of the command
+    is a known build/test runner. Used to derive SessionComplete's
+    build_status from the most recent bash call."""
+    command = command.strip()
+    if not command:
+        return False
+    first = command.split()[0]
+    if "/" in first:  # ./gradlew, ./bin/tool
+        first = first.rsplit("/", 1)[-1]
+    return first in _BUILD_LIKE_FIRST_TOKENS
+
+
 class SessionCollector:
     """Tracks per-turn statistics from tool execution events."""
 
@@ -1299,8 +1505,22 @@ class SessionCollector:
         self.files_modified = 0
         self.tool_call_count = 0
         self.last_build_status: str = "skipped"
+        self._pending_bash: dict[str, str] = {}  # tool_use_id → command
 
     def observe(self, event: StreamEvent) -> None:
+        # ToolExecutionStarted carries tool_input; stash bash commands
+        # so the matching Completed event can look them up.
+        if isinstance(event, ToolExecutionStarted):
+            if event.tool_name == "bash":
+                command = event.tool_input.get("command", "")
+                # tool_use_id is on the ToolUseBlock inside the message,
+                # not on the StreamEvent directly. In practice the
+                # collector gets it via the event dispatch path. For the
+                # pseudocode here we use event.tool_name as a proxy —
+                # real implementation threads the id through.
+                self._pending_bash["__latest__"] = command
+            return
+
         if isinstance(event, ToolExecutionCompleted):
             self.tool_call_count += 1
             if event.tool_name == "write_file" and not event.is_error:
@@ -1308,13 +1528,28 @@ class SessionCollector:
             elif event.tool_name == "edit_file" and not event.is_error:
                 self.files_modified += 1
             elif event.tool_name == "bash":
-                # Heuristic: if the command looks build-y, update status
-                if self._is_build_like(event.tool_input):
-                    self.last_build_status = "passed" if not event.is_error else "failed"
+                command = self._pending_bash.pop("__latest__", "")
+                if _is_build_like(command):
+                    self.last_build_status = (
+                        "passed" if not event.is_error else "failed"
+                    )
 
     def should_emit_summary(self) -> bool:
         return self.tool_call_count > 0
 ```
+
+**Implementation note:** the `"__latest__"` placeholder above is
+pseudocode. The real collector needs a proper `tool_use_id` key, which
+means either:
+
+- extending `ToolExecutionStarted` and `ToolExecutionCompleted` with a
+  `tool_use_id: str` field (preferred — small, targeted change), OR
+- wiring the collector one level up in `query.py`'s agent loop where
+  the id is in scope, bypassing the StreamEvent observer pattern.
+
+The spec chooses the first: add `tool_use_id: str` to both events. This
+is a contained mutation, touches one file, and makes the events
+self-describing for other future consumers too.
 
 `QueryEngine.submit_message` wires this up:
 
@@ -1598,7 +1833,7 @@ corruption.
 | `test_bash_cannot_read_github_token_env_var` | `echo $GITHUB_TOKEN` returns empty string |
 | `test_bash_cannot_reach_network` | `ping -c 1 -W 1 8.8.8.8` returns non-zero exit |
 | `test_bash_cannot_curl` | `curl https://example.com` fails with network error |
-| `test_bash_cannot_read_other_tenant_workspace` | Attempting to access another tenant's workspace path fails |
+| `test_bash_cannot_read_other_tenant_workspace` | With tenant A's workspace bound, attempting `cat /data/forge/workspaces/tenant-B/project-1/repo/README.md` fails (tenant-B path is not bind-mounted into the sandbox at all) |
 | `test_bash_cannot_cd_out_of_workspace_and_write` | Can `cd /tmp` but writes there are lost when sandbox exits |
 | `test_bash_cannot_kill_parent_process` | `kill -9 $PPID` has no effect on ai-worker |
 | `test_bash_respects_timeout` | `sleep 200` with timeout=5 is killed within 10s |
@@ -2005,28 +2240,40 @@ brainstorming session. The confirmation chain:
 ## Appendix B — Files touched (summary)
 
 **New files:**
-- `forge-core/internal/module/workspace/{model,repository,service,git,keys,sandbox_prep}.go`
+- `forge-core/internal/workspace/state.go` — Workspace, DeployKey, status DAO
+- `forge-core/internal/workspace/ensure.go` — EnsureReady state machine
+- `forge-core/internal/workspace/git.go` — SSH-aware git command wrapper
+- `forge-core/internal/workspace/keys.go` — ed25519 gen, AES-GCM crypto, GitHub deploy key upload
+- `forge-core/internal/workspace/prep.go` — HTTP client for ai-worker /api/workspace/prep
+- `forge-core/internal/workspace/state_test.go`, `ensure_test.go`, `keys_test.go`
 - `forge-core/migrations/{nnn}_create_workspaces.sql`
 - `forge-core/migrations/{nnn+1}_create_project_deploy_keys.sql`
 - `ai-worker/src/openharness/tools/workspace_path.py`
-- `ai-worker/src/openharness/tools/file_tools.py`
-- `ai-worker/src/openharness/tools/bash_tool.py`
-- `ai-worker/src/openharness/tools/phase_tool.py`
+- `ai-worker/src/openharness/tools/file_tools.py` — Read/Write/Edit/Glob/Grep/ListDirectory
+- `ai-worker/src/openharness/tools/bash_tool.py` — BashTool + bwrap wrapper
+- `ai-worker/src/openharness/tools/phase_tool.py` — SetPhaseTool
 - `ai-worker/src/openharness/engine/session_collector.py`
-- `ai-worker/src/api_server_prep_handler.py` (or route added to existing)
+- `ai-worker/src/api_server.py` (new endpoint) — `POST /api/workspace/prep` handler
 - `ai-worker/tests/openharness/tools/test_bash_adversarial.py`
 - `ai-worker/tests/openharness/tools/test_workspace_path_adversarial.py`
 - `ai-worker/tests/openharness/tools/test_base_tool_contract.py`
 - `ai-worker/tests/e2e/test_variant_b_smoke.py`
 
 **Modified files:**
+- `forge-core/internal/workspace/manager.go` — replace `EnsureClone` with
+  `EnsureReady`, delete `injectToken`; keep `ProjectDir`/`TaskDir`/`CreateWorktree`/`WriteFiles`/`CleanupTask`
+- `forge-core/internal/workspace/manager_test.go` — remove `EnsureClone` tests, add `EnsureReady`
+- `forge-core/cmd/forge-core/main.go` — pass `ProjectLookup` into workspace.NewManager, wire deploy-key crypto service
+- `forge-core/internal/module/project/service.go` — stop calling workspace on project register
+- `forge-core/internal/module/agent/service.go` — call `workspace.Manager.EnsureReady` before agent, pass relative workspace_path
+- `forge-core/internal/activity/project_repo_adapter.go` (worker) — migrate from `EnsureClone` to `EnsureReady`
 - `ai-worker/src/openharness/tools/base.py` — new signature + SimpleTool
 - `ai-worker/src/openharness/tools/context_tools.py` — migrate to SimpleTool
-- `ai-worker/src/openharness/engine/query.py` — adapt tool execution
+- `ai-worker/src/openharness/engine/query.py` — adapt tool execution to new AsyncIterator contract
 - `ai-worker/src/openharness/engine/query_engine.py` — SessionCollector integration
-- `ai-worker/src/openharness/engine/stream_events.py` — add PhaseChanged, delete FixLoop*
-- `ai-worker/src/api_server.py` — remove pair routing, rewrite `_create_engine`, LRU session cache
-- `forge-core/internal/module/agent/service.go` — call `workspace.Service.EnsureReady` before agent
+- `ai-worker/src/openharness/engine/stream_events.py` — add PhaseChanged, add `tool_use_id` to ToolExecution* events, delete FixLoop*
+- `ai-worker/src/api_server.py` — remove pair routing, rewrite `_create_engine` to register T2 tools, LRU session cache
+- `ai-worker/Dockerfile` — add `apt install bubblewrap ripgrep`
 - `forge-portal/components/agent/agent-chat.tsx` — new event handling, visual fix-loop detection, remove coder/reviewer roles
 - `forge-portal/components/agent/step-ribbon.tsx` — dynamic phase tracking
 - `forge-portal/components/agent/tool-formatters.ts` — new tool formatters
