@@ -2,6 +2,8 @@
 /forge-core
 /forge-core.exe
 /forge-core.exe~
+/forge-core-new
+/forge-core-new.exe
 
 # Workspaces (AI-generated task code, cloned repos)
 workspaces/
