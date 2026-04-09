@@ -98,22 +98,31 @@ async def health() -> Dict[str, Any]:
     }
 
 
-def _create_engine(req: RunRequest) -> Any:
-    """Create a QueryEngine for a new session."""
+def _create_engine(req: RunRequest, purpose: "Purpose | None" = None) -> Any:
+    """Create a QueryEngine for a new session.
+
+    purpose controls the ModelRouter routing and the default system
+    prompt. Purpose.GENERATE (default) gets the coder prompt;
+    Purpose.REVIEW gets the reviewer prompt used by pair_pipeline's
+    reviewer engine.
+    """
     from src.openharness.engine.query_engine import QueryEngine
     from src.openharness.tools.base import ToolRegistry
     from src.openharness.hooks.loader import HookRegistry
     from src.openharness.hooks.executor import HookExecutor
     from src.openharness.permissions.checker import PermissionChecker
     from src.openharness.permissions.modes import PermissionMode
-    from src.openharness.skills.loader import load_skill_registry
+    from src.models.router import Purpose as _Purpose
+
+    if purpose is None:
+        purpose = _Purpose.GENERATE
 
     # Try to load model router adapter
     try:
-        from src.models.router import ModelRouter, Purpose
+        from src.models.router import ModelRouter
         from src.openharness.api.providers.router_adapter import ModelRouterAdapter
         router = ModelRouter()
-        api_client = ModelRouterAdapter(router, purpose=Purpose.GENERATE)
+        api_client = ModelRouterAdapter(router, purpose=purpose)
     except Exception as e:
         logger.warning("ModelRouter not available, using mock: %s", e)
         from unittest.mock import AsyncMock
@@ -121,15 +130,25 @@ def _create_engine(req: RunRequest) -> Any:
 
     # Load registries
     tool_registry = ToolRegistry()
-    # Context tools require project-specific data; skip for now
-    # They'll be registered when project context is loaded
-
     hook_registry = HookRegistry()
     hook_executor = HookExecutor(hook_registry)
     permission_checker = PermissionChecker(mode=PermissionMode.FULL_AUTO)
 
     model = req.model or os.getenv("FORGE_DEFAULT_MODEL", "claude-sonnet-4-20250514")
-    system_prompt = req.system_prompt or "You are a helpful AI coding assistant."
+
+    if req.system_prompt is not None:
+        system_prompt = req.system_prompt
+    elif purpose == _Purpose.REVIEW:
+        system_prompt = (
+            "You are a strict code reviewer. You MUST respond with exactly "
+            "one of these three forms:\n"
+            "- APPROVE (if the code is correct and production-ready)\n"
+            "- REVISE <specific changes needed>\n"
+            "- REJECT <reason why the approach is fundamentally wrong>\n"
+            "Be terse. Do not ramble."
+        )
+    else:
+        system_prompt = "You are a helpful AI coding assistant."
 
     return QueryEngine(
         api_client=api_client,
