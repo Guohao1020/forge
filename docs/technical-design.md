@@ -709,12 +709,76 @@ pytest -m e2e tests/e2e/ -v
 
 需要 host 上有 `go` 二进制 + 真实的 DASHSCOPE key。无 key 自动 skip。
 
+#### pair_pipeline 生产接入 (2026-04-09 完成)
+
+`api_server.py` 的 `/api/run` 通过 `_route_and_stream` 路由器在 `pair_pipeline`
+和裸 QueryEngine 之间分发, 路由规则:
+
+1. forge-core `service.SubmitMessage` 在请求 body 里塞一个**相对**
+   `workspace_path` 片段 (`tenant-X/project-Y/repo`), 前提是
+   `workspace.Manager.ProjectDir` 下 `.git` 目录存在并且 caller tenantID 非零
+   (legacy 回退路径传 `tenantID=0` 作为哨兵, 永远发空 path)。
+2. ai-worker 的 `_route_and_stream` 拿到相对片段, 用容器内的
+   `FORGE_WORKSPACE_ROOT` 环境变量 (默认 `/data/forge/workspaces`, 由 docker
+   volume 挂载到 host 的 `D:/forge-workspaces` 或配置的 `FORGE_WORKSPACE_ROOT_HOST`)
+   拼成绝对路径, 做 `os.path.isdir` 检查。
+3. 目录存在 → 走 `pair_pipeline.run_pair_pipeline` (coder + reviewer 两个
+   engine, 通过 `Purpose.GENERATE` / `Purpose.REVIEW` 区分), `project_dir`
+   传给 `BuildVerifyHook`。
+4. 目录不存在或 `workspace_path` 为空 → WARN + 回退 QueryEngine, 保持 chat
+   在 `.git` 还没 clone 的项目里也能用。
+
+**为什么用相对片段而不是绝对路径**: forge-core 跑在 Windows host 上, ai-worker
+跑在 Linux 容器里, 绝对路径 (`D:/forge-workspaces/...` vs `/data/forge/workspaces/...`)
+跨边界没意义。相对片段让两侧各自用本地的 `FORGE_WORKSPACE_ROOT` 解析, 是
+跨 OS 部署 (dev: Windows host + Linux container; prod: 多机, 潜在多 namespace)
+唯一能扩展的做法。
+
+**模块级降级闸门** (`_PAIR_PIPELINE_AVAILABLE` flag): 如果 `pair_pipeline`
+及相关类型的重型 import 链在 api_server 模块 load 时抛异常,
+`api_server.py` 不会启动失败 (不想拖垮 `/health` 和整个 HTTP 接口), 而是设
+flag=False, 每次路由决策检查这个 flag, 有 workspace_path 也降级到 QueryEngine,
+启动日志里打 ERROR。运营侧可以 grep 这行告警触发手动回滚。
+
+**Phase 4 GATE 验证 (2026-04-09 12:49, project-999)**:
+- forge-core 日志输出 `workspace_path=tenant-1/project-999/repo` ✓
+- SSE stream 顺序出现 `thinking_started:"Generating code"` →
+  `text_delta` → `turn_complete` → `thinking_stopped` →
+  `thinking_started:"Reviewing code"` → `text_delta:"APPROVE"` →
+  `turn_complete` → `thinking_stopped` → `session_complete` ✓
+  (legacy QueryEngine 路径不会有 "Generating code" / "Reviewing code" label,
+  这是 pair_pipeline 的 signature)
+- `session_complete` 带 `build_status=passed`, `duration_ms=4869`,
+  `tokens_total=344`, `cost_usd=0.0000` ✓
+- `engine.agent_sessions` 行 durable (tenant=1, project=999, created_by=1) ✓
+
 #### 已知遗留 (本轮 PR 之外)
 
-- `api_server.py` 的 `/api/run` **仍然走裸 QueryEngine**, 不通过 pair_pipeline。
-  pair pipeline 的 fix loop / reviewer / BuildVerify 只能通过直接 import 触发
-  (e2e 走的就是这条路径)。把 `/api/run` 切到 pair pipeline 是下一个 PR
-  的工作 — 见 TODOS.md。
+以下 6 项已在 TODOS.md "Known Issues — pair_pipeline production wire-up
+followups (P2)" 立案, 按优先级排列:
+
+- **ai-worker logging under uvicorn 失效** — `logging.basicConfig` 在
+  `if __name__ == "__main__":` 分支, uvicorn 启动时根本不命中, 所有
+  `logger.info/warning` 全部被丢, 包括 `_route_and_stream` 里那行关键的
+  `pair_pipeline route: session=... workspace=...` 诊断日志。运营必须靠
+  `print()` 和 uvicorn access log 反推, 观测性严重退化。XS effort。
+- **session 并发锁缺失** — `POST /agent/chat` 没对 `session_id` 做串行化,
+  重复提交会两条 pair_pipeline 并发跑同一个 workspace, 事件流交错, 可能
+  Edit 工具竞写 main.go。需 Redis SETNX 或 PG advisory lock, 第二次请求
+  返 409。S effort。
+- **mid-stream 崩溃没 session_failed 事件** — `_run_and_publish` 后台任务
+  异常时, SSE 客户端只看到半条流然后 heartbeat 干耗, 没有显式失败事件写到
+  Redis / PG。需要 try/except 兜底发 ErrorEvent。S effort。
+- **ModelRouter Purpose 分流未实现** — `Purpose.GENERATE` / `Purpose.REVIEW`
+  参数已打通但 ModelRouter 不分流, coder/reviewer 今天是同一个模型。理论
+  reviewer 可以用更便宜更快的 Haiku-tier, 省成本。M effort。
+- **ai-worker PG pool 冷启动不重试** — postgres 慢启动时 pool init 一次失败
+  后就永久降级到 Redis-only, dual-storage 对这次容器 lifetime 无效。S effort。
+- **pair_pipeline 下 LLM 不调 Edit (code_files=None 时)** — 2026-04-09 Phase 4
+  验证时 LLM 把 Go 函数写成了 markdown 代码块而不是调 Edit tool 改 main.go,
+  `files_modified=0`, BuildVerify 平凡通过。coder prompt 在 `code_files=None`
+  分支对 "先 Read 再 Edit" 的指令不够强。M effort。
+
 - `src/agents/*.py` 是 Temporal activities 时代的 6 个 agent 实现, 仍然被
   `src/activities/` 和测试套件引用。OpenHarness QueryEngine 计划取代它们,
   迁移留到独立 PR — 见 TODOS.md。

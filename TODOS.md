@@ -19,7 +19,112 @@ Deferred items from reviews and retros. Format: one-line what + why + context + 
 - [ ] **Move `forge-core` into `docker-compose.dev.yml`** — currently `forge-core` runs as a host process spawned by Harvey's IDE/terminal, while `ai-worker` / `postgres` / `redis` / `temporal` all run in compose. This split causes three real frictions: (1) Windows file lock prevents `go build -o forge-core.exe` from overwriting the running binary, forcing the `forge-core-new.exe` workaround, (2) CC cannot safely restart `forge-core` after backend changes because it doesn't know the spawn context, so plan TASK 9-style "rebuild + Harvey manually restart" steps recur in every base-loop change, (3) the host process cannot use `host.docker.internal` symmetry — the rest of the compose graph reaches it via `host.docker.internal:8080` instead of by service name. Putting `forge-core` in compose makes restart = `docker compose restart forge-core`, eliminates the file-lock workaround, and lets CC drive backend integration testing end-to-end without manual handoffs.
   Effort: S (人 ~2h / CC ~30min). Acceptance: `docker compose up -d` brings the whole stack including `forge-core`, `curl http://localhost:8080/api/healthz` returns 200, and the existing host launch path is removed from `forge-core/cmd/forge-core/main.go` docs (or kept as an alternate dev mode). **Depends on:** decision about whether forge-core needs source hot-reload (`air` inside the container) or accepts cold restarts on every code change. **Out of scope for** the agent base loop reduction PR — surfaced during 2026-04-08 TASK 9 prep when explaining `forge-core-new.exe`.
 
-- [ ] **Add `forge-core/forge-core-new.exe` to `.gitignore`** — currently slipping past the existing `forge-core/forge-core.exe` ignore because of the `-new` suffix. The 97MB binary appears in `git status` after every TASK 9-style rebuild and risks being staged by accident (`git add -A`). Two-line fix; do alongside the compose migration above so the workaround binary stops mattering. **Depends on:** nothing.
+- [x] **Add `forge-core/forge-core-new.exe` to `.gitignore`** — ✅ DONE 2026-04-09 in commit `62dc9dd`. Two-line fix added `/forge-core-new` and `/forge-core-new.exe` to `forge-core/.gitignore`. Verified with `git check-ignore -v forge-core/forge-core-new.exe`. The compose migration above is independent and remains pending.
+
+## Known Issues — pair_pipeline production wire-up followups (P2)
+
+Surfaced during the 2026-04-09 `/api/run → _route_and_stream → pair_pipeline` wire-up
+(plan `docs/plans/2026-04-09-pair-pipeline-production-wire.md`). The happy path is
+working end-to-end as of commit `280b88f` and was verified against project-999 on
+2026-04-09 12:49 local. The items below are real issues found during or after
+Phase 4 — none block the current PR, but they should all get addressed before we
+promote the chat path to "GA" for customers.
+
+- [ ] **Session concurrency lock** — `POST /api/projects/:id/agent/chat` does not
+  serialize concurrent requests for the same `session_id`. If a user fires two
+  chat requests against the same session in parallel (double-click, network
+  retry, two browser tabs), both hit `_run_and_publish` and both spin up
+  pair_pipeline runs against the same workspace directory — producing interleaved
+  writes to Redis streams, possibly interleaved Edit tool calls racing on
+  `main.go`, and an `agent_messages` history that looks like two conversations
+  woven together. Fix: per-session advisory lock (Redis `SETNX` with TTL or a
+  Postgres advisory lock keyed on session_id) held for the duration of
+  `_route_and_stream`. Reject the second request with 409 and a clear error.
+  **Effort:** S (人 ~4h / CC ~30min). **Acceptance:** a parallel-POST test
+  submits 2 messages to the same session_id simultaneously; exactly one gets
+  202, the other gets 409; Redis stream has no interleaved events. **Depends
+  on:** decision about whether 409 should expose a `retry_after` hint based on
+  the first request's running duration.
+
+- [ ] **Mid-stream crash recovery** — when ai-worker's `_run_and_publish`
+  background task crashes partway through a pair_pipeline run (OOM, connection
+  reset from the LLM, a rare Python exception inside `run_pair_pipeline`), the
+  SSE client sees a half-finished stream: typically some `text_delta` events,
+  no `session_complete`, and eventually only heartbeats. There is no explicit
+  `session_failed` or `session_aborted` event. The PG dual-storage side is
+  equally confused — `user_message` is persisted but no `error` event is
+  written. Downstream frontend has to time out on its own. Fix: wrap
+  `_run_and_publish` body in a try/except that emits a synthetic `ErrorEvent`
+  with `recoverable=false` to Redis before the task dies, and persist the same
+  event to `agent_messages`. **Effort:** S (人 ~3h / CC ~20min). **Acceptance:**
+  a pytest that raises `RuntimeError("boom")` from inside a stubbed
+  `run_pair_pipeline` sees the ErrorEvent on the Redis stream and in PG.
+  **Depends on:** nothing.
+
+- [ ] **ModelRouter Purpose differentiation** — `_create_engine(req,
+  purpose=Purpose.GENERATE)` and `_create_engine(req, purpose=Purpose.REVIEW)`
+  both currently route to the same underlying Claude model. The Purpose
+  parameter is plumbed through but ModelRouter does not branch on it yet. In
+  practice this means coder and reviewer are the same LLM with different system
+  prompts — which works but misses the whole point of separation of concerns.
+  Fix: extend ModelRouter to honor Purpose → optionally select a cheaper/faster
+  model for REVIEW (e.g. Sonnet for GENERATE, Haiku for REVIEW) with an env
+  override per tenant. **Effort:** M (人 ~1天 / CC ~1h). **Acceptance:** a
+  Purpose-based e2e test shows two different model_call entries for the same
+  pair_pipeline run, and a configuration toggle lets an operator override the
+  REVIEW model per-tenant. **Depends on:** model pricing data for the routing
+  heuristic, cost dashboard updates to distinguish coder vs reviewer spend.
+
+- [ ] **ai-worker logging is invisible under uvicorn** — `ai-worker/src/api_server.py`
+  calls `logging.basicConfig(...)` inside `if __name__ == "__main__":` (line 524).
+  `start.sh` launches the API via `uvicorn src.api_server:app` which means
+  `__main__` is uvicorn, not api_server, so basicConfig never runs. Every
+  `logger.info(...)` call in api_server.py — including the critical
+  `pair_pipeline route: session=... workspace=...` diagnostic at line 248 that
+  the Phase 4 plan told operators to grep for — is silently dropped. Today we
+  only see `print()` calls and uvicorn's own access log. I chased an imaginary
+  bug for 20 minutes because of this. Fix: move `logging.basicConfig(...)` to
+  module top-level, or configure uvicorn via `--log-config` to use the same
+  JSON formatter. **Effort:** XS (人 ~30min / CC ~5min). **Acceptance:** after
+  fix, `docker logs forge-ai-worker | grep "pair_pipeline route"` shows a line
+  for every pair_pipeline chat we send; the JSON log format (`{"time", "level",
+  "msg"}`) matches what's documented as the ai-worker log shape. **Depends on:**
+  nothing. Discovered 2026-04-09 during Phase 4 diagnostics.
+
+- [ ] **ai-worker PG pool has no cold-start retry** — if `forge-postgres` comes
+  up AFTER ai-worker's first connect attempt (common when docker compose
+  starts the whole stack in dependency order but ai-worker races ahead), the
+  PG pool init at `api_server.py` ~line 515 fails with `[Errno 111] Connection
+  refused`, prints `"PG pool not available — agent history will rely on Redis
+  only"`, and the code path never tries again for the lifetime of the
+  container. Result: `agent_messages` dual-storage silently degrades to
+  Redis-only, so `/api/projects/:id/agent/sessions/:sid/messages` returns only
+  the forge-core-side `user_message` rows and zero assistant/tool events. Very
+  confusing when debugging. Fix: retry PG pool init on first use of the pool,
+  OR add a background task that periodically reconciles the pool. **Effort:**
+  S (人 ~4h / CC ~30min). **Acceptance:** pytest that simulates postgres
+  unavailable on first connect and available on second — second connect
+  succeeds and persists an event to PG. **Depends on:** nothing. Discovered
+  2026-04-09 during Phase 4 dual-storage verification.
+
+- [ ] **LLM doesn't actually call Edit under pair_pipeline when `code_files=None`** —
+  during Phase 4 verification against project-999 the LLM produced a correct
+  `Hello(name string) string` implementation as a markdown code block in its
+  response message but never invoked the Edit tool to write to `main.go`.
+  Result: `files_modified=0`, BuildVerify trivially passed, SSE `session_complete`
+  arrived with `build_status=passed` — but the workspace is unchanged on disk.
+  Root cause suspected in the coder system prompt: when `code_files=None` is
+  passed to `run_pair_pipeline`, the prompt does not strongly enough instruct
+  the LLM to read the existing file (Read/Glob/Grep) AND then call Edit. The
+  LLM's default behavior when asked to "add a function" is to write code in
+  chat, which is wrong for this pipeline. Fix: review and strengthen the
+  coder prompt template for the `code_files=None` branch, and add a
+  pair_pipeline acceptance test that asserts `files_modified >= 1` when the
+  initial_prompt is an edit request and the workspace has a matching target
+  file. **Effort:** M (人 ~1天 / CC ~1h). **Acceptance:** post-fix, the same
+  Phase 4 e2e chat against project-999 produces `files_modified=1` and
+  `main.go` on disk has the `Hello` function. **Depends on:** coder prompt
+  authoring conventions; may interact with the reviewer prompt.
 
 ## Brand Cleanup
 
