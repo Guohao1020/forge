@@ -242,7 +242,7 @@ func main() {
 	// Agent Terminal handler (OpenHarness). The Repository backs the
 	// dual-storage path (PG session/message log); it's optional, so the
 	// handler still serves the core Chat/Stream endpoints if db is nil.
-	agentSvc := agent.NewService(cfg.AIWorkerURL)
+	agentSvc := agent.NewService(cfg.AIWorkerURL, workspaceMgr)
 	agentRepo := agent.NewRepository(db)
 	agentHandler := agent.NewHandler(agentSvc, rdb, agentRepo)
 
