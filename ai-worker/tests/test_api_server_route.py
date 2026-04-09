@@ -213,14 +213,11 @@ async def test_route_valid_workspace_uses_pair_pipeline(tmp_path, monkeypatch):
         mock.submit_message = MagicMock(return_value=_fake_query_engine_iter())
         return mock
 
-    pipeline_called = {"v": 0}
+    captured = {}
 
     def fake_pipeline(config, coder_engine, reviewer_engine, initial_prompt, code_files=None):
-        pipeline_called["v"] += 1
-        # The config's project_dir must be the RESOLVED absolute container
-        # path, not the relative fragment sent in RunRequest.
-        assert str(config.project_dir) == str(ws_root / "repo"), \
-            f"PairPipelineConfig.project_dir must be resolved absolute, got {config.project_dir}"
+        captured["config"] = config
+        captured["code_files"] = code_files
         return _fake_pair_pipeline_iter_with_non_event()
 
     monkeypatch.setattr("src.api_server._create_engine", fake_qe)
@@ -230,7 +227,14 @@ async def test_route_valid_workspace_uses_pair_pipeline(tmp_path, monkeypatch):
     async for ev in _route_and_stream(req, "sid-1", "corr-1"):
         events.append(ev)
 
-    assert pipeline_called["v"] == 1, "pair_pipeline must be called"
+    assert "config" in captured, "pair_pipeline must be called"
+    # The config's project_dir must be the RESOLVED absolute container
+    # path, not the relative fragment sent in RunRequest.
+    assert str(captured["config"].project_dir) == str(ws_root / "repo"), \
+        f"PairPipelineConfig.project_dir must be resolved absolute, got {captured['config'].project_dir}"
+    # Bonus pin for the code_files=None contract — the LLM reads files via
+    # Read/Glob/Grep tools, so no pre-seeded context should be passed.
+    assert captured["code_files"] is None
     assert len(qe_calls) == 2, f"Two engines expected (coder + reviewer), got calls: {qe_calls}"
     # The two engines must be created with different Purposes
     assert Purpose.GENERATE in qe_calls, "GENERATE engine missing"
@@ -277,3 +281,50 @@ async def test_route_filters_non_stream_events(tmp_path, monkeypatch):
     # fake pipeline yields 3 items: 1 StreamEvent, 1 non-event, 1 StreamEvent
     assert len(events) == 2, f"Expected 2 filtered events, got {len(events)}"
     assert all(isinstance(e, StreamEvent) for e in events)
+
+
+def _fake_pair_pipeline_that_raises():
+    async def _gen():
+        yield AssistantTextDelta(text="before crash")
+        raise RuntimeError("pipeline exploded")
+    return _gen()
+
+
+@pytest.mark.asyncio
+async def test_route_pair_pipeline_exception_propagates(tmp_path, monkeypatch):
+    """Exceptions in pair_pipeline propagate from _route_and_stream so
+    _run_and_publish can catch them and emit an ErrorEvent to Redis/PG.
+
+    Contract pin: events yielded BEFORE the exception must have been
+    observable by the caller — that's how _run_and_publish can write
+    partial history to Redis + PG before the crash."""
+    monkeypatch.setattr("src.api_server._sessions", {})
+    ws_root = tmp_path / "workspaces"
+    (ws_root / "repo").mkdir(parents=True)
+    monkeypatch.setenv("FORGE_WORKSPACE_ROOT", str(ws_root))
+
+    req = RunRequest(
+        project_id=1,
+        message="add code",
+        workspace_path="repo",
+    )
+
+    def fake_qe(r, purpose=None):
+        mock = MagicMock()
+        mock.submit_message = MagicMock(return_value=_fake_query_engine_iter())
+        return mock
+
+    def fake_pipeline(*args, **kwargs):
+        return _fake_pair_pipeline_that_raises()
+
+    monkeypatch.setattr("src.api_server._create_engine", fake_qe)
+    monkeypatch.setattr("src.api_server.run_pair_pipeline", fake_pipeline)
+
+    events = []
+    with pytest.raises(RuntimeError, match="pipeline exploded"):
+        async for ev in _route_and_stream(req, "sid-1", "corr-1"):
+            events.append(ev)
+
+    # Events yielded BEFORE the exception must have been observable
+    assert len(events) == 1
+    assert events[0].text == "before crash"

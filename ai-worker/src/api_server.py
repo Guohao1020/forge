@@ -26,12 +26,25 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from src.models.router import Purpose
-from src.openharness.engine.pair_pipeline import (
-    PairPipelineConfig,
-    run_pair_pipeline,
-)
-from src.openharness.engine.stream_events import StreamEvent
+from src.openharness.engine.stream_events import StreamEvent  # trivial import, safe
+
+try:
+    from src.openharness.engine.pair_pipeline import (
+        PairPipelineConfig,
+        run_pair_pipeline,
+    )
+    from src.models.router import Purpose
+    _PAIR_PIPELINE_AVAILABLE = True
+except Exception as e:
+    logging.getLogger(__name__).error(
+        "pair_pipeline imports failed at startup — pair_pipeline route "
+        "will return 503; falling back to QueryEngine for all requests: %s",
+        e,
+    )
+    PairPipelineConfig = None  # type: ignore
+    run_pair_pipeline = None  # type: ignore
+    Purpose = None  # type: ignore
+    _PAIR_PIPELINE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -62,23 +75,22 @@ class RunResponse(BaseModel):
 
 @app.post("/api/run", response_model=RunResponse)
 async def run_agent(req: RunRequest) -> RunResponse:
-    """Accept a message and run the QueryEngine asynchronously.
+    """Accept a message and route it through _route_and_stream asynchronously.
 
     Events are published to Redis Streams for the Go SSE handler to consume.
     Returns 202 Accepted immediately (fire-and-forget pattern).
+
+    Engine creation is lazy: _route_and_stream decides between pair_pipeline
+    (when workspace_path is set and resolves to a real directory) and the
+    legacy QueryEngine session path, creating/caching engines on demand.
     """
     session_id = req.session_id or str(uuid.uuid4())
     correlation_id = req.correlation_id or str(uuid.uuid4())
 
-    # Get or create session engine
-    engine = _sessions.get(session_id)
-    if engine is None:
-        engine = _create_engine(req)
-        _sessions[session_id] = engine
-
-    # Fire-and-forget: run in background task
+    # Fire-and-forget: run in background task. _route_and_stream handles
+    # session engine lookup/creation on the legacy path.
     asyncio.create_task(
-        _run_and_publish(engine, session_id, req.message, correlation_id),
+        _run_and_publish(req, session_id, correlation_id),
     )
 
     return RunResponse(
@@ -120,6 +132,10 @@ def _create_engine(req: RunRequest, purpose: "Purpose | None" = None) -> Any:
     from src.openharness.hooks.executor import HookExecutor
     from src.openharness.permissions.checker import PermissionChecker
     from src.openharness.permissions.modes import PermissionMode
+    # NOTE: Purpose is lazy-imported here to tolerate pair_pipeline startup
+    # failures — when the module-level guarded import above sets Purpose to
+    # None, the legacy QueryEngine path still needs a real Purpose value.
+    # See try/except at top of file.
     from src.models.router import Purpose as _Purpose
 
     if purpose is None:
@@ -206,6 +222,13 @@ async def _route_and_stream(
                 resolved_workspace,
             )
 
+    if use_pair_pipeline and not _PAIR_PIPELINE_AVAILABLE:
+        logger.warning(
+            "workspace_path is set but pair_pipeline is not available "
+            "(import failed at startup) — falling back to QueryEngine"
+        )
+        use_pair_pipeline = False
+
     if not use_pair_pipeline:
         # Legacy path: single-shot QueryEngine. Reuse session engine
         # from _sessions when present (continuity across messages) or
@@ -235,7 +258,7 @@ async def _route_and_stream(
         coder_engine=coder,
         reviewer_engine=reviewer,
         initial_prompt=req.message,
-        code_files=None,
+        code_files=None,  # LLM reads files via Read/Glob/Grep tools; no pre-seeded context
     ):
         if isinstance(item, StreamEvent):
             yield item
@@ -245,15 +268,20 @@ async def _route_and_stream(
 
 
 async def _run_and_publish(
-    engine: Any, session_id: str, message: str, correlation_id: str,
+    req: RunRequest, session_id: str, correlation_id: str,
 ) -> None:
-    """Run the engine and dual-write events to Redis Streams + PostgreSQL.
+    """Route the chat message through _route_and_stream and dual-write
+    events to Redis Streams + PostgreSQL.
 
     Redis is the hot buffer for SSE (capped at settings.agent_stream_maxlen
     via XADD MAXLEN ~). PostgreSQL is the durable history source that the
     frontend hydrates from on page load. Failures in either path are
     logged but don't abort the other — hot SSE keeps flowing even if the
     PG pool is unavailable, and vice versa.
+
+    Engine creation/session caching is now lazy inside _route_and_stream,
+    so this function no longer takes an `engine` argument. The pair_pipeline
+    vs. legacy QueryEngine routing decision is also made there.
     """
     redis_client = await _get_redis()
     pg_pool = await _get_pg_pool()
@@ -265,7 +293,7 @@ async def _run_and_publish(
     # clients can see what was asked.
     user_event = {
         "type": "user_message",
-        "text": message,
+        "text": req.message,
         "role": "user",
         "correlation_id": correlation_id,
     }
@@ -283,7 +311,7 @@ async def _run_and_publish(
     await _persist_message(pg_pool, session_id, user_redis_id, user_event)
 
     try:
-        async for event in engine.submit_message(message):
+        async for event in _route_and_stream(req, session_id, correlation_id):
             event_data = _serialize_event(event, correlation_id)
             redis_id: Optional[str] = None
             if redis_client:
