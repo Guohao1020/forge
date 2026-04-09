@@ -19,11 +19,19 @@ import json
 import logging
 import os
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from src.models.router import Purpose
+from src.openharness.engine.pair_pipeline import (
+    PairPipelineConfig,
+    run_pair_pipeline,
+)
+from src.openharness.engine.stream_events import StreamEvent
 
 logger = logging.getLogger(__name__)
 
@@ -210,11 +218,30 @@ async def _route_and_stream(
             yield event
         return
 
-    # TODO(Task 2.3b): pair_pipeline branch. Will be filled in by the
-    # next commit. Until then, raise so tests can pin the stub.
-    raise NotImplementedError(
-        "pair_pipeline branch not implemented yet (TODO Task 2.3b)"
+    # pair_pipeline path: two engines, coder + reviewer, differentiated
+    # by Purpose. PairPipelineConfig.project_dir is the resolved
+    # container-visible absolute path where BuildVerifyHook will run
+    # `go build` / `mvn` / etc.
+    logger.info(
+        "pair_pipeline route: session=%s correlation=%s workspace=%s",
+        session_id, correlation_id, resolved_workspace,
     )
+    coder = _create_engine(req, purpose=Purpose.GENERATE)
+    reviewer = _create_engine(req, purpose=Purpose.REVIEW)
+    config = PairPipelineConfig(project_dir=Path(resolved_workspace))
+
+    async for item in run_pair_pipeline(
+        config=config,
+        coder_engine=coder,
+        reviewer_engine=reviewer,
+        initial_prompt=req.message,
+        code_files=None,
+    ):
+        if isinstance(item, StreamEvent):
+            yield item
+        # Non-StreamEvent yields (CycleResult, PairPipelineResult) are
+        # informational for direct callers of run_pair_pipeline (like
+        # the e2e test). HTTP callers get the event stream only.
 
 
 async def _run_and_publish(

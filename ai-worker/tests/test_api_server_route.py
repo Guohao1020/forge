@@ -14,7 +14,7 @@ docs/plans/2026-04-09-pair-pipeline-production-wire.md.
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from src.api_server import RunRequest
 from src.api_server import _create_engine
@@ -162,11 +162,38 @@ async def test_route_nonexistent_workspace_falls_back(monkeypatch, caplog):
         f"expected WARN log mentioning workspace_path, got: {[r.message for r in caplog.records]}"
 
 
+def _fake_pair_pipeline_iter_with_non_event():
+    """Mimic run_pair_pipeline: yield a StreamEvent, a non-StreamEvent
+    (simulating CycleResult), and a final SessionComplete."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class FakeCycleResult:
+        cycle: int = 1
+
+    async def _gen():
+        yield AssistantTextDelta(text="hello from pair_pipeline")
+        yield FakeCycleResult()
+        yield SessionComplete(
+            files_created=1,
+            files_modified=0,
+            build_status="passed",
+            duration_ms=100,
+            tokens_total=50,
+            cost_usd=0.001,
+        )
+    return _gen()
+
+
 @pytest.mark.asyncio
-async def test_route_valid_workspace_raises_not_implemented(tmp_path, monkeypatch):
-    """In Task 2.3a the pair_pipeline branch is stubbed to raise
-    NotImplementedError. Task 2.3b will fill it in. This test pins
-    the stub so later tasks know what they're replacing."""
+async def test_route_valid_workspace_uses_pair_pipeline(tmp_path, monkeypatch):
+    """workspace_path resolves to a real directory → pair_pipeline path,
+    2 engines (coder + reviewer) are created via _create_engine, the
+    PairPipelineConfig.project_dir is the resolved path, and
+    non-StreamEvent yields (FakeCycleResult) are filtered out."""
+    # Isolate _sessions across tests (see 2.3a note).
+    monkeypatch.setattr("src.api_server._sessions", {})
+
     # Create a real directory to resolve to
     ws_root = tmp_path / "workspaces"
     (ws_root / "repo").mkdir(parents=True)
@@ -174,7 +201,61 @@ async def test_route_valid_workspace_raises_not_implemented(tmp_path, monkeypatc
 
     req = RunRequest(
         project_id=1,
-        message="hello",
+        message="add a hello function",
+        workspace_path="repo",
+    )
+
+    qe_calls = []  # list of Purpose values each call received
+
+    def fake_qe(r, purpose=None):
+        qe_calls.append(purpose)
+        mock = MagicMock()
+        mock.submit_message = MagicMock(return_value=_fake_query_engine_iter())
+        return mock
+
+    pipeline_called = {"v": 0}
+
+    def fake_pipeline(config, coder_engine, reviewer_engine, initial_prompt, code_files=None):
+        pipeline_called["v"] += 1
+        # The config's project_dir must be the RESOLVED absolute container
+        # path, not the relative fragment sent in RunRequest.
+        assert str(config.project_dir) == str(ws_root / "repo"), \
+            f"PairPipelineConfig.project_dir must be resolved absolute, got {config.project_dir}"
+        return _fake_pair_pipeline_iter_with_non_event()
+
+    monkeypatch.setattr("src.api_server._create_engine", fake_qe)
+    monkeypatch.setattr("src.api_server.run_pair_pipeline", fake_pipeline)
+
+    events = []
+    async for ev in _route_and_stream(req, "sid-1", "corr-1"):
+        events.append(ev)
+
+    assert pipeline_called["v"] == 1, "pair_pipeline must be called"
+    assert len(qe_calls) == 2, f"Two engines expected (coder + reviewer), got calls: {qe_calls}"
+    # The two engines must be created with different Purposes
+    assert Purpose.GENERATE in qe_calls, "GENERATE engine missing"
+    assert Purpose.REVIEW in qe_calls, "REVIEW engine missing"
+    # The non-StreamEvent (FakeCycleResult) must have been filtered out
+    assert len(events) == 2, f"Expected 2 filtered events, got {len(events)}: {events}"
+    assert all(isinstance(e, StreamEvent) for e in events)
+
+
+@pytest.mark.asyncio
+async def test_route_filters_non_stream_events(tmp_path, monkeypatch):
+    """CycleResult / PairPipelineResult yields must not reach the caller.
+
+    Pins the isinstance(event, StreamEvent) filter: a future refactor
+    that drops the filter would cause non-events to leak into the HTTP
+    SSE stream as type:unknown entries."""
+    monkeypatch.setattr("src.api_server._sessions", {})
+
+    ws_root = tmp_path / "workspaces"
+    (ws_root / "repo").mkdir(parents=True)
+    monkeypatch.setenv("FORGE_WORKSPACE_ROOT", str(ws_root))
+
+    req = RunRequest(
+        project_id=1,
+        message="add code",
         workspace_path="repo",
     )
 
@@ -183,11 +264,16 @@ async def test_route_valid_workspace_raises_not_implemented(tmp_path, monkeypatc
         mock.submit_message = MagicMock(return_value=_fake_query_engine_iter())
         return mock
 
-    # Isolate _sessions between tests (see test_route_empty_workspace_uses_queryengine).
-    monkeypatch.setattr("src.api_server._sessions", {})
-    monkeypatch.setattr("src.api_server._create_engine", fake_qe)
+    def fake_pipeline(*args, **kwargs):
+        return _fake_pair_pipeline_iter_with_non_event()
 
-    with pytest.raises(NotImplementedError, match="Task 2.3b"):
-        events = []
-        async for ev in _route_and_stream(req, "sid-1", "corr-1"):
-            events.append(ev)
+    monkeypatch.setattr("src.api_server._create_engine", fake_qe)
+    monkeypatch.setattr("src.api_server.run_pair_pipeline", fake_pipeline)
+
+    events = []
+    async for ev in _route_and_stream(req, "sid-1", "corr-1"):
+        events.append(ev)
+
+    # fake pipeline yields 3 items: 1 StreamEvent, 1 non-event, 1 StreamEvent
+    assert len(events) == 2, f"Expected 2 filtered events, got {len(events)}"
+    assert all(isinstance(e, StreamEvent) for e in events)
