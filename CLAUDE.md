@@ -125,10 +125,10 @@ See `docs/references/coding-standards.md` for full conventions. Key rules:
 2. **Product design** goes into `docs/product-design.md` — pages, interactions, visual specs
 3. **Technical design** goes into `docs/technical-design.md` — architecture, data models, tech choices
 4. **Milestone plan** goes into `docs/milestone-plan.md` — delivery roadmap and acceptance criteria
-5. **Execution plans** go into `docs/plans/M{n}-{name}.md` — task-level breakdown for each milestone
+5. **Execution plans** go into `docs/plans/{greek-name}-{YYYY-MM-DD}/` — multi-file per-phase breakdown (see Plan Directory Convention below)
 6. **Reference materials** go into `docs/references/` — coding standards, API docs, methodology docs
 
-**Never create docs outside this structure.** No `docs/superpowers/`, no `docs/specs/`, no scattered design files. All documents cross-reference each other and must stay consistent.
+**Never create docs outside this structure.** No `docs/superpowers/`, no scattered design files. Design specs live in `docs/specs/{YYYY-MM-DD}-{topic}.md`. All documents cross-reference each other and must stay consistent.
 
 When updating any feature:
 - Update PRD if requirements change
@@ -136,6 +136,49 @@ When updating any feature:
 - Update technical-design if architecture/tech changes
 - Update milestone-plan if scope/deliverables change
 - Update the relevant execution plan if tasks change
+
+### Plan Directory Convention (mandatory for all new plans)
+
+**Rule:** Every non-trivial implementation plan lives in its own directory under `docs/plans/`, named with a Greek mythology name + ISO date:
+
+```
+docs/plans/{greek-name}-{YYYY-MM-DD}/
+  ├── index.md              # overview, phase list, decisions link, completion status
+  ├── 00-overview.md        # (optional) architectural context, decision chain
+  ├── phase-0-{name}.md     # one file per phase — Phase 0 = infrastructure/plumbing
+  ├── phase-1-{name}.md     # Phase 1+ = implementation phases
+  ├── phase-2-{name}.md
+  ├── ...
+  └── phase-N-{name}.md
+```
+
+**Why a directory, not a single file:**
+- Single-file plans blow past 4000 lines and become unreviewable. Each phase in its own file keeps each document focused on one concern and one review pass.
+- plan-document-reviewer, autoplan's per-phase agents, and executing-plans subagents all get a clean, bounded context per dispatch.
+- Git diffs on a single phase stay narrow — reviewers see what changed in Phase 3 without being drowned by Phases 0-7.
+- Phase files can be executed, committed, and rolled back independently.
+
+**Naming:**
+- Directory: `{greek-name}-{YYYY-MM-DD}`. Greek name is a noun (god, hero, concept — hephaestus, athena, chronos, theseus, prometheus, icarus, daedalus, hermes, apollo, etc.). The date disambiguates name reuse.
+- Phase files: `phase-{N}-{kebab-name}.md`. `N` is zero-padded when N≥10 (`phase-00-...`, `phase-10-...`) but usually 0-9 so no padding is needed.
+- `index.md` is always present and is the **entry point**. It lists every phase, its dependencies, its completion status, and links to the design spec.
+
+**What goes in `index.md`:**
+- Project goal (1 sentence), architecture summary (2-3 sentences), tech stack
+- Phase table: phase number, name, task count, depends-on, status, link to file
+- Link to the originating design spec under `docs/specs/`
+- Decision audit trail link (if /autoplan or similar produced one)
+- Phase completion gates cross-reference
+
+**What goes in each `phase-N-{name}.md`:**
+- `## Phase N — {Name}` header
+- Goal, depends-on, unblocks, completion gate
+- Each task as `### Task N.M: {Title}` with: files touched, TDD step checklist, code blocks, commands, commit command
+- Phase completion checklist at the end
+
+**Never put multiple phases in one file. Never put the index and phase content in the same file.**
+
+**Migration rule:** when working on an existing single-file plan, split it on first major edit. Do not add new content to a monolithic plan file.
 
 ### Core Documents
 
