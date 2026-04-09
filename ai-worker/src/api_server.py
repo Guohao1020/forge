@@ -160,6 +160,63 @@ def _create_engine(req: RunRequest, purpose: "Purpose | None" = None) -> Any:
     )
 
 
+async def _route_and_stream(
+    req: RunRequest,
+    session_id: str,
+    correlation_id: str,
+):
+    """Route a chat message to either pair_pipeline (when workspace_path
+    is set and the resolved directory exists) or the legacy QueryEngine
+    path. Async generator. Yields only StreamEvent instances.
+
+    Exceptions propagate to the caller (_run_and_publish in Task 2.3c)
+    which turns them into ErrorEvent.
+
+    Routing rule (relative-path protocol, see plan amendment):
+      - req.workspace_path is empty/None → QueryEngine path
+      - req.workspace_path is set → join with FORGE_WORKSPACE_ROOT env,
+        then os.path.isdir check; if dir exists → pair_pipeline branch
+        (stubbed in Task 2.3a), otherwise WARN + fall back to QueryEngine.
+    """
+    # Decide routing. workspace_path is a RELATIVE fragment per the
+    # protocol amendment; resolve it against the ai-worker side's
+    # FORGE_WORKSPACE_ROOT env var so forge-core (host) and ai-worker
+    # (container mount) can live in different filesystems.
+    use_pair_pipeline = False
+    resolved_workspace: Optional[str] = None
+    if req.workspace_path:
+        ws_root = os.environ.get("FORGE_WORKSPACE_ROOT", "/data/forge/workspaces")
+        resolved_workspace = os.path.join(ws_root, req.workspace_path)
+        if os.path.isdir(resolved_workspace):
+            use_pair_pipeline = True
+        else:
+            logger.warning(
+                "workspace_path %r resolved to %r but directory does not exist "
+                "— falling back to QueryEngine (check docker volume mount + "
+                "FORGE_WORKSPACE_ROOT env)",
+                req.workspace_path,
+                resolved_workspace,
+            )
+
+    if not use_pair_pipeline:
+        # Legacy path: single-shot QueryEngine. Reuse session engine
+        # from _sessions when present (continuity across messages) or
+        # create a fresh one on first message.
+        engine = _sessions.get(session_id)
+        if engine is None:
+            engine = _create_engine(req)
+            _sessions[session_id] = engine
+        async for event in engine.submit_message(req.message):
+            yield event
+        return
+
+    # TODO(Task 2.3b): pair_pipeline branch. Will be filled in by the
+    # next commit. Until then, raise so tests can pin the stub.
+    raise NotImplementedError(
+        "pair_pipeline branch not implemented yet (TODO Task 2.3b)"
+    )
+
+
 async def _run_and_publish(
     engine: Any, session_id: str, message: str, correlation_id: str,
 ) -> None:
