@@ -14,6 +14,115 @@
 
 ---
 
+## 🚨 LATE-BREAKING PROTOCOL AMENDMENT (added 2026-04-09 during Phase 0)
+
+Phase 0 Task 0.2 Step 6 revealed a cross-filesystem path-prefix problem:
+**forge-core runs on the Windows host** and its `workspace.Manager.ProjectDir()`
+returns an absolute Windows path like `D:/forge-workspaces/tenant-1/project-999/repo`.
+**ai-worker runs in a Linux Docker container** and sees that same directory at
+`/data/forge/workspaces/tenant-1/project-999/repo` via the volume mount.
+`os.path.isdir("D:/...")` inside the Linux container will always return False,
+no matter how correct the volume mount is.
+
+**Corrected protocol — `workspace_path` is a RELATIVE path, not absolute:**
+
+Wherever the plan (and the original spec) show code that puts an absolute path
+into `workspace_path` or calls `os.path.isdir(req.workspace_path)` directly,
+implementers MUST instead:
+
+### forge-core side (service.go::SubmitMessage)
+
+Replace the "put absolute path" logic with a relative fragment derived from
+`tenant_id` and `project_id`:
+
+```go
+// Populate workspace_path as a RELATIVE fragment. forge-core and
+// ai-worker each join it to their own FORGE_WORKSPACE_ROOT so the
+// protocol works across the host/container filesystem split.
+if s.wsManager != nil && tenantID > 0 {
+    absDir := s.wsManager.ProjectDir(tenantID, projectID)
+    gitDir := filepath.Join(absDir, ".git")
+    if _, err := os.Stat(gitDir); err == nil {
+        // Reduce to relative fragment; the format matches
+        // workspace.Manager.ProjectDir deterministically.
+        body.WorkspacePath = fmt.Sprintf("tenant-%d/project-%d/repo", tenantID, projectID)
+    } else if !os.IsNotExist(err) {
+        slog.Warn("agent service: unexpected stat error on .git dir, treating as missing",
+            "tenant_id", tenantID,
+            "project_id", projectID,
+            "path", gitDir,
+            "error", err,
+        )
+    }
+}
+```
+
+Note: the existence check still uses the ABSOLUTE host path (correct — forge-core
+lives on the host and that's the path it can stat). Only the value SENT over HTTP
+is relative.
+
+### ai-worker side (api_server.py::_route_and_stream)
+
+The router must join `workspace_path` with ai-worker's own `FORGE_WORKSPACE_ROOT`
+env var (set to `/data/forge/workspaces` inside the container via docker-compose):
+
+```python
+# Decide routing
+use_pair_pipeline = False
+resolved_workspace: Optional[str] = None  # absolute path inside the container
+if req.workspace_path:
+    ws_root = os.environ.get("FORGE_WORKSPACE_ROOT", "/data/forge/workspaces")
+    resolved_workspace = os.path.join(ws_root, req.workspace_path)
+    if os.path.isdir(resolved_workspace):
+        use_pair_pipeline = True
+    else:
+        logger.warning(
+            "workspace_path %r resolved to %r but directory does not exist "
+            "— falling back to QueryEngine (check docker volume mount + "
+            "FORGE_WORKSPACE_ROOT env)",
+            req.workspace_path,
+            resolved_workspace,
+        )
+```
+
+And when calling pair_pipeline, pass the RESOLVED (absolute container-side) path:
+
+```python
+config = PairPipelineConfig(project_dir=Path(resolved_workspace))
+```
+
+### Tests must reflect the amendment
+
+- **Task 2.1 `test_run_request_accepts_workspace_path`**: the example value should
+  be `"tenant-1/project-1/repo"`, not `"/data/forge/workspaces/tenant-1/project-1/repo"`.
+- **Task 2.3a `test_route_nonexistent_workspace_falls_back`**: use
+  `workspace_path="bogus/tenant-999/project-999/repo"` (something that won't resolve
+  under any reasonable FORGE_WORKSPACE_ROOT).
+- **Task 2.3b `test_route_valid_workspace_uses_pair_pipeline`**: set
+  `monkeypatch.setenv("FORGE_WORKSPACE_ROOT", str(tmp_path))` and pass
+  `workspace_path="repo"`, then `workspace = tmp_path / "repo"; workspace.mkdir()`
+  — so the test drives the resolved path through the env var rather than hardcoding
+  an absolute path.
+- **Task 3.1 `TestSubmitMessage_PassesWorkspacePath_WhenRepoExists`**: assert
+  `captured.WorkspacePath == "tenant-1/project-42/repo"`, not
+  `captured.WorkspacePath == projectDir`.
+
+### Why this amendment
+
+1. The original plan assumed forge-core and ai-worker share a filesystem view. They
+   don't — forge-core is on the host, ai-worker is in a container with a volume mount.
+2. Relative path keeps the protocol portable: future deployments where forge-core
+   also moves into docker-compose (TODOS Dev Experience #3) will not require any
+   protocol change, because both sides will still use relative + their own env var.
+3. The alternative (ai-worker doing path rewriting) would encode host-specific
+   knowledge into ai-worker code, which is the wrong layer.
+
+**Implementer subagents**: when you see absolute-path code in the detailed Task
+2.3a/b/c or Task 3.1 sections below, MIRROR the amendment above. If you're ever
+unsure, the amendment is authoritative.
+
+---
+
 ## Pre-Flight Checklist
 
 Before starting Phase 0, verify:
