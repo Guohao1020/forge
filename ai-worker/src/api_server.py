@@ -39,6 +39,7 @@ _pg_pool: Any = None
 class RunRequest(BaseModel):
     session_id: Optional[str] = None
     project_id: int
+    workspace_path: Optional[str] = None
     message: str
     model: Optional[str] = None
     system_prompt: Optional[str] = None
