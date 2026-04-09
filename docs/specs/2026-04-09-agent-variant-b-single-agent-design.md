@@ -255,6 +255,226 @@ Specific manifestations:
 - Security-sensitive code (sandbox, path resolution, deploy key crypto)
   gets an explicit adversarial test suite as a P0 gate.
 
+### 2.9 Round 2 strategic additions (post-CEO-review)
+
+This subsection was added after the chronos Round 1 plan completed and
+triggered an autoplan CEO review (2026-04-09, `[subagent-only]` mode —
+Codex CLI unavailable). The reviewer produced 5 substantive findings
+Harvey accepted. The original §2.1–§2.8 decisions remain in force;
+this section adds what Round 1 **missed** and Round 2 must include.
+
+Full CEO review reasoning is preserved at
+`~/.claude/projects/D--shulex-work-forge/memory/chronos-ceo-review-2026-04-09.md`.
+
+#### 2.9.1 Verification hooks in the agent loop (Critical 1)
+
+**Problem:** Forge's target users are PMs/ops who cannot read code. For
+them, "agent output compiles" ≠ "agent output is correct". Round 1
+chronos rebuilt the builder but left no structural check for intent
+correctness, meaning chronos alone ships a product that is 
+undifferentiated from Cursor/Claude Code and silently defers Forge's
+core value proposition.
+
+**Decision:** chronos does NOT solve the verification problem (that's
+another project). But chronos **must leave verification hooks in the
+agent loop** so the next project can plug in without modifying
+`query.py`. Specifically:
+
+1. **`pre_turn_hook_registry`** — a list of callables invoked before
+   each agent turn sees its message. Can mutate the system prompt or
+   prepend context (spec injection entry point).
+2. **`pre_tool_call_hook_registry`** — callables invoked before each
+   tool execution. Can block the tool call (constraint engine entry
+   point) or augment arguments.
+3. **`post_turn_hook_registry`** — callables invoked after each
+   `end_turn`. Can post-process the turn output (entropy scan entry
+   point, verification harness entry point).
+4. **`system_prompt_slots`** — named placeholder regions in the system
+   prompt template that hooks can fill with dynamic content (e.g., a
+   `{{project_specs}}` slot that the spec-injection hook fills with
+   the current project's acceptance criteria).
+
+These hooks are a subset of the existing `hooks/` directory pattern
+already in `ai-worker/src/openharness/hooks/` (PRE_TOOL_USE /
+POST_TOOL_USE events exist there from earlier streams), but chronos
+Round 1 did not wire them into `_create_engine`. Round 2 must:
+- keep the hook executor construction in `_create_engine`
+- additionally register **empty default hook registries** that
+  downstream projects can populate via config
+- add `system_prompt_slots` support to `build_system_prompt`
+- document the hook contract in §5 (agent loop layer)
+
+**Scope cut:** chronos Round 2 does NOT ship any real hook
+implementations. The extension points are present and tested
+(trivial hooks in the contract test) but no spec/constraint/entropy
+hooks are provided. Those are follow-up projects.
+
+#### 2.9.2 `request_clarification` meta-tool + bidirectional SSE (Critical 2)
+
+**Problem:** PM/ops requests are inherently ambiguous ("add a login
+page", "make the dashboard faster"). Round 1 chronos has no way for
+the agent to pause mid-turn and ask the human a clarifying question.
+The system prompt instructs the agent to "ask for clarification" in
+text, but text-only clarification means the agent ends the turn and
+hopes the user starts a new session with the answer — losing all
+in-progress state.
+
+**Decision:** add a `request_clarification(question: str) -> str`
+meta-tool. When the agent calls it:
+
+1. The tool yields a `ClarificationRequested(question)` stream event
+2. The agent loop pauses the turn (awaits a future)
+3. The frontend renders the question as a special system message with
+   an input field
+4. The user's response travels back through a new **bidirectional SSE
+   return channel** (Redis pub/sub, separate key per session)
+5. The waiting agent loop resolves the future with the user's response
+6. The tool yields a `ToolResult(output=<user_response>)`
+7. The agent continues its turn with the answer
+
+This requires a new **Phase 5a — Bidirectional RPC** in the Round 2
+plan because spec §2.4 explicitly said "P2/P3 bidirectional RPC is an
+independent large project, out of chronos scope." Harvey decided on
+2026-04-09 that eating the bidirectional cost inside chronos is worth
+it because `request_clarification` without it is a fake feature (the
+agent can't actually wait for a response without blocking the whole
+worker thread, and without bidirectional communication there's no
+transport for the response anyway).
+
+**Scope:**
+- New Phase 5a (~8-10 tasks, ~2000 lines) delivers:
+  - Redis pub/sub return channel (`agent:return:{session_id}`)
+  - `ClarificationRequested` stream event
+  - `ClarificationResponse` message on the return channel
+  - pause/resume state machine in the agent loop (async future that
+    waits on the return channel with a configurable timeout, default
+    5 minutes; timeout returns `ToolResult(is_error=True, output="no
+    user response within N seconds")`)
+  - Per-session return channel subscriber that wires user input from
+    forge-core's `POST /api/sessions/{id}/clarify` endpoint into the
+    Redis channel
+- Phase 4 stream events add `ClarificationRequested(question: str)`
+  and internal routing logic
+- Phase 5 adds `RequestClarificationTool` to the agent's tool registry
+- Phase 6 frontend adds a clarification input component that renders
+  below a `clarification_requested` event, submits via the new
+  `/api/sessions/{id}/clarify` endpoint, and disables input when the
+  agent is not waiting
+- Phase 1a `/api/workspace/prep` client remains as planned (the
+  bidirectional channel is session-scoped, not workspace-scoped)
+
+**Non-goals for Round 2:** the full P3 permission mode (per-call user
+approval for writes/bash) is STILL out of scope. Round 2 only adds
+bidirectional communication for `request_clarification` — the
+infrastructure is reusable for P3 later, but P3 itself is not
+implemented. Permission mode stays at `FULL_AUTO`.
+
+#### 2.9.3 `request_review` meta-tool (High 3)
+
+**Problem:** Round 1 rejected A3 (optional reviewer) with the reasoning
+"Claude Code is single-agent and outperforms pair_pipeline's
+regex-based two-agent." That reasoning compared against a broken
+baseline. Claude Code's single-agent design is correct **for engineers
+who review their own diffs**. Forge's users are PMs/ops who cannot. An
+independent reviewer LLM invocation before `end_turn` catches a class
+of "plausible-looking but wrong" errors that self-review-via-tests
+misses.
+
+**Decision:** add a `request_review(summary: str) -> str` meta-tool
+that the agent can invoke voluntarily. When called:
+
+1. The tool constructs a dedicated "reviewer prompt" (critical-only,
+   no tool access, read-only context)
+2. Fires a second LLM call via the same `ModelRouter` adapter
+3. The reviewer sees the current working tree state (via
+   `bash git diff` dump in the prompt) and the user's original request
+4. The reviewer returns one of: `APPROVE` | `REVISE <what>` | `REJECT <why>`
+5. The tool yields `ToolResult(output=<reviewer_response>)`
+6. The agent decides what to do with the feedback (continue, iterate,
+   or end turn)
+
+Critical design point: `request_review` is **agent-invoked**, not
+automatic. The agent is instructed in the system prompt to call it
+"at major milestones: before `end_turn`, before committing, before
+shipping". The decision of when to invoke stays with the agent — we
+don't force a review on every turn because that doubles the LLM cost
+and most turns don't benefit from it.
+
+**Scope:** Phase 5 adds `RequestReviewTool` alongside
+`RequestClarificationTool`. Uses the existing `ModelRouter` with a
+different `Purpose` (re-introduces `Purpose.REVIEW` but only for this
+tool's internal use — public API stays single-purpose). Reviewer prompt
+lives in `prompts.py` as `build_reviewer_prompt(task, current_diff,
+original_request)`.
+
+**Explicit trade-off acknowledged:** this partially walks back Round 1
+Q2 A2's rejection of pair_pipeline's 2-agent model. The difference:
+Round 1's A2 killed the *mandatory* 2-agent outer loop.
+`request_review` is an *optional* meta-tool. The agent is still a
+single agent; the reviewer is a LLM call the agent makes, not a
+second permanent agent instance.
+
+#### 2.9.4 Phase 1 split: 1a (minimal) + 1b (deploy keys) (High 4)
+
+**Problem:** Round 1 Phase 1 was 13 tasks including full ed25519
+deploy key lifecycle + GitHub upload API + AES-GCM encryption + key
+rotation interfaces. For a solo dev MVP this is gold-plating. The
+safety gain over HTTPS+token (using the existing `injectToken` helper
+that's already in `manager.go`) is marginal for the first production
+version, and the 2-week time cost is real.
+
+**Decision:** split Phase 1 into:
+
+- **Phase 1a — Workspace Minimal** (~6-7 tasks): `StateRepo` state
+  machine + `EnsureReady` core loop + `RealGitRunner` via HTTPS+token
+  (retains the existing `injectToken` pattern temporarily) + prep RPC
+  client + caller migration (both activity files + agent service) +
+  main.go wiring. Unblocks Phase 5 agent operation.
+- **Phase 1b — Deploy Keys** (~5-6 tasks): `DeployKeyRepo` + ed25519
+  generation + GitHub deploy-key upload API + migration of git auth
+  from HTTPS+token to SSH + key rotation interface. Can run **in
+  parallel with or after Phase 5** because nothing in Phase 5/6/7
+  depends on the auth mechanism (they all use `EnsureReady` which
+  abstracts over it).
+
+Phase 1a completion unblocks Phase 5 immediately. Phase 1b delivery
+before Phase 7 production deploy is the ideal sequence, but if 1b
+slips, the MVP ships on HTTPS+token and 1b becomes a follow-up
+release.
+
+**Structural impact:** `phase-1-workspace.md` is split into two files.
+The existing 13-task structure carries over mostly intact — tasks
+1.1-1.6 go to 1a (state + ensure + git + prep + lookup + main.go),
+tasks 1.2-1.4 (deploy keys + GitHub upload + SSH git wrapper) move to
+1b. Phase 1a's `RealGitRunner` uses a temporary HTTPS+token path that
+Phase 1b replaces.
+
+**Out-of-scope for Round 2:** key rotation implementation. Deploy keys
+are generated once and reused; rotation is a follow-up project.
+
+#### 2.9.5 Execution / documentation consequences
+
+The four decisions above have cascading effects on the Round 1 plan
+files:
+
+| Round 1 file | Round 2 change |
+|---|---|
+| `index.md` | Rewritten — 9 phases, new dependency graph, Round 2 status note |
+| `phase-1-workspace.md` | Split into `phase-1a-workspace-minimal.md` + `phase-1b-deploy-keys.md` |
+| `phase-4-bash-events.md` | Add `ClarificationRequested` event + routing (Task 4.9) |
+| new `phase-5a-bidirectional-rpc.md` | ~8-10 tasks, ~2000 lines, Redis pub/sub + pause/resume |
+| `phase-5-agent-loop.md` | Add tasks for `RequestClarificationTool`, `RequestReviewTool`, hook registry wiring, `system_prompt_slots`, `build_reviewer_prompt`. ~+800 lines |
+| `phase-6-frontend.md` | Add clarification input component (Task 6.10) + return channel wiring (Task 6.11). ~+400 lines |
+| `phase-7-deploy.md` | Update smoke test shape assertions to include a clarification round-trip. Minor |
+
+Round 2 plan size estimate: ~21,000 lines across 11 files (9 phases +
+`index.md` + `deploy-runbook.md` + `retro.md`), ~76 tasks total.
+
+Round 2 must re-run the spec review loop (spec-document-reviewer
+subagent) on this updated spec before plan rewriting starts. After
+plan rewriting completes, Round 2 must re-run autoplan CEO/Design/Eng/
+DX reviews before declaring the plan final.
+
 ---
 
 ## 3. Workspace manager layer
@@ -2289,6 +2509,33 @@ brainstorming session. The confirmation chain:
 19. **SimpleTool adapter** — accepted as legitimate convenience API
 20. **E2E mode** — real LLM
 21. **Deploy order** — three-step (deploy → smoke → delete legacy)
+
+**Round 2 additions** (triggered by the autoplan CEO review on
+2026-04-09, `[subagent-only]` mode; full review in
+`~/.claude/projects/D--shulex-work-forge/memory/chronos-ceo-review-2026-04-09.md`):
+
+22. **Verification hooks** — chronos adds pre_turn / pre_tool_call /
+    post_turn hook registries + system_prompt_slots to the agent loop
+    as extension points for future spec/constraint/entropy projects.
+    chronos itself ships with empty default hooks; real implementations
+    are follow-up projects (§2.9.1).
+23. **`request_clarification` meta-tool + bidirectional SSE** —
+    Critical 2 from the CEO review. Requires a new Phase 5a delivering
+    a Redis pub/sub return channel, pause/resume state machine, and
+    frontend clarification input. Walks back Q4's original "P2/P3
+    bidirectional RPC is an independent project" decision because the
+    clarification tool is fake without it (§2.9.2).
+24. **`request_review` meta-tool** — partially walks back Q2 A2's
+    rejection of the 2-agent model. The agent is still a single agent;
+    `request_review` is an optional meta-tool the agent invokes
+    voluntarily at milestones. It fires a dedicated reviewer LLM call
+    with no tool access and returns APPROVE/REVISE/REJECT (§2.9.3).
+25. **Phase 1 split into 1a (minimal) + 1b (deploy keys)** — Round 1
+    Phase 1 was 13 tasks; 1a delivers ~6-7 tasks using HTTPS+token
+    (retaining the existing `injectToken` helper) and unblocks Phase 5
+    immediately. 1b adds ed25519 deploy keys + GitHub upload + SSH
+    migration and can run in parallel with Phase 5/6. Saves ~2 weeks of
+    wall-clock time on the critical path (§2.9.4).
 
 ## Appendix B — Files touched (summary)
 

@@ -3,8 +3,35 @@
 > **Code name:** chronos (Greek personification of time). This refactor "folds time" — collapsing the pair_pipeline-era workaround into the A2-era real agent architecture in one single branch.
 
 **Started:** 2026-04-09
-**Status:** ✅ All 7 phases written — ready for execution via `superpowers:subagent-driven-development` or `superpowers:executing-plans`
+**Status:** ⚠️ **Round 2 REWRITE in progress** — Round 1 (8 phases, 61 tasks, 16k lines) was reviewed by autoplan CEO subagent and received 5 accepted strategic findings. Round 2 (9 phases, ~76 tasks, ~21k lines) is being written in a follow-up session. See [ROUND-2-HANDOFF.md](ROUND-2-HANDOFF.md) for the work still to do.
 **Branch:** `feat/agent-variant-b-single-agent` (off `main`)
+
+---
+
+## Round 2 status banner (2026-04-09)
+
+The chronos plan is currently undergoing a Round 2 rewrite triggered by CEO review findings. **Do not execute the current Round 1 plan as-is** — it is missing structural pieces (verification hooks, `request_clarification`, `request_review`, agent loop extension points) and has a gold-plated Phase 1 that slows the critical path.
+
+**Status of each Round 1 phase file:**
+
+| File | Round 1 state | Round 2 action |
+|---|---|---|
+| index.md | Written (this file) | Will be rewritten to reflect 9-phase structure |
+| phase-0-infrastructure.md | ✅ complete, minimal changes expected | Keep |
+| phase-1-workspace.md | 13 tasks, gold-plated | **Split** into phase-1a-workspace-minimal.md + phase-1b-deploy-keys.md |
+| phase-2-basetool.md | ✅ complete | Keep |
+| phase-3-file-tools.md | ✅ complete | Keep |
+| phase-4-bash-events.md | 8 tasks | Add Task 4.9: `ClarificationRequested` stream event |
+| (new) phase-5a-bidirectional-rpc.md | — | **Write new** ~8-10 tasks, ~2000 lines, Redis pub/sub return channel |
+| phase-5-agent-loop.md | 7 tasks | Expand: add `RequestClarificationTool` (uses Phase 5a), `RequestReviewTool`, hook registry wiring, `system_prompt_slots`, `build_reviewer_prompt`. ~+800 lines |
+| phase-6-frontend.md | 9 tasks | Expand: clarification input UI + return channel handler. ~+400 lines |
+| phase-7-deploy.md | 4 tasks | Update smoke test to include clarification round-trip |
+| deploy-runbook.md | Referenced from Task 7.3 | (Not yet created — Task 7.3 creates it when executed) |
+| retro.md | Referenced from Task 7.4 | (Not yet created — Task 7.4 creates it when executed) |
+
+**Root cause of Round 2:** the Round 1 plan was technically complete but strategically myopic for Forge's target users (PMs/ops who can't read code). See `~/.claude/projects/D--shulex-work-forge/memory/chronos-ceo-review-2026-04-09.md` for the full CEO review findings and Harvey's decision to accept all 5.
+
+Design spec §2.9 (added 2026-04-09) formalizes the 5 Round 2 decisions. That spec subsection is the authoritative source for what Round 2 must include.
 
 ---
 
