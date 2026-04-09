@@ -147,8 +147,12 @@ func (h *Handler) Chat(c *gin.Context) {
 
 	// Legacy path: no chat store wired, fall through to fire-and-forget.
 	// Preserves dev/boot ergonomics when migration 024 has not run yet.
+	// We pass tenantID=0 here as a sentinel meaning "unknown tenant" —
+	// SubmitMessage will emit an empty workspace_path so ai-worker uses
+	// the legacy QueryEngine chat path. The dual-storage path below
+	// passes the real authenticated tenantID.
 	if h.chat == nil {
-		resp, err := h.service.SubmitMessage(c.Request.Context(), projectID, req)
+		resp, err := h.service.SubmitMessage(c.Request.Context(), 0, projectID, req)
 		if err != nil {
 			slog.Error("failed to submit agent message", "error", err, "project_id", projectID)
 			c.JSON(http.StatusBadGateway, gin.H{"error": "AI worker unavailable"})
@@ -220,7 +224,7 @@ func (h *Handler) Chat(c *gin.Context) {
 	// Step 3: forward to ai-worker. On failure return 502 — the user
 	// message is already durable, so the next sidebar load will hydrate it
 	// and the user can resend without losing context.
-	resp, err := h.service.SubmitMessage(ctx, projectID, req)
+	resp, err := h.service.SubmitMessage(ctx, tenantID, projectID, req)
 	if err != nil {
 		slog.Error("failed to submit agent message",
 			"error", err,

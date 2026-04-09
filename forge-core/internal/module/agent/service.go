@@ -8,22 +8,30 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
+
+	"github.com/shulex/forge/forge-core/internal/workspace"
 )
 
 // Service handles communication with the Python AI worker.
 type Service struct {
 	aiWorkerURL string
 	httpClient  *http.Client
+	wsManager   *workspace.Manager // nilable; when nil, workspace_path is always empty
 }
 
 // NewService creates a new agent service.
-func NewService(aiWorkerURL string) *Service {
+// wsManager may be nil — in that case, workspace_path is always empty
+// and the ai-worker falls back to the QueryEngine chat path.
+func NewService(aiWorkerURL string, wsManager *workspace.Manager) *Service {
 	return &Service{
 		aiWorkerURL: aiWorkerURL,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second, // Only for the initial POST (fire-and-forget)
 		},
+		wsManager: wsManager,
 	}
 }
 
@@ -31,6 +39,7 @@ func NewService(aiWorkerURL string) *Service {
 type aiRunRequest struct {
 	SessionID     string `json:"session_id,omitempty"`
 	ProjectID     int64  `json:"project_id"`
+	WorkspacePath string `json:"workspace_path,omitempty"`
 	Message       string `json:"message"`
 	Model         string `json:"model,omitempty"`
 	SystemPrompt  string `json:"system_prompt,omitempty"`
@@ -46,7 +55,13 @@ type aiRunResponse struct {
 
 // SubmitMessage sends a message to the AI worker (fire-and-forget).
 // The AI worker runs the QueryEngine asynchronously and publishes events to Redis.
-func (s *Service) SubmitMessage(ctx context.Context, projectID int64, req ChatRequest) (*ChatResponse, error) {
+//
+// tenantID is used together with projectID to compute the workspace_path
+// fragment that lets ai-worker route to the pair_pipeline when the repo
+// has been cloned. tenantID=0 is a sentinel meaning "caller does not
+// know the tenant" (legacy fallback path) — workspace_path stays empty
+// and ai-worker uses the legacy QueryEngine chat path.
+func (s *Service) SubmitMessage(ctx context.Context, tenantID, projectID int64, req ChatRequest) (*ChatResponse, error) {
 	body := aiRunRequest{
 		SessionID:     req.SessionID,
 		ProjectID:     projectID,
@@ -54,6 +69,26 @@ func (s *Service) SubmitMessage(ctx context.Context, projectID int64, req ChatRe
 		Model:         req.Model,
 		SystemPrompt:  req.SystemPrompt,
 		CorrelationID: req.CorrelationID,
+	}
+
+	// Populate workspace_path as a RELATIVE fragment (per the protocol
+	// amendment in docs/plans/2026-04-09-pair-pipeline-production-wire.md).
+	// forge-core runs on the host and checks the absolute path, but
+	// sends a relative fragment over HTTP so ai-worker can join with
+	// its own FORGE_WORKSPACE_ROOT env inside the Linux container.
+	if s.wsManager != nil && tenantID > 0 {
+		absDir := s.wsManager.ProjectDir(tenantID, projectID)
+		gitDir := filepath.Join(absDir, ".git")
+		if _, err := os.Stat(gitDir); err == nil {
+			body.WorkspacePath = fmt.Sprintf("tenant-%d/project-%d/repo", tenantID, projectID)
+		} else if !os.IsNotExist(err) {
+			slog.Warn("agent service: unexpected stat error on .git dir, treating as missing",
+				"tenant_id", tenantID,
+				"project_id", projectID,
+				"path", gitDir,
+				"error", err,
+			)
+		}
 	}
 
 	jsonBody, err := json.Marshal(body)
@@ -88,6 +123,7 @@ func (s *Service) SubmitMessage(ctx context.Context, projectID int64, req ChatRe
 		"session_id", aiResp.SessionID,
 		"correlation_id", aiResp.CorrelationID,
 		"project_id", projectID,
+		"workspace_path", body.WorkspacePath,
 	)
 
 	return &ChatResponse{

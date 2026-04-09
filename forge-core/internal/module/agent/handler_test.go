@@ -95,7 +95,10 @@ func TestMapToJSON_EmptyMap(t *testing.T) {
 
 func newTestService(t *testing.T, aiWorker *httptest.Server) *Service {
 	t.Helper()
-	return NewService(aiWorker.URL)
+	// Tests that exercise the handler mock the AI worker via httptest and
+	// don't care about workspace routing — pass nil wsManager so
+	// SubmitMessage always sends an empty workspace_path.
+	return NewService(aiWorker.URL, nil)
 }
 
 func newChatRouter(h *Handler) *gin.Engine {
