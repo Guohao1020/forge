@@ -236,7 +236,7 @@ design originally contained:
    abstraction must support it (§4.1).
 2. **No regex denylist as security boundary.** Shell command denylists
    can be trivially bypassed with `${IFS}`, base64, nested quoting, etc.
-   Real isolation requires process/namespace-level sandboxing (§3.6).
+   Real isolation requires process/namespace-level sandboxing (§4.6).
 3. **No parallel code paths** ("Linux one way, Windows another" /
    "dev one way, prod another" / "rg present one way, Python fallback
    another"). One code path (§3, §6, §7).
@@ -304,21 +304,49 @@ and is corrected here.
   injected `ProjectLookup` interface, and obtains auth via deploy keys
   instead of tokens.
 - **Replace** the top-level `injectToken()` helper — HTTPS+token auth
-  is removed entirely in favor of SSH deploy keys. Any call site that
-  still wants HTTPS+token is a bug; audit the three known consumers
-  (project service, worker, agent service) and update them.
+  is removed entirely in favor of SSH deploy keys. Every call site is
+  audited and migrated (see the caller migration below).
 
-**Caller migration:**
-- `project.NewService`: currently takes `workspaceMgr *workspace.Manager`
-  and calls `EnsureClone` during project registration. This call is
-  removed — workspace creation is lazy, triggered by the first agent
-  message, not by project registration. Project registration only
-  stores the repo URL and branch in the project row.
-- Worker (`activity.NewProjectRepoAdapter`): audit and update the
-  `EnsureClone` calls to `EnsureReady`. Worker still needs task
-  worktrees, which keep working via `CreateWorktree`.
-- `agent.NewService`: already takes `workspaceMgr`. Update to call
-  `EnsureReady` before each session start.
+**Caller migration (verified against repo HEAD on 2026-04-09):**
+
+`EnsureClone` is called from exactly two sites:
+
+- `forge-core/internal/temporal/activity/build_activities.go:96` —
+  the build activity clones the project repo before running build
+  logic. Migrates to `EnsureReady(ctx, tenantID, projectID)`. The
+  signature loses `repoURL`, `token`, and `defaultBranch` because
+  workspace resolves those internally via `ProjectLookup`.
+- `forge-core/internal/temporal/activity/devops_activities.go:134` —
+  the devops activity clones before deploy logic. Same migration.
+
+Both activity files are in the Worker runtime (`worker.NewWorker(...)`
+at `main.go:154`), which already has a `workspaceMgr` injected. The
+worker itself doesn't need wiring changes; the two activity files
+update their call sites and delete their `token`/`repoURL` fields from
+the activity inputs.
+
+`project.NewService` **does not call `EnsureClone`**. It takes a
+`WorkspaceProvider` interface (defined at
+`forge-core/internal/module/project/service.go:34`) that only exposes
+`ProjectDir(tenantID, projectID) string` for local file browsing. The
+project module has no dependency on the clone lifecycle. No migration
+needed — project registration has always been workspace-free, which
+aligns with §2.7's "lazy-created when the user sends the first
+message".
+
+`agent.NewService` currently takes `workspaceMgr *workspace.Manager`
+(per `main.go:245`) but does not yet call `EnsureClone` either — the
+wiring landed in commit 280b88f but the service still passes through
+to ai-worker without triggering clone. This spec adds the
+`EnsureReady` call at the start of each session in
+`forge-core/internal/module/agent/service.go`.
+
+After migration:
+- `EnsureClone` is deleted from `manager.go`.
+- `injectToken` is deleted from `manager.go`.
+- All three callsites named above are the only ones that need code
+  changes. Compile-time breakage from deleting `EnsureClone` will
+  surface any missed migration.
 
 ### 3.3 New files inside `forge-core/internal/workspace/`
 
@@ -393,7 +421,7 @@ if os.path.isdir(resolved):
     ...
 ```
 
-No changes to that resolution logic. The spec's §5.7 and §3.7
+No changes to that resolution logic. The spec's §5.7 and §3.10
 references to `workspace_path` use this relative-fragment contract.
 
 **Production deployment note:** If forge-core ever moves into a
@@ -409,7 +437,7 @@ stuff a GitHub PAT into the HTTPS URL. This is replaced wholesale:
 - `injectToken` is **deleted**.
 - All git invocations go through a new `gitCommand()` helper in `git.go`
   that sets `GIT_SSH_COMMAND` to point at the project's deploy-key
-  tempfile (see §3.6) and uses the SSH URL form
+  tempfile (see §3.8) and uses the SSH URL form
   `git@github.com:{owner}/{repo}.git`.
 - The `ProjectLookup` interface, injected into the workspace Manager
   at construction time, returns `(sshURL, defaultBranch)` for a given
@@ -744,9 +772,11 @@ class SimpleTool(BaseTool):
 ```
 
 - `ReadFileTool`, `WriteFileTool`, `EditFileTool`, `GlobTool`, `GrepTool`,
-  `ListDirectoryTool`, `SetPhaseTool`: subclass `SimpleTool`.
+  `ListDirectoryTool`: subclass `SimpleTool`.
 - `BashTool`: subclasses `BaseTool` directly (needs mid-execution
-  `ThinkingStarted`/`ThinkingStopped` events).
+  `ThinkingStarted`/`ThinkingStopped` events, see §4.5).
+- `SetPhaseTool`: subclasses `BaseTool` directly (emits `PhaseChanged`
+  as a typed event, see §4.11).
 - All five `context_tools.py` tools: migrated to `SimpleTool`.
 
 **Agent loop impact** (`query.py`):
@@ -790,18 +820,27 @@ async def _execute_tool_call(
 ```python
 tool_results: List[ToolResultBlock] = []
 for tu in tool_uses:
-    yield ToolExecutionStarted(tool_name=tu.name, tool_input=tu.input)
+    yield ToolExecutionStarted(
+        tool_use_id=tu.id,
+        tool_name=tu.name,
+        tool_input=tu.input,
+    )
     async for item in _execute_tool_call(context, tu.name, tu.id, tu.input):
         if isinstance(item, ToolResultBlock):
             tool_results.append(item)
         else:
             yield item  # passthrough mid-execution events
     yield ToolExecutionCompleted(
+        tool_use_id=tu.id,
         tool_name=tu.name,
         output=tool_results[-1].content,
         is_error=tool_results[-1].is_error,
     )
 ```
+
+`tool_use_id` is threaded into both events so consumers (SessionCollector,
+frontend) can correlate started/completed pairs without relying on
+positional ordering. See §5.3 for the updated event vocabulary table.
 
 No `if tool_name == "bash"` anywhere. Every tool is treated identically.
 
@@ -1164,7 +1203,7 @@ Sandboxed `bash` has **no network**. This is a known capability tradeoff:
 
 Dependencies are pre-installed at workspace-create time by the
 forge-core workspace service calling ai-worker's `/api/workspace/prep`
-endpoint (§3.6), which runs language-specific commands *outside* the
+endpoint (§3.9), which runs language-specific commands *outside* the
 sandbox.
 
 This is an explicit scope cut. "Install a new dependency mid-agent-task"
@@ -1425,8 +1464,8 @@ verify the `{language}` and `{workspace_path}` substitutions work.
 |---|---|---|
 | `AssistantTextDelta` | `ApiTextDeltaEvent` → yield | Unchanged |
 | `AssistantTurnComplete` | `ApiMessageCompleteEvent` → yield | Unchanged |
-| `ToolExecutionStarted` | `run_agent_loop` before tool call | Unchanged |
-| `ToolExecutionCompleted` | `run_agent_loop` after tool call | Unchanged |
+| `ToolExecutionStarted` | `run_agent_loop` before tool call | Adds `tool_use_id: str` field |
+| `ToolExecutionCompleted` | `run_agent_loop` after tool call | Adds `tool_use_id: str` field |
 | `ThinkingStarted(label)` | `BashTool.execute()` | Repurposed: bash only |
 | `ThinkingStopped` | `BashTool.execute()` finally block | Repurposed |
 | `PhaseChanged(phase)` | `SetPhaseTool.execute()` | **New** |
@@ -1451,6 +1490,25 @@ elif isinstance(event, PhaseChanged):
     base["phase"] = event.phase
 ```
 
+Also update `_serialize_event`'s existing branches for
+`ToolExecutionStarted` and `ToolExecutionCompleted` to emit
+`tool_use_id`:
+
+```python
+elif isinstance(event, ToolExecutionStarted):
+    base["type"] = "tool_started"
+    base["tool_use_id"] = event.tool_use_id   # new
+    base["tool_name"] = event.tool_name
+    base["tool_input"] = json.dumps(event.tool_input, default=str)
+
+elif isinstance(event, ToolExecutionCompleted):
+    base["type"] = "tool_completed"
+    base["tool_use_id"] = event.tool_use_id   # new
+    base["tool_name"] = event.tool_name
+    base["output"] = event.output[:4000]
+    base["is_error"] = str(event.is_error)
+```
+
 ### 5.5 `FixLoop*` event deletion
 
 - Remove `FixLoopStarted` and `FixLoopCompleted` from
@@ -1461,10 +1519,11 @@ elif isinstance(event, PhaseChanged):
 
 ### 5.6 Session complete logic
 
-`ToolExecutionStarted` carries `tool_input`; `ToolExecutionCompleted`
-does not (only `tool_name`, `output`, `is_error`). The SessionCollector
-observes both: it stashes bash commands by `tool_use_id` on start, then
-looks them up on completion. This keeps the event types minimal.
+With the `tool_use_id` field added to both events (§5.3, §5.4), the
+SessionCollector correlates Started/Completed pairs by id: on Started
+it stashes bash commands in a `dict[tool_use_id, command]`, on
+Completed it looks them up to decide whether the last bash call was
+build-like and should update `build_status`. No ordering assumptions.
 
 ```python
 _BUILD_LIKE_FIRST_TOKENS = {
@@ -1498,7 +1557,11 @@ def _is_build_like(command: str) -> bool:
 
 
 class SessionCollector:
-    """Tracks per-turn statistics from tool execution events."""
+    """Tracks per-turn statistics from tool execution events.
+
+    Correlates Started/Completed pairs via tool_use_id, which both
+    events now carry (see §5.3). No ordering assumptions needed.
+    """
 
     def __init__(self) -> None:
         self.files_created = 0
@@ -1508,17 +1571,12 @@ class SessionCollector:
         self._pending_bash: dict[str, str] = {}  # tool_use_id → command
 
     def observe(self, event: StreamEvent) -> None:
-        # ToolExecutionStarted carries tool_input; stash bash commands
-        # so the matching Completed event can look them up.
         if isinstance(event, ToolExecutionStarted):
+            # Only bash needs the command on the Completed side to
+            # derive build_status; other tools don't need pre-stashing.
             if event.tool_name == "bash":
                 command = event.tool_input.get("command", "")
-                # tool_use_id is on the ToolUseBlock inside the message,
-                # not on the StreamEvent directly. In practice the
-                # collector gets it via the event dispatch path. For the
-                # pseudocode here we use event.tool_name as a proxy —
-                # real implementation threads the id through.
-                self._pending_bash["__latest__"] = command
+                self._pending_bash[event.tool_use_id] = command
             return
 
         if isinstance(event, ToolExecutionCompleted):
@@ -1528,7 +1586,7 @@ class SessionCollector:
             elif event.tool_name == "edit_file" and not event.is_error:
                 self.files_modified += 1
             elif event.tool_name == "bash":
-                command = self._pending_bash.pop("__latest__", "")
+                command = self._pending_bash.pop(event.tool_use_id, "")
                 if _is_build_like(command):
                     self.last_build_status = (
                         "passed" if not event.is_error else "failed"
@@ -1538,18 +1596,13 @@ class SessionCollector:
         return self.tool_call_count > 0
 ```
 
-**Implementation note:** the `"__latest__"` placeholder above is
-pseudocode. The real collector needs a proper `tool_use_id` key, which
-means either:
-
-- extending `ToolExecutionStarted` and `ToolExecutionCompleted` with a
-  `tool_use_id: str` field (preferred — small, targeted change), OR
-- wiring the collector one level up in `query.py`'s agent loop where
-  the id is in scope, bypassing the StreamEvent observer pattern.
-
-The spec chooses the first: add `tool_use_id: str` to both events. This
-is a contained mutation, touches one file, and makes the events
-self-describing for other future consumers too.
+Adding `tool_use_id: str` to both `ToolExecutionStarted` and
+`ToolExecutionCompleted` is a contained mutation — it touches
+`stream_events.py`, the `run_agent_loop` call sites in `query.py`, the
+`_serialize_event` function in `api_server.py`, and the frontend SSE
+handlers that now carry the id through for ordering. No backward compat
+since the frontend reader for `fix_loop_*` events is already being
+deleted.
 
 `QueryEngine.submit_message` wires this up:
 
@@ -2264,9 +2317,9 @@ brainstorming session. The confirmation chain:
   `EnsureReady`, delete `injectToken`; keep `ProjectDir`/`TaskDir`/`CreateWorktree`/`WriteFiles`/`CleanupTask`
 - `forge-core/internal/workspace/manager_test.go` — remove `EnsureClone` tests, add `EnsureReady`
 - `forge-core/cmd/forge-core/main.go` — pass `ProjectLookup` into workspace.NewManager, wire deploy-key crypto service
-- `forge-core/internal/module/project/service.go` — stop calling workspace on project register
 - `forge-core/internal/module/agent/service.go` — call `workspace.Manager.EnsureReady` before agent, pass relative workspace_path
-- `forge-core/internal/activity/project_repo_adapter.go` (worker) — migrate from `EnsureClone` to `EnsureReady`
+- `forge-core/internal/temporal/activity/build_activities.go` — migrate `EnsureClone` call at line 96 to `EnsureReady`
+- `forge-core/internal/temporal/activity/devops_activities.go` — migrate `EnsureClone` call at line 134 to `EnsureReady`
 - `ai-worker/src/openharness/tools/base.py` — new signature + SimpleTool
 - `ai-worker/src/openharness/tools/context_tools.py` — migrate to SimpleTool
 - `ai-worker/src/openharness/engine/query.py` — adapt tool execution to new AsyncIterator contract
