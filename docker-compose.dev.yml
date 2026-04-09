@@ -61,6 +61,9 @@ services:
       - TEMPORAL_HOST=temporal:7233
       - FORGE_API_URL=http://host.docker.internal:8080
       - REDIS_HOST=redis
+      - FORGE_WORKSPACE_ROOT=/data/forge/workspaces
+    volumes:
+      - ${FORGE_WORKSPACE_ROOT_HOST:-./workspaces}:/data/forge/workspaces
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
