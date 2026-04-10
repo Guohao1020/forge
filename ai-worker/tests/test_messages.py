@@ -88,10 +88,11 @@ def test_stream_event_types():
     delta = AssistantTextDelta(text="hello")
     assert delta.text == "hello"
 
-    started = ToolExecutionStarted(tool_name="bash", tool_input={"command": "ls"})
+    started = ToolExecutionStarted(tool_use_id="t1", tool_name="bash", tool_input={"command": "ls"})
     assert started.tool_name == "bash"
+    assert started.tool_use_id == "t1"
 
-    completed = ToolExecutionCompleted(tool_name="bash", output="file.py", is_error=False)
+    completed = ToolExecutionCompleted(tool_use_id="t1", tool_name="bash", output="file.py", is_error=False)
     assert not completed.is_error
 
     error = ErrorEvent(message="oops", recoverable=True)
