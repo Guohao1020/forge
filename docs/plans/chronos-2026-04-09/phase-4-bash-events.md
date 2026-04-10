@@ -1,8 +1,8 @@
 # chronos · Phase 4 — Bash + SetPhase + Stream Events
 
 > **Project:** [chronos — Agent Variant B Single-Agent Implementation](index.md)
-> **Phase:** 4 of 7 · **Tasks:** 8 · **Depends on:** [Phase 2](phase-2-basetool.md) · **Unblocks:** Phase 5
-> **Spec reference:** [Design spec §4.4–§4.11 (BashTool + sandbox + SetPhaseTool) + §5.3 (event vocabulary) + §7.1 (adversarial suite)](../../specs/2026-04-09-agent-variant-b-single-agent-design.md)
+> **Phase:** 4 of 9 (Round 2) · **Tasks:** 9 · **Depends on:** [Phase 2](phase-2-basetool.md) · **Unblocks:** Phase 5, Phase 5a
+> **Spec reference:** [Design spec §4.4–§4.11 (BashTool + sandbox + SetPhaseTool) + §5.3 (event vocabulary) + §7.1 (adversarial suite) + §2.9.2 (Round 2: ClarificationRequested event, Task 4.9)](../../specs/2026-04-09-agent-variant-b-single-agent-design.md)
 
 **Execution:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans`. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -23,9 +23,11 @@ Land the last two tools in the T2 surface, both of which yield mid-execution `St
 - `pytest ai-worker/tests/openharness/tools/test_bash_tool.py -v` — passes (happy path + error paths + timeout + output cap + denylist)
 - `pytest ai-worker/tests/openharness/tools/test_bash_adversarial.py -v` — **all 13 tests pass** (P0, no exceptions)
 - `pytest ai-worker/tests/openharness/tools/test_base_tool_contract.py -v` — 48 tests pass (4 contracts × 12 tool classes: 4 context + 6 file + BashTool + SetPhaseTool)
-- `pytest ai-worker/tests/test_stream_events_base.py` still passes after the event changes
+- `pytest ai-worker/tests/openharness/test_stream_events_base.py -v` still passes after the event changes, plus 3 new `test_clarification_requested_*` tests from Task 4.9
 - `grep -c "FixLoop" ai-worker/src/openharness/engine/stream_events.py` returns 0
-- `grep -c "tool_use_id" ai-worker/src/openharness/engine/stream_events.py` returns ≥ 2 (added to both Started and Completed)
+- `grep -c "tool_use_id" ai-worker/src/openharness/engine/stream_events.py` returns ≥ 3 (added to ToolExecutionStarted, ToolExecutionCompleted, and ClarificationRequested)
+- `grep -c "ClarificationRequested" ai-worker/src/openharness/engine/stream_events.py` returns ≥ 1 (the new Round 2 dataclass)
+- `grep -c "clarification_requested" ai-worker/src/api_server.py` returns ≥ 1 (the new `_serialize_event` branch)
 
 ## Why this phase matters
 
@@ -2060,11 +2062,185 @@ raised NameError on import). This commit is the paper trail."
 
 ---
 
+### Task 4.9: Add `ClarificationRequested` stream event (Round 2)
+
+**Files:**
+- Modify: `ai-worker/src/openharness/engine/stream_events.py`
+- Modify: `ai-worker/tests/openharness/test_stream_events_base.py`
+- Modify: `ai-worker/src/api_server.py` (`_serialize_event` branch)
+
+**Context:** Round 2 adds the `request_clarification` meta-tool (spec §2.9.2) which yields a new stream event `ClarificationRequested(question, tool_use_id)` mid-execution. Phase 4 is the right place to land the dataclass + serialization because all the other event dataclasses live here and Phase 5 / Phase 5a (which actually USE the event) depend on it being importable.
+
+The event sits alongside the Round 1 events in `stream_events.py`. It carries:
+
+- `question: str` — the text the agent wants the user to answer
+- `tool_use_id: str` — threads through from `ToolExecutionStarted`/`ToolExecutionCompleted` so the frontend can correlate the input form with the right tool card and the backend can correlate the return-channel response with the right pending future (spec §2.9.2.b channel schema mandates this field)
+
+Note ordering from spec §2.9.2.e: `ToolExecutionStarted → ClarificationRequested → [pause while user types] → ToolExecutionCompleted`. `ClarificationResponse` is a **channel message on Redis**, not a stream event — it is NOT added to `stream_events.py`. The frontend never sees `ClarificationResponse` directly; the response arrives via the user's HTTP POST to `/api/sessions/{id}/clarify` (Phase 5a Task 5a.6) which forge-core publishes to Redis pub/sub.
+
+**Round 2 scope boundary:** Phase 4 only adds the event dataclass and its serialization. The `ClarificationCoordinator` / `ReturnChannel` / `RequestClarificationTool` that consume the event are in Phase 5a. The frontend component that renders it is in Phase 6 Task 6.10. This task is deliberately thin.
+
+- [ ] **Step 1: Write the failing test first**
+
+Open `ai-worker/tests/openharness/test_stream_events_base.py` and append:
+
+```python
+def test_clarification_requested_construction():
+    evt = ClarificationRequested(
+        question="What test framework should I use?",
+        tool_use_id="toolu_abc123",
+    )
+    assert evt.question == "What test framework should I use?"
+    assert evt.tool_use_id == "toolu_abc123"
+
+
+def test_clarification_requested_is_frozen():
+    evt = ClarificationRequested(question="x", tool_use_id="toolu_xyz")
+    with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
+        evt.question = "y"  # type: ignore[misc]
+
+
+def test_clarification_requested_subclasses_stream_event():
+    assert issubclass(ClarificationRequested, StreamEvent)
+```
+
+Also add `ClarificationRequested` to the import block at the top of the test file:
+
+```python
+from src.openharness.engine.stream_events import (
+    AssistantTextDelta,
+    AssistantTurnComplete,
+    ClarificationRequested,
+    ErrorEvent,
+    PhaseChanged,
+    SessionComplete,
+    StreamEvent,
+    ThinkingStarted,
+    ThinkingStopped,
+    ToolExecutionCompleted,
+    ToolExecutionStarted,
+)
+```
+
+Update the `test_all_events_subclass_stream_event` test's iteration list to include `ClarificationRequested` alongside the existing events.
+
+Run: `cd ai-worker && python -m pytest tests/openharness/test_stream_events_base.py::test_clarification_requested_construction -v`
+Expected: `ImportError: cannot import name 'ClarificationRequested' from 'src.openharness.engine.stream_events'`. That's the TDD failure.
+
+- [ ] **Step 2: Implement the dataclass**
+
+Open `ai-worker/src/openharness/engine/stream_events.py` and append (keep the existing events unchanged):
+
+```python
+@dataclass(frozen=True)
+class ClarificationRequested(StreamEvent):
+    """Agent paused mid-tool-execution to ask the user a clarifying question.
+
+    Emitted by RequestClarificationTool (see Phase 5a Task 5a.4) when the
+    agent needs more information from the user. The tool awaits a response
+    on the session's Redis return channel (agent:return:{session_id}) and
+    yields ToolResult(output=<user_response>) once the response arrives.
+
+    tool_use_id threads through from the surrounding ToolExecutionStarted
+    event so the frontend can correlate the input form with the right
+    tool card, and the backend can correlate the return-channel
+    ClarificationResponse with the right pending future (§2.9.2.b).
+
+    On timeout the session halts via ErrorEvent(recoverable=False) per
+    §2.9.2.f — this event is not emitted again, the session just ends.
+    """
+    question: str
+    tool_use_id: str
+```
+
+- [ ] **Step 3: Run the dataclass tests**
+
+```bash
+cd ai-worker && python -m pytest tests/openharness/test_stream_events_base.py -v
+```
+
+Expected: all previous tests still pass, plus the 3 new `test_clarification_requested_*` tests, plus the updated `test_all_events_subclass_stream_event` that now covers the new class.
+
+- [ ] **Step 4: Add `_serialize_event` branch in `api_server.py`**
+
+Find the `_serialize_event` function in `ai-worker/src/api_server.py` (it has one branch per existing event type). Add a new branch for `ClarificationRequested`:
+
+```python
+elif isinstance(event, ClarificationRequested):
+    base["event_type"] = "clarification_requested"
+    base["question"] = event.question
+    base["tool_use_id"] = event.tool_use_id
+```
+
+Make sure `ClarificationRequested` is imported at the top of `api_server.py` alongside the other stream event imports.
+
+- [ ] **Step 5: Write a serialization test**
+
+If `api_server.py` has an existing serialization test file (e.g. `ai-worker/tests/test_api_server_serialize.py`), add:
+
+```python
+def test_serialize_clarification_requested():
+    from src.api_server import _serialize_event
+    from src.openharness.engine.stream_events import ClarificationRequested
+
+    event = ClarificationRequested(
+        question="What language should I use?",
+        tool_use_id="toolu_xyz999",
+    )
+    payload = _serialize_event(event)
+    assert payload["event_type"] == "clarification_requested"
+    assert payload["question"] == "What language should I use?"
+    assert payload["tool_use_id"] == "toolu_xyz999"
+```
+
+If no serialization test file exists yet, create one with just this test — it's small enough to justify a new file.
+
+- [ ] **Step 6: Run the full stream-events + api-server test pass**
+
+```bash
+cd ai-worker && python -m pytest tests/openharness/test_stream_events_base.py tests/test_api_server_serialize.py -v
+```
+
+Expected: all tests pass. If `test_api_server_serialize.py` doesn't exist in Round 1, the command runs only the stream-events tests.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add ai-worker/src/openharness/engine/stream_events.py \
+        ai-worker/tests/openharness/test_stream_events_base.py \
+        ai-worker/src/api_server.py \
+        ai-worker/tests/test_api_server_serialize.py 2>/dev/null || true
+git commit -m "$(cat <<'EOF'
+feat(events): ClarificationRequested stream event (Round 2)
+
+New StreamEvent dataclass for the request_clarification meta-tool
+introduced in chronos Round 2 (spec §2.9.2). Carries the agent's
+question and the tool_use_id so the frontend can render an input
+form inline under the right tool card and the backend's return
+channel (Phase 5a) can correlate the response back to the right
+pending ClarificationCoordinator future.
+
+Phase 4 only ships the dataclass + SSE serialization branch. The
+tool that yields the event, the Redis pub/sub subscriber that
+delivers the response, the QueryEngine pause/resume wiring, and
+the forge-core clarify endpoint all land in Phase 5a. The frontend
+component that renders the input form lands in Phase 6 Task 6.10.
+
+ClarificationResponse is a Redis channel message, not a stream
+event — it is deliberately NOT added to stream_events.py.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
 ## Phase 4 completion check
 
 Before starting Phase 5:
 
-- [ ] `pytest ai-worker/tests/openharness/test_stream_events_base.py -v` — 8 tests pass (PhaseChanged construction, tool_use_id fields, FixLoop gone sentinel)
+- [ ] `pytest ai-worker/tests/openharness/test_stream_events_base.py -v` — 11 tests pass (PhaseChanged construction, tool_use_id fields, FixLoop gone sentinel, plus 3 ClarificationRequested tests from Task 4.9)
 - [ ] `pytest ai-worker/tests/openharness/tools/test_phase_tool.py -v` — 11 tests pass
 - [ ] `pytest ai-worker/tests/openharness/tools/test_bash_tool.py -v` — 17 tests pass (or appropriate skips)
 - [ ] `pytest ai-worker/tests/openharness/tools/test_bash_adversarial.py -v` — **13 tests pass** (P0, zero skips inside container)
@@ -2075,7 +2251,7 @@ Before starting Phase 5:
 - [ ] `grep -rn "if tool_name ==" ai-worker/src/openharness/engine/` returns nothing (no hardcoded special cases)
 - [ ] `grep -n "SimpleTool" ai-worker/src/openharness/tools/bash_tool.py` returns nothing (BashTool extends BaseTool directly)
 - [ ] `grep -n "SimpleTool" ai-worker/src/openharness/tools/phase_tool.py` returns nothing (SetPhaseTool extends BaseTool directly)
-- [ ] Branch has **8 new commits** from this phase (one per task; Task 4.8 may be a no-op)
+- [ ] Branch has **9 new commits** from this phase (one per task; Task 4.8 may be a no-op; Task 4.9 ships the Round 2 ClarificationRequested event)
 
 ## Phase 4 outputs unlock
 

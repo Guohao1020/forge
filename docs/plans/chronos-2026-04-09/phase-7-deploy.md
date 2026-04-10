@@ -1,8 +1,8 @@
 # chronos · Phase 7 — E2E Smoke + Deploy
 
 > **Project:** [chronos — Agent Variant B Single-Agent Implementation](index.md)
-> **Phase:** 7 of 7 · **Tasks:** 4 · **Depends on:** [Phase 6](phase-6-frontend.md) · **Unblocks:** production deployment
-> **Spec reference:** [Design spec §7.6 (E2E smoke test) + §8 (Deployment and rollout)](../../specs/2026-04-09-agent-variant-b-single-agent-design.md)
+> **Phase:** 7 of 9 (Round 2) · **Tasks:** 4 · **Depends on:** [Phase 6](phase-6-frontend.md) + [Phase 5a](phase-5a-bidirectional-rpc.md) · **Unblocks:** production deployment
+> **Spec reference:** [Design spec §7.6 (E2E smoke test — Round 2 includes clarification round-trip) + §8 (Deployment and rollout) + §2.9.2 (bidirectional RPC, now exercised by the smoke test)](../../specs/2026-04-09-agent-variant-b-single-agent-design.md)
 
 **Execution:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans`. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -12,7 +12,7 @@
 
 Land the final three things that take chronos from "all code written and unit-tested" to "running in production":
 
-1. **Real-LLM E2E smoke test** (`test_variant_b_smoke.py`) — drives the full stack end-to-end: forge-core → ai-worker → bwrap → real LLM → SSE → observable stream events. Runs on CI on merge to main (~$0.10 per run). Asserts the shape of the event trace, not specific content.
+1. **Real-LLM E2E smoke test** (`test_variant_b_smoke.py`) — drives the full stack end-to-end: forge-core → ai-worker → bwrap → real LLM → SSE → observable stream events **including a bidirectional clarification round-trip** (spec §2.9.2 / §7.6 Round 2). An intentionally ambiguous user prompt forces the agent to call `request_clarification`; a background responder publishes a canned response to the session's Redis return channel; the agent receives the response and continues. Runs on CI on merge to main (~$0.20 per run — the clarification adds one extra LLM turn vs Round 1's ~$0.10). Asserts the shape of the event trace plus the round-trip closure (matching `tool_use_id` between `ClarificationRequested` and `ToolExecutionCompleted`).
 2. **Observability log points** — structured JSON logs at every critical boundary (workspace lifecycle, tool calls, agent turn complete, bash denylist hits). No dashboards, no alerts — just the raw data in Loki so post-deploy debugging has signal.
 3. **Deployment runbook** — the three-step deploy (schema + image rebuild → new code + smoke → delete legacy) as an executable checklist, plus a post-deploy verification checklist.
 4. **Session memory + retro** — save a chronos project memory file documenting what landed, what was deferred, what the next team/session needs to know.
@@ -41,29 +41,39 @@ Phase 0–6 shipped the parts and wired them together. Phase 7 **proves it works
 
 ---
 
-### Task 7.1: Real-LLM E2E smoke test
+### Task 7.1: Real-LLM E2E smoke test (Round 2 — includes clarification round-trip)
 
 **Files:**
 - Create: `ai-worker/tests/e2e/test_variant_b_smoke.py`
-- Modify: `ai-worker/tests/conftest.py` (add `e2e` marker registration if not present)
+- Modify: `ai-worker/tests/conftest.py` (add `e2e` marker registration if not present; also add a `redis_client` pytest fixture that connects to the docker-compose dev Redis and skips the test on connection failure)
 - Modify: `ai-worker/pytest.ini` or `pyproject.toml` (register the `e2e` marker)
 
-**Context:** A single test function that drives the full stack. Skipped by default (`FORGE_E2E_ENABLED` env check) so CI on regular PRs doesn't pay the LLM cost; runs on merge to main via a separate workflow.
+**Context:** A single test function that drives the full stack **including the Round 2 bidirectional clarification round-trip**. Skipped by default (`FORGE_E2E_ENABLED` env check) so CI on regular PRs doesn't pay the LLM cost; runs on merge to main via a separate workflow. Also requires a running Redis (docker-compose dev instance) — the test skips cleanly if Redis is unreachable.
 
 The test:
 1. Sets up a small fixture Go project in a temp workspace
-2. Constructs a `QueryEngine` via `_create_engine` (Phase 5 Task 5.5)
-3. Submits a prompt like "Add a /hello HTTP handler that returns 'world' as JSON. Add a test for it."
-4. Collects every event from the stream into a list
-5. Asserts on the SHAPE of the event trace (not specific content):
+2. Constructs a `QueryEngine` via `await _create_engine(...)` (Phase 5 Task 5.15 updated this to be async and accept a `redis_client` argument)
+3. Submits an **intentionally ambiguous** prompt designed to force the agent to call `request_clarification` (e.g. "Add an HTTP handler that returns greeting data — exact filename, function name, URL shape, and response body format are up to you, but if you need clarification on any of them, ask me")
+4. Spawns a background responder task that watches the event stream for a `ClarificationRequested` event and then publishes a canned response to the session's return channel (`agent:return:{session_id}`) via Redis. This simulates what forge-core's `/api/sessions/{id}/clarify` handler does in production.
+5. Collects every event from the stream into a list
+6. Asserts on the Round 2 clarification round-trip:
+   - `ClarificationRequested` event appears (agent called `request_clarification`)
+   - The responder task successfully published to the return channel
+   - A matching `ToolExecutionCompleted` event with `tool_name=="request_clarification"` and matching `tool_use_id` appears in the stream, with `is_error=False`
+   - The tool's output contains keywords from the injected response (defense-in-depth check that the response actually round-tripped)
+7. Asserts on the SHAPE of the event trace (carry over from Round 1):
    - `PhaseChanged` events appear (agent called set_phase)
    - At least one of `read_file` / `glob` / `grep` / `list_directory` was called (agent explored before writing)
    - At least one of `write_file` / `edit_file` was called (agent made changes)
    - At least one `bash` call was made (agent verified with a build or test)
    - `SessionComplete` is the last event (or close to it)
-6. **Post-assertion**: actually build the resulting workspace with `go build ./...` — the code the agent wrote must actually compile. This is the real test.
+8. **Post-assertion**: actually build the resulting workspace with `go build ./...` — the code the agent wrote must actually compile. This is the real test.
 
 Why shape-only assertions: real LLMs are non-deterministic. Asserting that `bash` was called is meaningful; asserting that the agent called `glob "*.go"` specifically is flaky. The post-assertion (`go build` succeeds) is what proves the outcome.
+
+**Round 2 cost:** ~$0.20 per run (up from Round 1's ~$0.10). The extra LLM turn is the agent processing the clarification response and continuing.
+
+**Round 2 test harness note:** The background responder publishes directly to Redis via `redis_client.publish(channel, payload)` rather than going through forge-core's HTTP endpoint. This is deliberate — it exercises the same Redis channel / JSON schema that forge-core produces, without requiring the Go binary to be running during the Python test. The forge-core endpoint is tested separately in Phase 5a Task 5a.6 via Go unit tests against a mocked Redis client. The full "frontend → forge-core HTTP → Redis publish → ai-worker subscriber" path is exercised by the Phase 6 frontend tests + this smoke test's Redis publish step together.
 
 - [ ] **Step 1: Find the existing e2e test infrastructure if any**
 
@@ -186,41 +196,173 @@ def go_fixture_workspace(tmp_path: Path) -> Path:
 @pytest.mark.e2e
 @pytest.mark.skipif(
     not os.getenv("FORGE_E2E_ENABLED"),
-    reason="E2E disabled; set FORGE_E2E_ENABLED=1 to run (costs ~$0.10 per run)",
+    reason="E2E disabled; set FORGE_E2E_ENABLED=1 to run (costs ~$0.20 per run — Round 2 adds the clarification round-trip)",
 )
 @pytest.mark.asyncio
-async def test_agent_can_complete_variant_b_workflow(go_fixture_workspace: Path):
-    """A real LLM session adds a handler, runs a build, reports done."""
+async def test_agent_can_complete_variant_b_workflow_with_clarification(
+    go_fixture_workspace: Path,
+    redis_client,  # pytest fixture wired to docker-compose dev Redis
+):
+    """A real LLM session with an intentionally ambiguous prompt:
+    the agent must call request_clarification, a background task
+    publishes a response to the Redis return channel via forge-core's
+    /api/sessions/{id}/clarify endpoint, and the agent continues to
+    finish the task. This exercises the full bidirectional RPC path
+    end-to-end on real infrastructure.
 
-    from src.api_server import RunRequest, _create_engine
+    Per spec §7.6 Round 2, this is the e2e smoke test. The Round 1
+    version without clarification is removed — the Round 2 version
+    covers both the original shape assertions AND the new round-trip.
+    """
+    import asyncio
+    import json
+    import uuid
+
+    from src.api_server import RunRequest, _create_engine, _get_redis
     from src.openharness.engine.stream_events import (
+        ClarificationRequested,
         PhaseChanged,
         SessionComplete,
         ToolExecutionCompleted,
     )
 
+    session_id = f"e2e-smoke-{uuid.uuid4().hex[:8]}"
+
+    # Intentionally ambiguous: agent can't know the exact response format
+    # without asking. This forces a request_clarification call.
     req = RunRequest(
-        session_id="e2e-smoke-1",
+        session_id=session_id,
         project_id=1,
         workspace_path="e2e-smoke",  # relative fragment
         message=(
-            "Add a new Go file handlers/hello.go that exports a HelloHandler "
-            "function taking http.ResponseWriter and *http.Request, writing "
-            '{"message":"world"} as JSON. Then run `go build ./...` to verify '
-            "it compiles. Tell me when you are done."
+            "Add a new HTTP handler in handlers/ that returns greeting data. "
+            "The exact filename, function name, URL shape, and response body "
+            "format are up to you — but if you need clarification on any of "
+            "them, ask me. Then run `go build ./...` to verify it compiles. "
+            "Tell me when you are done."
         ),
     )
 
-    # _create_engine is from Phase 5 Task 5.5 — registers all 14 tools
-    # and builds the real system prompt.
-    engine = _create_engine(req, workspace_dir=go_fixture_workspace)
+    # _create_engine is async in Round 2 (Phase 5a Task 5a.9 added
+    # the await + redis_client parameter). Pass the real Redis client
+    # so the ReturnChannel subscriber comes up.
+    redis_client_for_engine = await _get_redis()
+    assert redis_client_for_engine is not None, (
+        "Redis is required for the e2e smoke test — start docker-compose "
+        "dev first. No fallback (spec §2.8)."
+    )
+    engine = await _create_engine(
+        req,
+        workspace_dir=go_fixture_workspace,
+        redis_client=redis_client_for_engine,
+    )
 
-    # Collect every event
+    # Background responder task. When the agent yields
+    # ClarificationRequested, we publish a canned response to the
+    # session's return channel. In production this POST comes from the
+    # frontend; here we use forge-core's /api/sessions/{id}/clarify
+    # endpoint directly to exercise the real HTTP path, OR publish to
+    # Redis directly if a forge-core HTTP client isn't wired into the
+    # test harness.
+    clarification_seen = asyncio.Event()
+    clarification_response_sent = asyncio.Event()
+
+    async def wait_then_respond():
+        """Watches the forward event stream indirectly — actually we
+        just sleep briefly and then publish to the return channel when
+        we see the agent is in a waiting state. The real mechanism is
+        the listener sees the ClarificationRequested event in the main
+        task's `events` list and signals clarification_seen."""
+        await clarification_seen.wait()
+        # Fetch the most recent ClarificationRequested from the shared
+        # events list. The main task sets clarification_seen before any
+        # pending wait, so there's always at least one event by now.
+        tool_use_id = None
+        for ev in reversed(events):
+            if isinstance(ev, ClarificationRequested):
+                tool_use_id = ev.tool_use_id
+                break
+        assert tool_use_id is not None, (
+            "clarification_seen was set but no ClarificationRequested "
+            "event in the buffer — harness bug"
+        )
+
+        # Publish directly to Redis (simulating forge-core's /clarify
+        # endpoint publish). This is the same code path forge-core uses
+        # in clarify_handler.go — same channel, same JSON schema.
+        payload = json.dumps({
+            "type": "clarification_response",
+            "session_id": session_id,
+            "tool_use_id": tool_use_id,
+            "response": (
+                "Please create handlers/hello.go with a function HelloHandler "
+                "at URL /hello that returns JSON {\"greeting\": \"world\"} "
+                "with HTTP 200."
+            ),
+        }).encode("utf-8")
+        channel = f"agent:return:{session_id}"
+        await redis_client.publish(channel, payload)
+        clarification_response_sent.set()
+
+    responder_task = asyncio.create_task(wait_then_respond())
+
+    # Collect every event; flip the signal flag when we see the first
+    # ClarificationRequested so the responder can act.
     events: List[Any] = []
-    async for event in engine.submit_message(req.message):
-        events.append(event)
+    try:
+        async for event in engine.submit_message(req.message):
+            events.append(event)
+            if isinstance(event, ClarificationRequested) and not clarification_seen.is_set():
+                clarification_seen.set()
+    finally:
+        responder_task.cancel()
+        try:
+            await responder_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
-    # ---- Shape assertions ----
+    # ---- Clarification round-trip assertions (Round 2) ----
+
+    clarification_events = [
+        e for e in events if isinstance(e, ClarificationRequested)
+    ]
+    assert len(clarification_events) >= 1, (
+        f"agent did NOT call request_clarification despite ambiguous "
+        f"prompt. Events: {[type(e).__name__ for e in events[:30]]}"
+    )
+    assert clarification_response_sent.is_set(), (
+        "background responder did not publish to the return channel — "
+        "harness bug or the agent finished before clarification was seen"
+    )
+
+    # Round-trip closed: there's a ToolExecutionCompleted for
+    # request_clarification with the matching tool_use_id and is_error=False
+    clarify_completions = [
+        e for e in events
+        if isinstance(e, ToolExecutionCompleted)
+        and e.tool_name == "request_clarification"
+    ]
+    assert len(clarify_completions) >= 1, (
+        "request_clarification round-trip did not complete — no matching "
+        "ToolExecutionCompleted event. The pause/resume infrastructure "
+        "is broken."
+    )
+    assert clarify_completions[0].is_error is False, (
+        f"request_clarification returned an error: "
+        f"{clarify_completions[0].output!r}"
+    )
+    # The agent should have received something resembling the injected
+    # response in the tool output.
+    assert (
+        "hello" in clarify_completions[0].output.lower()
+        or "greeting" in clarify_completions[0].output.lower()
+        or "world" in clarify_completions[0].output.lower()
+    ), (
+        f"clarification response did not contain any of the injected "
+        f"keywords. output={clarify_completions[0].output!r}"
+    )
+
+    # ---- Shape assertions (carry over from Round 1) ----
 
     tool_completions = [
         e for e in events if isinstance(e, ToolExecutionCompleted)
@@ -231,6 +373,13 @@ async def test_agent_can_complete_variant_b_workflow(go_fixture_workspace: Path)
     )
 
     tool_names_called = {t.tool_name for t in tool_completions}
+
+    # request_clarification must be in the called set (enforced above,
+    # this is a belt-and-suspenders for readability)
+    assert "request_clarification" in tool_names_called, (
+        "request_clarification missing from tool_names_called — "
+        "contradicts the earlier clarification_events check"
+    )
 
     # set_phase should have fired at least once (agent signalled phase)
     phase_events = [e for e in events if isinstance(e, PhaseChanged)]

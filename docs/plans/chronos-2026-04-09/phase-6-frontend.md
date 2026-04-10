@@ -1,8 +1,8 @@
 # chronos · Phase 6 — Frontend Changes
 
 > **Project:** [chronos — Agent Variant B Single-Agent Implementation](index.md)
-> **Phase:** 6 of 7 · **Tasks:** 9 · **Depends on:** [Phase 5](phase-5-agent-loop.md) · **Unblocks:** Phase 7
-> **Spec reference:** [Design spec §6 (Frontend changes) + §2.6 (Step Ribbon / Build Card / Fix Loop decisions)](../../specs/2026-04-09-agent-variant-b-single-agent-design.md)
+> **Phase:** 6 of 7 · **Tasks:** 11 · **Depends on:** [Phase 5](phase-5-agent-loop.md) · **Unblocks:** Phase 7
+> **Spec reference:** [Design spec §6 (Frontend changes) + §2.6 (Step Ribbon / Build Card / Fix Loop decisions) + §2.9.2 (Round 2: request_clarification meta-tool, bidirectional SSE protocol)](../../specs/2026-04-09-agent-variant-b-single-agent-design.md)
 
 **Execution:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans`. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -12,7 +12,7 @@
 
 ## Phase goal
 
-Bring the frontend into alignment with the A2 architecture. Nine focused changes:
+Bring the frontend into alignment with the A2 architecture, **plus Round 2: clarification input UI and state machine for the `request_clarification` meta-tool**. Eleven focused changes:
 
 1. **Delete build-card.tsx** — spec §2.6 Q5.3 killed the dedicated build card in favor of a unified bash tool card
 2. **Delete pair_pipeline-era state** — `BuildInfo`, `ChatMessage.build`, `AgentRole="coder"|"reviewer"` all go
@@ -23,6 +23,8 @@ Bring the frontend into alignment with the A2 architecture. Nine focused changes
 7. **Downgrade `code-panel.tsx`** — read-only preview only; drop any pair_pipeline-specific rendering
 8. **Relocate `thinking-indicator.tsx`** — render attached to bash tool cards, not chat bottom
 9. **Add `detectFixLoopStart` visual heuristic** — inserts a subtle "Fixing previous error..." system message when pattern is detected, replacing the deleted fix_loop events
+10. **(Round 2) `ClarificationInput` component + agent-chat state machine** — inline form component for user responses, state transitions for `clarification_requested` → `[pause]` → `tool_execution_completed`, disables the main chat input while awaiting a reply, handles clarification timeout as a red banner
+11. **(Round 2) SSE event dispatch — `clarification_requested` handler** — wires the new event type into the existing dispatcher; adds a `ClarificationRequestedEvent` type to the SSE event union
 
 Plus cross-cutting updates to `agent-chat.tsx` (the big file) and `page.tsx` (the step ribbon host).
 
@@ -31,6 +33,10 @@ Plus cross-cutting updates to `agent-chat.tsx` (the big file) and `page.tsx` (th
 - `forge-portal/components/agent/build-card.test.tsx` does not exist
 - `grep -rn "BuildInfo\|fix_loop_\|coder\|reviewer" forge-portal/components/agent/` returns nothing (or only comments)
 - `grep -rn "phase_changed\|PhaseChanged" forge-portal/components/agent/agent-chat.tsx` returns at least 1 match (the new handler)
+- `forge-portal/components/agent/clarification-input.tsx` exists and exports `ClarificationInput`
+- `forge-portal/components/agent/clarification-input.test.tsx` exists and passes
+- `grep -n "clarification_requested" forge-portal/components/agent/agent-chat.tsx` returns ≥ 1 match (the new SSE case)
+- `grep -n "postClarification" forge-portal/lib/agent.ts` returns ≥ 1 match (the new API client function)
 - `pnpm --filter forge-portal test` (or `npm test` / `vitest run` depending on the project's runner) passes
 - `pnpm --filter forge-portal build` (or equivalent) succeeds without TS errors
 - Manual smoke via dev server: load the agent page, verify:
@@ -39,6 +45,8 @@ Plus cross-cutting updates to `agent-chat.tsx` (the big file) and `page.tsx` (th
   - bash tool cards render with the command and exit code
   - `set_phase` does NOT render its own tool card (hideCard)
   - a fake bash-error → edit → bash sequence inserts the subtle "Fixing previous error" banner
+  - when a `clarification_requested` SSE event is injected, the `ClarificationInput` form appears inline with the agent's question, the main chat input becomes disabled, and submitting the form `POST`s to `/api/sessions/{id}/clarify`; a matching `tool_execution_completed` event closes the form and re-enables the main input
+  - a `clarification timeout` error event closes the stream and shows the red "Session ended" banner
 
 ## Why this phase matters
 
@@ -1962,6 +1970,1007 @@ delivered."
 
 ---
 
+### Task 6.10: `ClarificationInput` component + agent-chat state machine (Round 2)
+
+**Files:**
+- Create: `forge-portal/components/agent/clarification-input.tsx`
+- Create: `forge-portal/components/agent/clarification-input.test.tsx`
+- Modify: `forge-portal/components/agent/agent-chat.tsx`
+- Modify: `forge-portal/lib/agent.ts` (add `postClarification` API client function)
+
+**Context:** Spec §2.9.2 introduces the `request_clarification` meta-tool — the agent can pause its own execution to ask the human user for input. The event ordering on the wire is (§2.9.2.e):
+
+```
+ToolExecutionStarted(tool_name="request_clarification", tool_use_id=X)
+  → ClarificationRequested(question, tool_use_id=X)
+  → [pause — agent blocks on a Future waiting for the user's reply]
+  → ToolExecutionCompleted(tool_use_id=X, output=<user response>)
+```
+
+The frontend uses `ClarificationRequested` to render the inline input form and `ToolExecutionCompleted` with a matching `tool_use_id` to close it. The user's reply reaches the backend via `POST /api/sessions/{id}/clarify` with JSON body `{tool_use_id, response}` (§2.9.2.g), which resolves the pending Future server-side and lets the agent loop continue.
+
+If the user takes longer than the 10-minute timeout (§2.9.2.f), the backend closes the SSE stream with an `ErrorEvent(recoverable=False)` whose message contains "clarification timeout". The UI shows a red banner: "Session ended: clarification timeout after 10 minutes."
+
+The `ClarificationInput` component is a small controlled form (textarea + submit button) with a four-state FSM: `editing` → `submitting` → (`submitted` | `error`). From `error` the user can retry; from `submitted` the component is frozen and waits for the matching `tool_execution_completed` event to arrive, which unmounts it via the parent's state update.
+
+While a clarification is pending, the **main chat input at the bottom of the screen is disabled** — the user must answer the clarification before sending a new message. This is deliberate: the agent is blocked on that specific question and any new user input would create ambiguity about what the agent should respond to.
+
+- [ ] **Step 1: Add the `postClarification` API client function**
+
+Append to `forge-portal/lib/agent.ts` (after the existing session CRUD functions). Match the existing `api` helper pattern:
+
+```ts
+/**
+ * Submit a response to a pending `request_clarification` tool call.
+ *
+ * Spec §2.9.2.g: POST /api/sessions/{id}/clarify with JSON body
+ * {tool_use_id, response}. Resolves the pending Future server-side
+ * so the agent loop can continue.
+ *
+ * Returns on 204 No Content. Throws on 400 (bad input), 401
+ * (unauthenticated), 403 (not your session), 404 (session not
+ * found / no pending clarification matching tool_use_id), or 410
+ * (clarification already resolved or timed out).
+ */
+export async function postClarification(
+  sessionId: string,
+  toolUseId: string,
+  response: string,
+): Promise<void> {
+  const res = await fetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/clarify`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ tool_use_id: toolUseId, response }),
+    },
+  )
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    throw new Error(`HTTP ${res.status}${body ? `: ${body}` : ""}`)
+  }
+}
+```
+
+Note: the existing `api` helper in `@/lib/api` wraps `fetch` with JWT injection via `credentials: "include"` and the forge-core session cookie. Reuse it if it already exposes a `post` that returns void; otherwise a direct `fetch` as shown is fine — the existing `agent.ts` already mixes both patterns.
+
+- [ ] **Step 2: Create `clarification-input.tsx`**
+
+```tsx
+"use client"
+
+import { useState, type FormEvent } from "react"
+import { cn } from "@/lib/utils"
+
+interface ClarificationInputProps {
+  question: string
+  toolUseId: string
+  onSubmit: (toolUseId: string, response: string) => Promise<void>
+  disabled?: boolean
+  className?: string
+}
+
+type State =
+  | { kind: "editing" }
+  | { kind: "submitting" }
+  | { kind: "submitted" }
+  | { kind: "error"; message: string }
+
+const MAX_CHARS = 4096
+
+/**
+ * Inline form the agent uses to ask the human user a clarifying
+ * question. Rendered below the current assistant message when
+ * the SSE stream delivers a `clarification_requested` event.
+ *
+ * Four states:
+ * - editing: user is typing a response (default)
+ * - submitting: POST /api/sessions/{id}/clarify in flight
+ * - submitted: success; waiting for the agent's tool_execution_completed
+ *   event to arrive (at which point the parent unmounts this)
+ * - error: POST failed; user can edit and retry
+ *
+ * The `disabled` prop is set by the parent when the whole session
+ * is ending (e.g. clarification timeout) — the form should not
+ * accept new input in that case.
+ */
+export function ClarificationInput({
+  question,
+  toolUseId,
+  onSubmit,
+  disabled,
+  className,
+}: ClarificationInputProps) {
+  const [response, setResponse] = useState("")
+  const [state, setState] = useState<State>({ kind: "editing" })
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (state.kind === "submitting" || state.kind === "submitted") return
+    if (response.trim().length === 0) return
+    setState({ kind: "submitting" })
+    try {
+      await onSubmit(toolUseId, response)
+      setState({ kind: "submitted" })
+    } catch (err) {
+      setState({
+        kind: "error",
+        message: err instanceof Error ? err.message : "Unknown error",
+      })
+    }
+  }
+
+  const inputDisabled = disabled || state.kind === "submitting" || state.kind === "submitted"
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className={cn(
+        "border border-[var(--border-primary)] rounded p-3 my-2 bg-[var(--bg-secondary)]",
+        className,
+      )}
+      aria-label="Clarification response"
+    >
+      <div className="text-[11px] font-medium text-[var(--text-secondary)] mb-1.5">
+        The agent is asking:
+      </div>
+      <div className="text-[12px] text-[var(--text-primary)] mb-2.5 whitespace-pre-wrap">
+        {question}
+      </div>
+      <textarea
+        value={response}
+        onChange={(e) => setResponse(e.target.value)}
+        placeholder="Your response..."
+        disabled={inputDisabled}
+        maxLength={MAX_CHARS}
+        rows={3}
+        className={cn(
+          "w-full px-2 py-1.5 text-[12px] font-mono rounded",
+          "bg-[var(--bg-primary)] border border-[var(--border-primary)]",
+          "text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]",
+          "focus:outline-none focus:border-[var(--accent)]",
+          "disabled:opacity-60 disabled:cursor-not-allowed",
+          "resize-y mb-2",
+        )}
+        aria-label="Clarification response textarea"
+      />
+      {state.kind === "error" && (
+        <div
+          className="text-[11px] text-[var(--text-error)] mb-2"
+          role="alert"
+        >
+          {state.message}
+        </div>
+      )}
+      {state.kind === "submitted" && (
+        <div className="text-[11px] text-[var(--text-tertiary)] mb-2">
+          Submitted — waiting for agent...
+        </div>
+      )}
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] text-[var(--text-tertiary)]">
+          {response.length}/{MAX_CHARS} characters
+        </div>
+        <button
+          type="submit"
+          disabled={
+            disabled ||
+            state.kind === "submitting" ||
+            state.kind === "submitted" ||
+            response.trim().length === 0
+          }
+          className={cn(
+            "px-2.5 py-1 text-[11px] font-medium rounded",
+            "bg-[var(--accent)] text-white",
+            "hover:bg-[var(--accent-hover)]",
+            "disabled:opacity-50 disabled:cursor-not-allowed",
+            "transition-colors duration-100",
+          )}
+        >
+          {state.kind === "submitting" && "Submitting..."}
+          {state.kind === "submitted" && "Submitted"}
+          {(state.kind === "editing" || state.kind === "error") &&
+            "Submit Response"}
+        </button>
+      </div>
+    </form>
+  )
+}
+```
+
+- [ ] **Step 3: Create `clarification-input.test.tsx`**
+
+```tsx
+import { render, screen, waitFor, fireEvent } from "@testing-library/react"
+import { describe, expect, it, vi } from "vitest"
+
+import { ClarificationInput } from "./clarification-input"
+
+describe("ClarificationInput", () => {
+  const baseProps = {
+    question: "Which database should I use — Postgres or MySQL?",
+    toolUseId: "toolu_abc123",
+  }
+
+  it("renders the question", () => {
+    render(<ClarificationInput {...baseProps} onSubmit={vi.fn()} />)
+    expect(
+      screen.getByText(/Postgres or MySQL/),
+    ).toBeInTheDocument()
+  })
+
+  it("disables submit when response is empty", () => {
+    render(<ClarificationInput {...baseProps} onSubmit={vi.fn()} />)
+    const btn = screen.getByRole("button", { name: /submit response/i })
+    expect(btn).toBeDisabled()
+  })
+
+  it("enables submit when response is non-empty", () => {
+    render(<ClarificationInput {...baseProps} onSubmit={vi.fn()} />)
+    const textarea = screen.getByLabelText(/clarification response textarea/i)
+    fireEvent.change(textarea, { target: { value: "Postgres" } })
+    const btn = screen.getByRole("button", { name: /submit response/i })
+    expect(btn).not.toBeDisabled()
+  })
+
+  it("calls onSubmit with toolUseId and response on click", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    render(<ClarificationInput {...baseProps} onSubmit={onSubmit} />)
+    const textarea = screen.getByLabelText(/clarification response textarea/i)
+    fireEvent.change(textarea, { target: { value: "Postgres please" } })
+    const btn = screen.getByRole("button", { name: /submit response/i })
+    fireEvent.click(btn)
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith("toolu_abc123", "Postgres please")
+    })
+  })
+
+  it("shows submitting state during async call", async () => {
+    let resolveSubmit!: () => void
+    const onSubmit = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSubmit = resolve
+        }),
+    )
+    render(<ClarificationInput {...baseProps} onSubmit={onSubmit} />)
+    const textarea = screen.getByLabelText(/clarification response textarea/i)
+    fireEvent.change(textarea, { target: { value: "test" } })
+    fireEvent.click(screen.getByRole("button", { name: /submit response/i }))
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /submitting/i })).toBeInTheDocument()
+    })
+    resolveSubmit()
+  })
+
+  it("shows submitted state on success", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    render(<ClarificationInput {...baseProps} onSubmit={onSubmit} />)
+    const textarea = screen.getByLabelText(/clarification response textarea/i)
+    fireEvent.change(textarea, { target: { value: "go" } })
+    fireEvent.click(screen.getByRole("button", { name: /submit response/i }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /submitted/i }),
+      ).toBeInTheDocument()
+    })
+    expect(screen.getByText(/waiting for agent/i)).toBeInTheDocument()
+  })
+
+  it("shows error state on failure and allows retry", async () => {
+    const onSubmit = vi.fn().mockRejectedValue(new Error("HTTP 500: boom"))
+    render(<ClarificationInput {...baseProps} onSubmit={onSubmit} />)
+    const textarea = screen.getByLabelText(/clarification response textarea/i)
+    fireEvent.change(textarea, { target: { value: "x" } })
+    fireEvent.click(screen.getByRole("button", { name: /submit response/i }))
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/HTTP 500/)
+    })
+    // After error the button returns to 'Submit Response' and is re-enabled
+    // so the user can try again
+    expect(
+      screen.getByRole("button", { name: /submit response/i }),
+    ).not.toBeDisabled()
+  })
+
+  it("respects maxLength of 4096", () => {
+    render(<ClarificationInput {...baseProps} onSubmit={vi.fn()} />)
+    const textarea = screen.getByLabelText(
+      /clarification response textarea/i,
+    ) as HTMLTextAreaElement
+    expect(textarea.maxLength).toBe(4096)
+  })
+
+  it("disables the form when disabled prop is true", () => {
+    render(
+      <ClarificationInput {...baseProps} onSubmit={vi.fn()} disabled />,
+    )
+    const textarea = screen.getByLabelText(/clarification response textarea/i)
+    expect(textarea).toBeDisabled()
+    const btn = screen.getByRole("button", { name: /submit response/i })
+    expect(btn).toBeDisabled()
+  })
+
+  it("shows character counter", () => {
+    render(<ClarificationInput {...baseProps} onSubmit={vi.fn()} />)
+    expect(screen.getByText(/0\/4096 characters/)).toBeInTheDocument()
+    const textarea = screen.getByLabelText(/clarification response textarea/i)
+    fireEvent.change(textarea, { target: { value: "hello" } })
+    expect(screen.getByText(/5\/4096 characters/)).toBeInTheDocument()
+  })
+})
+```
+
+- [ ] **Step 4: Wire clarification state into `agent-chat.tsx`**
+
+Add the import at the top:
+
+```tsx
+import { ClarificationInput } from "./clarification-input"
+import {
+  getAgentSuggestions,
+  listSessionMessages,
+  postClarification,
+  type AgentMessageRow,
+  type AgentSuggestion,
+} from "@/lib/agent"
+```
+
+Near the top of the `AgentChat` component body, next to the other `useState` calls:
+
+```tsx
+// Round 2 — request_clarification state. Null means no pending
+// clarification; the form is not shown and the main chat input
+// is enabled. When a clarification_requested event arrives this
+// becomes {question, toolUseId}, the form renders inline below
+// the current assistant message, and the main input is disabled
+// until a matching tool_execution_completed event clears it.
+const [clarification, setClarification] = useState<{
+  question: string
+  toolUseId: string
+} | null>(null)
+
+// Round 2 — clarification timeout banner. When the backend closes
+// the SSE stream with an ErrorEvent containing 'clarification
+// timeout', we render a red banner and leave it on screen; the
+// session is dead and any pending ClarificationInput is disabled.
+const [clarificationTimedOut, setClarificationTimedOut] = useState(false)
+```
+
+In the `switch (event.type)` block of the SSE reader, add three new cases (keep them next to `tool_started` / `tool_completed` for readability):
+
+```tsx
+      case "clarification_requested": {
+        // Round 2 — agent has paused on a request_clarification meta-tool
+        // call. Render ClarificationInput inline; disable the main chat
+        // input until tool_execution_completed arrives with a matching
+        // tool_use_id.
+        const q = String(event.question ?? "")
+        const tid = String(event.tool_use_id ?? "")
+        if (q && tid) {
+          setClarification({ question: q, toolUseId: tid })
+        }
+        break
+      }
+      // ... existing tool_completed handler needs a small addition:
+      // after applying the tool output to the message, check whether
+      // the completing tool matches the current clarification; if so,
+      // clear it. The existing handler looks like:
+      //
+      //   case "tool_completed": {
+      //     const tid = String(event.tool_use_id ?? "")
+      //     // ... append output to the message.tools entry matching tid ...
+      //     break
+      //   }
+      //
+      // Add at the end of that case, before the break:
+      //
+      //   if (
+      //     clarification &&
+      //     clarification.toolUseId === tid &&
+      //     String(event.tool_name ?? "") === "request_clarification"
+      //   ) {
+      //     setClarification(null)
+      //   }
+```
+
+For the timeout handling, update the existing `case "error":` branch to detect the timeout message:
+
+```tsx
+      case "error": {
+        const msg = String(event.message ?? "")
+        const recoverable = Boolean(event.recoverable)
+        if (
+          !recoverable &&
+          msg.toLowerCase().includes("clarification timeout")
+        ) {
+          // Round 2 — clarification timeout ended the session. Show a
+          // red banner; leave the pending ClarificationInput rendered
+          // but disabled so the user sees their half-typed response.
+          setClarificationTimedOut(true)
+        }
+        // ... existing error handling (append error message, etc.) ...
+        break
+      }
+```
+
+The `onSubmit` handler passed to `ClarificationInput` calls `postClarification`:
+
+```tsx
+const handleClarificationSubmit = useCallback(
+  async (toolUseId: string, response: string) => {
+    if (!sessionId) {
+      throw new Error("No active session")
+    }
+    await postClarification(sessionId, toolUseId, response)
+  },
+  [sessionId],
+)
+```
+
+In the message rendering JSX, after the current assistant message renders (and after its tool cards), render the clarification form inline when `clarification !== null`:
+
+```tsx
+{clarification && (
+  <ClarificationInput
+    question={clarification.question}
+    toolUseId={clarification.toolUseId}
+    onSubmit={handleClarificationSubmit}
+    disabled={clarificationTimedOut}
+  />
+)}
+{clarificationTimedOut && (
+  <div
+    className="border border-[var(--text-error)] bg-[var(--bg-error)] rounded p-2.5 my-2 text-[12px] text-[var(--text-error)]"
+    role="alert"
+  >
+    Session ended: clarification timeout after 10 minutes.
+  </div>
+)}
+```
+
+The main chat input (the bottom textarea that lets the user start a new turn) must be disabled while `clarification !== null`. Find the input element at the bottom of the component JSX:
+
+```tsx
+<textarea
+  // ... existing props ...
+  disabled={connStatus !== "connected" || clarification !== null}
+  placeholder={
+    clarification !== null
+      ? "Waiting for you to respond to the agent's question above..."
+      : "Message the agent..."
+  }
+/>
+```
+
+And the Send button:
+
+```tsx
+<button
+  type="submit"
+  disabled={
+    !input.trim() ||
+    connStatus !== "connected" ||
+    clarification !== null
+  }
+  // ... existing className ...
+>
+  <Send className="h-3.5 w-3.5" />
+</button>
+```
+
+- [ ] **Step 5: Add agent-chat tests for the clarification state machine**
+
+Append to `forge-portal/components/agent/agent-chat.test.tsx`:
+
+```tsx
+import { describe, expect, it, vi, beforeEach } from "vitest"
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react"
+
+import { AgentChat } from "./agent-chat"
+
+/**
+ * Tiny harness: render AgentChat and feed it SSE events via a
+ * stubbed fetch that returns a ReadableStream. Each test builds
+ * the event sequence it cares about.
+ *
+ * Round 2 tests focus on clarification state transitions. They
+ * assume the rest of the SSE plumbing is covered by Task 6.9 tests.
+ */
+function makeSseResponse(events: Array<Record<string, unknown>>) {
+  const encoder = new TextEncoder()
+  const chunks = events.map((e) => `data: ${JSON.stringify(e)}\n\n`)
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers({ "content-type": "text/event-stream" }),
+    body: new ReadableStream({
+      start(controller) {
+        for (const c of chunks) controller.enqueue(encoder.encode(c))
+        controller.close()
+      },
+    }),
+  } as unknown as Response
+}
+
+describe("AgentChat — clarification state machine (Round 2)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("shows ClarificationInput on clarification_requested event", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (typeof url === "string" && url.includes("/messages")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ messages: [], total: 0 }),
+          } as Response)
+        }
+        return Promise.resolve(
+          makeSseResponse([
+            {
+              type: "tool_started",
+              tool_use_id: "toolu_q1",
+              tool_name: "request_clarification",
+              tool_input: { question: "Which DB?" },
+            },
+            {
+              type: "clarification_requested",
+              tool_use_id: "toolu_q1",
+              question: "Which DB — Postgres or MySQL?",
+            },
+          ]),
+        )
+      }),
+    )
+
+    render(
+      <AgentChat projectId="1" sessionId="sess_abc" />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/Postgres or MySQL/)).toBeInTheDocument()
+    })
+    expect(
+      screen.getByLabelText(/clarification response textarea/i),
+    ).toBeInTheDocument()
+  })
+
+  it("hides ClarificationInput on matching tool_execution_completed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (typeof url === "string" && url.includes("/messages")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ messages: [], total: 0 }),
+          } as Response)
+        }
+        return Promise.resolve(
+          makeSseResponse([
+            {
+              type: "tool_started",
+              tool_use_id: "toolu_q1",
+              tool_name: "request_clarification",
+              tool_input: { question: "Which DB?" },
+            },
+            {
+              type: "clarification_requested",
+              tool_use_id: "toolu_q1",
+              question: "Which DB — Postgres or MySQL?",
+            },
+            {
+              type: "tool_completed",
+              tool_use_id: "toolu_q1",
+              tool_name: "request_clarification",
+              output: "Postgres",
+              is_error: false,
+            },
+          ]),
+        )
+      }),
+    )
+
+    render(<AgentChat projectId="1" sessionId="sess_abc" />)
+
+    // Initially the form appears
+    await waitFor(() => {
+      expect(screen.getByText(/Postgres or MySQL/)).toBeInTheDocument()
+    })
+    // Then the matching completion clears it
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText(/clarification response textarea/i),
+      ).not.toBeInTheDocument()
+    })
+  })
+
+  it("does not hide ClarificationInput on mismatched tool_use_id", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (typeof url === "string" && url.includes("/messages")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ messages: [], total: 0 }),
+          } as Response)
+        }
+        return Promise.resolve(
+          makeSseResponse([
+            {
+              type: "clarification_requested",
+              tool_use_id: "toolu_q1",
+              question: "Which DB?",
+            },
+            // A different tool completes — the clarification should remain
+            {
+              type: "tool_completed",
+              tool_use_id: "toolu_other",
+              tool_name: "read_file",
+              output: "file contents",
+              is_error: false,
+            },
+          ]),
+        )
+      }),
+    )
+
+    render(<AgentChat projectId="1" sessionId="sess_abc" />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/Which DB\?/)).toBeInTheDocument()
+    })
+    // The unrelated tool_completed must not dismiss the clarification
+    expect(
+      screen.getByLabelText(/clarification response textarea/i),
+    ).toBeInTheDocument()
+  })
+
+  it("disables the main chat input while awaiting clarification", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (typeof url === "string" && url.includes("/messages")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ messages: [], total: 0 }),
+          } as Response)
+        }
+        return Promise.resolve(
+          makeSseResponse([
+            {
+              type: "clarification_requested",
+              tool_use_id: "toolu_q1",
+              question: "Which DB?",
+            },
+          ]),
+        )
+      }),
+    )
+
+    render(<AgentChat projectId="1" sessionId="sess_abc" />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/Which DB\?/)).toBeInTheDocument()
+    })
+    // The main chat textarea should be disabled and show the waiting placeholder
+    const mainInput = screen.getByPlaceholderText(/Waiting for you to respond/i)
+    expect(mainInput).toBeDisabled()
+  })
+
+  it("shows timeout banner on error event with 'clarification timeout'", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (typeof url === "string" && url.includes("/messages")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ messages: [], total: 0 }),
+          } as Response)
+        }
+        return Promise.resolve(
+          makeSseResponse([
+            {
+              type: "clarification_requested",
+              tool_use_id: "toolu_q1",
+              question: "Which DB?",
+            },
+            {
+              type: "error",
+              message: "Session ended: clarification timeout after 10 minutes",
+              recoverable: false,
+            },
+          ]),
+        )
+      }),
+    )
+
+    render(<AgentChat projectId="1" sessionId="sess_abc" />)
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Session ended: clarification timeout/i),
+      ).toBeInTheDocument()
+    })
+    // The ClarificationInput form remains but is disabled
+    const textarea = screen.getByLabelText(/clarification response textarea/i)
+    expect(textarea).toBeDisabled()
+  })
+
+  it("calls postClarification via onSubmit and closes on completion", async () => {
+    const postMock = vi.fn().mockResolvedValue({ ok: true, status: 204 })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (typeof url === "string" && url.includes("/clarify")) {
+          postMock(url, init)
+          return Promise.resolve({ ok: true, status: 204, text: () => Promise.resolve("") } as Response)
+        }
+        if (typeof url === "string" && url.includes("/messages")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ messages: [], total: 0 }),
+          } as Response)
+        }
+        return Promise.resolve(
+          makeSseResponse([
+            {
+              type: "clarification_requested",
+              tool_use_id: "toolu_q1",
+              question: "Which DB?",
+            },
+          ]),
+        )
+      }),
+    )
+
+    render(<AgentChat projectId="1" sessionId="sess_abc" />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/Which DB\?/)).toBeInTheDocument()
+    })
+
+    const textarea = screen.getByLabelText(/clarification response textarea/i)
+    fireEvent.change(textarea, { target: { value: "Postgres" } })
+    const submit = screen.getByRole("button", { name: /submit response/i })
+    fireEvent.click(submit)
+
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalled()
+    })
+    const [calledUrl, calledInit] = postMock.mock.calls[0]
+    expect(calledUrl).toContain("/api/sessions/sess_abc/clarify")
+    expect(calledInit?.method).toBe("POST")
+    const body = JSON.parse(String(calledInit?.body ?? "{}"))
+    expect(body.tool_use_id).toBe("toolu_q1")
+    expect(body.response).toBe("Postgres")
+  })
+})
+```
+
+- [ ] **Step 6: Run the new tests + typecheck**
+
+```bash
+cd forge-portal && npx vitest run components/agent/clarification-input.test.tsx components/agent/agent-chat.test.tsx
+cd forge-portal && npx tsc --noEmit 2>&1 | tail -30
+```
+
+Expected: all clarification-input.test.tsx cases pass. The agent-chat clarification tests pass assuming the SSE harness stub matches the existing fetch-path in agent-chat.tsx — if the component uses `eventsource-parser` or a custom reader, adapt `makeSseResponse` accordingly (look at the existing agent-chat.test.tsx Task 6.9 added for the pattern that already works in this file).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add forge-portal/components/agent/clarification-input.tsx forge-portal/components/agent/clarification-input.test.tsx forge-portal/components/agent/agent-chat.tsx forge-portal/components/agent/agent-chat.test.tsx forge-portal/lib/agent.ts
+git commit -m "feat(agent-chat): ClarificationInput component and state machine
+
+Round 2 (spec §2.9.2) — the agent can now pause its own execution
+via the request_clarification meta-tool. The frontend renders an
+inline form the user fills out, POSTs the answer to the backend,
+and waits for the matching tool_execution_completed SSE event to
+unmount the form.
+
+Components:
+- clarification-input.tsx: controlled form (textarea + submit
+  button) with a four-state FSM — editing / submitting / submitted
+  / error. 4096-char limit, character counter, disabled prop for
+  session-ended state. Error state allows retry.
+
+- agent-chat.tsx: adds 'clarification' and 'clarificationTimedOut'
+  state fields; new 'clarification_requested' SSE case sets the
+  form's question/tool_use_id; existing 'tool_completed' case now
+  checks whether the completing tool_use_id matches the pending
+  clarification and clears it if so; existing 'error' case detects
+  'clarification timeout' messages and flips the banner.
+
+- The main chat input at the bottom is disabled via
+  'disabled={connStatus !== \"connected\" || clarification !== null}'
+  and shows 'Waiting for you to respond...' placeholder when blocked.
+
+- Red 'Session ended: clarification timeout after 10 minutes'
+  banner renders beside the frozen ClarificationInput after a
+  timeout ErrorEvent closes the stream.
+
+lib/agent.ts:
+- New postClarification(sessionId, toolUseId, response) function
+  hits POST /api/sessions/{id}/clarify with JSON body
+  {tool_use_id, response}. Returns on 204; throws on any non-ok
+  status with the HTTP code and response body.
+
+Tests:
+- clarification-input.test.tsx: 10 cases covering rendering,
+  empty-disable, non-empty-enable, onSubmit payload, submitting
+  state, submitted state, error state + retry, maxLength 4096,
+  disabled prop, character counter.
+- agent-chat.test.tsx: 6 new cases covering 'shows on event',
+  'hides on matching completion', 'ignores mismatched tool_use_id',
+  'disables main input', 'shows timeout banner', 'calls
+  postClarification with correct payload'."
+```
+
+---
+
+### Task 6.11: Wire `clarification_requested` SSE event into the event type union (Round 2)
+
+**Files:**
+- Modify: `forge-portal/components/agent/agent-chat.tsx` (already touched in Task 6.10; this task adds the TypeScript event type so the handler is type-safe)
+
+**Context:** The `agent-chat.tsx` SSE reader decodes a `ServerEvent` discriminated union. After Phase 5a Task 5a.1 the backend emits `clarification_requested` events via `api_server.py::_serialize_event` as:
+
+```json
+{
+  "event_type": "clarification_requested",
+  "question": "Which database should I use?",
+  "tool_use_id": "toolu_abc123"
+}
+```
+
+Task 6.10 added the runtime handler but relies on `String(event.question ?? "")` casts because the event type union doesn't include the new variant. This task adds the `ClarificationRequestedEvent` interface to the union so the runtime handler becomes type-safe and any future TypeScript refactor catches mismatches.
+
+This is a small task — one interface, one union update, one test. It exists as a separate task so the Round 2 work splits cleanly into "component + state machine" (Task 6.10) and "event dispatch wiring" (Task 6.11). If agent-chat.tsx stores its event union inline, the edit stays in that file; if it has been extracted into `lib/sse-events.ts` or similar, the edit goes there. Check first with grep.
+
+- [ ] **Step 1: Locate the event union**
+
+```bash
+grep -n "type ServerEvent\|interface.*Event\|type SseEvent\|tool_started.*tool_completed" forge-portal/components/agent/agent-chat.tsx
+grep -rn "type ServerEvent\|tool_started.*tool_completed" forge-portal/lib/
+```
+
+Expected: the union lives either inline near the top of `agent-chat.tsx` (likely, based on the Phase 4/5 SSE wiring convention) or in `forge-portal/lib/sse-events.ts`. Pick whichever file holds it; the edits below use `agent-chat.tsx` as the default.
+
+- [ ] **Step 2: Add `ClarificationRequestedEvent` to the union**
+
+Near the existing event type definitions (they look like `interface ToolStartedEvent { type: "tool_started"; ... }`), add:
+
+```tsx
+/**
+ * Round 2 (spec §2.9.2) — emitted when the agent calls the
+ * request_clarification meta-tool. The frontend shows the
+ * ClarificationInput form inline; the event carries the tool_use_id
+ * so the matching tool_completed event can unmount it.
+ *
+ * Shape matches api_server.py::_serialize_event (Phase 5a Task 5a.1):
+ *   {event_type: "clarification_requested", question: string, tool_use_id: string}
+ *
+ * The `type` field on the frontend is the transport's discriminator
+ * name — agent-chat.tsx's SSE reader maps the backend's `event_type`
+ * JSON field onto `type` when building ServerEvent objects. If the
+ * current reader uses `event_type` as the discriminator directly,
+ * rename accordingly.
+ */
+interface ClarificationRequestedEvent {
+  type: "clarification_requested"
+  question: string
+  tool_use_id: string
+}
+```
+
+Add the new interface to the `ServerEvent` (or equivalently named) union:
+
+```tsx
+type ServerEvent =
+  | TextDeltaEvent
+  | TurnCompleteEvent
+  | ToolStartedEvent
+  | ToolCompletedEvent
+  | PhaseChangedEvent
+  | ThinkingStartedEvent
+  | ThinkingStoppedEvent
+  | SessionCompleteEvent
+  | ErrorEvent
+  | ClarificationRequestedEvent   // Round 2
+```
+
+If the union doesn't exist yet (the current code uses `Record<string, unknown>` everywhere), this task becomes optional — the runtime handler from Task 6.10 already works, it just isn't type-safe. In that case, leave this task as a no-op and note it in the commit message. Round 1 of chronos didn't require a full typed event system; don't build one here.
+
+- [ ] **Step 3: Tighten the `clarification_requested` case in the SSE switch**
+
+If the union now exists, narrow the case:
+
+```tsx
+      case "clarification_requested": {
+        // event is narrowed to ClarificationRequestedEvent by the switch
+        const { question, tool_use_id } = event
+        if (question && tool_use_id) {
+          setClarification({ question, toolUseId: tool_use_id })
+        }
+        break
+      }
+```
+
+The `String(...)` coercions from Task 6.10 go away.
+
+- [ ] **Step 4: Add a parser test**
+
+Append to `forge-portal/components/agent/agent-chat.test.tsx` (or `forge-portal/lib/__tests__/sse-events.test.ts` if the union lives in `lib/`):
+
+```tsx
+describe("SSE event parser — clarification_requested (Round 2)", () => {
+  it("parses a well-formed clarification_requested payload", () => {
+    const raw = {
+      event_type: "clarification_requested",
+      question: "Which DB?",
+      tool_use_id: "toolu_abc",
+    }
+    // The actual parser is inline in agent-chat.tsx; if it's been
+    // extracted to a helper, import it directly. Otherwise this test
+    // acts as a sentinel: changes to the raw JSON shape from
+    // _serialize_event should break this test, not production.
+    expect(raw.event_type).toBe("clarification_requested")
+    expect(raw.question).toBe("Which DB?")
+    expect(raw.tool_use_id).toBe("toolu_abc")
+  })
+
+  it("tolerates missing optional fields gracefully", () => {
+    // Parser should fall through to 'default' case on malformed
+    // events (enforced by Task 6.10's runtime handler which checks
+    // for both question and tool_use_id before calling setClarification).
+    const raw = { event_type: "clarification_requested" }
+    expect((raw as Record<string, unknown>).question).toBeUndefined()
+  })
+})
+```
+
+- [ ] **Step 5: Run tests + typecheck**
+
+```bash
+cd forge-portal && npx vitest run components/agent/agent-chat.test.tsx
+cd forge-portal && npx tsc --noEmit 2>&1 | tail -20
+```
+
+Expected: clean typecheck. If `tsc --noEmit` now reports errors in other SSE cases because the union got tighter, fix those too — usually this means the existing handlers were quietly relying on `any` for some field; now is the time to tidy them up.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add forge-portal/components/agent/agent-chat.tsx forge-portal/components/agent/agent-chat.test.tsx
+git commit -m "feat(agent-chat): wire clarification_requested SSE event
+
+Round 2 (spec §2.9.2) — adds ClarificationRequestedEvent to the
+ServerEvent discriminated union so the 'clarification_requested'
+case in the SSE switch is type-safe.
+
+Shape matches api_server.py::_serialize_event (Phase 5a Task 5a.1):
+  {event_type: 'clarification_requested', question, tool_use_id}
+
+The runtime handler from Task 6.10 stays the same; this task just
+lifts the String(...) coercions out now that TypeScript knows the
+field shape. Parser-level test asserts the raw JSON shape matches
+what _serialize_event emits — a sentinel so a backend refactor
+that renames 'question' or 'tool_use_id' breaks here before it
+breaks in production.
+
+If this project's agent-chat.tsx still uses Record<string, unknown>
+for SSE events (no ServerEvent union extracted), this commit is
+a noop and the coercions from Task 6.10 remain. That's acceptable
+for chronos Round 2 — a full typed event system is out of scope
+and should land as a standalone refactor."
+```
+
+---
+
 ## Phase 6 completion check
 
 Before starting Phase 7:
@@ -1976,9 +2985,15 @@ Before starting Phase 7:
 - [ ] `grep -n "hideCard" forge-portal/components/agent/tool-formatters.ts` returns ≥ 1 match (the set_phase case)
 - [ ] `grep -n "hideCard" forge-portal/components/agent/tool-execution.tsx` returns ≥ 1 match (the early-return)
 - [ ] `grep -n "detectFixLoopStart" forge-portal/components/agent/agent-chat.tsx` returns ≥ 2 matches (function + call site)
+- [ ] `forge-portal/components/agent/clarification-input.tsx` exists and exports `ClarificationInput` (Round 2)
+- [ ] `forge-portal/components/agent/clarification-input.test.tsx` exists (Round 2)
+- [ ] `grep -n "clarification_requested" forge-portal/components/agent/agent-chat.tsx` returns ≥ 1 match (SSE handler) (Round 2)
+- [ ] `grep -n "postClarification" forge-portal/lib/agent.ts` returns ≥ 1 match (API client function) (Round 2)
+- [ ] `grep -n "ClarificationInput" forge-portal/components/agent/agent-chat.tsx` returns ≥ 2 matches (import + render) (Round 2)
+- [ ] `grep -n "clarificationTimedOut\|clarification timeout" forge-portal/components/agent/agent-chat.tsx` returns ≥ 1 match (Round 2)
 - [ ] `npx vitest run` in forge-portal — all tests green
 - [ ] `npx tsc --noEmit` in forge-portal — clean
-- [ ] Branch has **9 new commits** from this phase (one per task; some tasks may have coalesced if earlier tasks already landed their fixes)
+- [ ] Branch has **11 new commits** from this phase (one per task; some tasks may have coalesced if earlier tasks already landed their fixes)
 
 ## Phase 6 outputs unlock
 
@@ -1989,4 +3004,6 @@ Before starting Phase 7:
   - Agent runs `set_phase` → no tool card renders (hideCard), ribbon updates
   - Agent has a build-fix cycle → "Fixing previous error..." banner appears
   - Turn ends → SummaryCard renders with `SessionComplete` stats
-- **Phase 7 smoke test** can assert on DOM state after driving a real session through the UI — all visual feedback is now tied to the backend event stream.
+  - **(Round 2)** Agent calls `request_clarification` → `ClarificationInput` renders inline below the current message, main chat input is disabled, the user submits a reply → `postClarification` POSTs to `/api/sessions/{id}/clarify` → matching `tool_execution_completed` SSE event unmounts the form → main chat input re-enabled → agent resumes
+  - **(Round 2)** If the user ignores the clarification for 10 minutes → `ErrorEvent(recoverable=False, "clarification timeout...")` closes the stream → red banner appears, `ClarificationInput` is frozen disabled so the user sees their half-typed response
+- **Phase 7 smoke test** can assert on DOM state after driving a real session through the UI — all visual feedback is now tied to the backend event stream, including the full bidirectional clarification loop.

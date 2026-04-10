@@ -271,43 +271,155 @@ Full CEO review reasoning is preserved at
 **Problem:** Forge's target users are PMs/ops who cannot read code. For
 them, "agent output compiles" ≠ "agent output is correct". Round 1
 chronos rebuilt the builder but left no structural check for intent
-correctness, meaning chronos alone ships a product that is 
+correctness, meaning chronos alone ships a product that is
 undifferentiated from Cursor/Claude Code and silently defers Forge's
 core value proposition.
 
 **Decision:** chronos does NOT solve the verification problem (that's
 another project). But chronos **must leave verification hooks in the
 agent loop** so the next project can plug in without modifying
-`query.py`. Specifically:
+`query.py`.
 
-1. **`pre_turn_hook_registry`** — a list of callables invoked before
-   each agent turn sees its message. Can mutate the system prompt or
-   prepend context (spec injection entry point).
-2. **`pre_tool_call_hook_registry`** — callables invoked before each
-   tool execution. Can block the tool call (constraint engine entry
-   point) or augment arguments.
-3. **`post_turn_hook_registry`** — callables invoked after each
-   `end_turn`. Can post-process the turn output (entropy scan entry
-   point, verification harness entry point).
-4. **`system_prompt_slots`** — named placeholder regions in the system
-   prompt template that hooks can fill with dynamic content (e.g., a
-   `{{project_specs}}` slot that the spec-injection hook fills with
-   the current project's acceptance criteria).
+##### 2.9.1.a Registry model and class names
 
-These hooks are a subset of the existing `hooks/` directory pattern
-already in `ai-worker/src/openharness/hooks/` (PRE_TOOL_USE /
-POST_TOOL_USE events exist there from earlier streams), but chronos
-Round 1 did not wire them into `_create_engine`. Round 2 must:
-- keep the hook executor construction in `_create_engine`
-- additionally register **empty default hook registries** that
-  downstream projects can populate via config
-- add `system_prompt_slots` support to `build_system_prompt`
-- document the hook contract in §5 (agent loop layer)
+The existing `ai-worker/src/openharness/hooks/` package holds a
+**subprocess** hook executor (`HookRegistry`, `HookExecutor`) that runs
+external shell commands on `PRE_TOOL_USE` / `POST_TOOL_USE` / etc.
+events. §2.9.1 is introducing a **parallel, in-process Python-callable
+hook system**. The two do not replace each other and must not share a
+class name.
+
+- Existing subprocess hooks: `openharness.hooks.HookRegistry` +
+  `HookExecutor`. Unchanged in Round 2. Still wired into
+  `_execute_tool_call` around PRE_TOOL_USE / POST_TOOL_USE as today.
+- New in-process agent hooks (Round 2): live in a new module
+  `ai-worker/src/openharness/engine/agent_hooks.py` with class name
+  **`AgentHookRegistry`** (distinct from `HookRegistry`).
+  `AgentHookRegistry` holds four fields:
+  - `pre_turn: list[PreTurnHook]`
+  - `pre_tool_call: list[PreToolCallHook]`
+  - `post_turn: list[PostTurnHook]`
+  - `system_prompt_slots: dict[str, PromptSlotFiller]`
+
+##### 2.9.1.b Callable signatures (pinned)
+
+All four hook signatures are `async` callables. No sync hooks —
+agent loop is `async` end-to-end.
+
+```python
+# agent_hooks.py
+from typing import Awaitable, Callable, Protocol
+
+# Input: the message list the model is about to see, plus context.
+# Output: the message list the model actually sees (may be mutated copy).
+# Hook may also mutate the system prompt via ctx.system_prompt_buffer.
+class PreTurnHook(Protocol):
+    async def __call__(
+        self,
+        ctx: "AgentHookContext",
+        messages: list[Message],
+    ) -> list[Message]: ...
+
+# Input: tool name, parsed arguments, context.
+# Output: either the (possibly-mutated) arguments to execute, or a
+# PreToolCallBlock(reason) to short-circuit execution with a
+# ToolResult(is_error=True, output=reason). Raising is a bug.
+class PreToolCallHook(Protocol):
+    async def __call__(
+        self,
+        ctx: "AgentHookContext",
+        tool_name: str,
+        arguments: BaseModel,
+    ) -> "BaseModel | PreToolCallBlock": ...
+
+# Input: the turn's final assistant message (after stop_reason=end_turn).
+# Output: None. Hook may record metrics, trigger follow-up events, etc.
+class PostTurnHook(Protocol):
+    async def __call__(
+        self,
+        ctx: "AgentHookContext",
+        final_message: Message,
+    ) -> None: ...
+
+# Input: current project/session metadata.
+# Output: a string to substitute for the slot placeholder.
+class PromptSlotFiller(Protocol):
+    async def __call__(self, ctx: "AgentHookContext") -> str: ...
+
+@dataclass(frozen=True)
+class PreToolCallBlock:
+    reason: str
+```
+
+`AgentHookContext` carries `project_id`, `session_id`, `workspace_dir`,
+and a mutable `system_prompt_buffer: list[str]` that `pre_turn` hooks
+can append to. It is constructed once per session at `_create_engine`
+time and passed into every hook call.
+
+##### 2.9.1.c Invocation order and failure mode (pinned)
+
+- **Order within a registry:** list order (registration order). No
+  priority field, no topological sort. If downstream projects need
+  ordering, they register in the right order. Silicon Valley standard
+  §2.8 — simplest mechanism, one code path.
+- **Failure mode:** any hook raising an exception halts the turn via
+  `ErrorEvent(message="agent hook {name} failed: {exc}", recoverable=False)`
+  and logs with `logger.exception`. This is the same "fail fast" stance
+  as §4.12's `_create_engine` "no AsyncMock fallback". The empty
+  default registries Round 2 ships never raise, so this failure mode
+  only bites downstream projects with buggy hooks — loudly, as §2.8
+  requires.
+- **`pre_tool_call` block semantics:** if a hook returns
+  `PreToolCallBlock(reason)`, `_execute_tool_call` emits
+  `ToolExecutionStarted` normally, then emits
+  `ToolExecutionCompleted(..., is_error=True, output=reason)`, and the
+  agent loop continues. The tool is **not** executed. No silent skip.
+- **`system_prompt_slots` substitution:** `build_system_prompt`
+  renders a template with `{{slot_name}}` placeholders. For each slot
+  in `registry.system_prompt_slots`, the registered filler is invoked
+  and its return value replaces `{{slot_name}}` via plain
+  `str.replace`. Slot names not registered are left untouched (with a
+  `logger.warning`). No Jinja, no f-strings at render time.
+- **`pre_tool_call` applies uniformly** including to
+  `RequestClarificationTool` and `RequestReviewTool`. A constraint hook
+  that blocks review is Harvey's problem to debug, not a special case
+  in chronos.
+
+##### 2.9.1.d Wiring in `_create_engine`
+
+Round 2 modifies the `_create_engine` code block in §4.12 so it
+constructs an empty `AgentHookRegistry` alongside the existing
+`HookRegistry`. Both are passed into `QueryEngine`. See §4.12 for the
+updated code. Downstream projects populate `AgentHookRegistry` via a
+module-level factory (e.g., `build_agent_hooks(project_id)`); how that
+factory is wired is out of scope for chronos and in scope for the
+follow-up project.
+
+##### 2.9.1.e What Round 2 ships
+
+- `agent_hooks.py` module with `AgentHookRegistry`, `AgentHookContext`,
+  `PreToolCallBlock`, and the four Protocol signatures above
+- `build_system_prompt` accepts an optional
+  `slots: dict[str, PromptSlotFiller]` argument and substitutes
+  `{{slot_name}}` placeholders
+- `_create_engine` constructs an **empty** `AgentHookRegistry` and
+  passes it into `QueryEngine`
+- `QueryEngine.submit_message` invokes `registry.pre_turn` before
+  sending the message list, `registry.pre_tool_call` inside
+  `_execute_tool_call` between permission check and tool execution,
+  and `registry.post_turn` after `stop_reason=end_turn`
+- Contract tests verify all three extension points: a trivial
+  `pre_turn` hook that appends `"foo"` to the system prompt, a
+  `pre_tool_call` hook that blocks a named tool, and a `post_turn`
+  hook that increments a counter. Each test asserts the observable
+  behavior end-to-end.
 
 **Scope cut:** chronos Round 2 does NOT ship any real hook
 implementations. The extension points are present and tested
 (trivial hooks in the contract test) but no spec/constraint/entropy
-hooks are provided. Those are follow-up projects.
+hooks are provided. Those are follow-up projects. The subprocess
+`HookRegistry` is unchanged — that system continues to handle command
+hooks as today.
 
 #### 2.9.2 `request_clarification` meta-tool + bidirectional SSE (Critical 2)
 
@@ -322,14 +434,17 @@ in-progress state.
 **Decision:** add a `request_clarification(question: str) -> str`
 meta-tool. When the agent calls it:
 
-1. The tool yields a `ClarificationRequested(question)` stream event
-2. The agent loop pauses the turn (awaits a future)
+1. The tool yields a `ClarificationRequested(question, tool_use_id)`
+   stream event
+2. The tool awaits a `ClarificationResponse` on the session's Redis
+   return channel (pause point — see §2.9.2.c)
 3. The frontend renders the question as a special system message with
    an input field
 4. The user's response travels back through a new **bidirectional SSE
-   return channel** (Redis pub/sub, separate key per session)
-5. The waiting agent loop resolves the future with the user's response
-6. The tool yields a `ToolResult(output=<user_response>)`
+   return channel** (Redis pub/sub, one channel per session)
+5. The waiting tool's future is resolved with the user's response
+6. The tool yields a `ToolResult(output=<user_response>)` (single
+   terminal `ToolResult`, preserving §4.1 contract)
 7. The agent continues its turn with the answer
 
 This requires a new **Phase 5a — Bidirectional RPC** in the Round 2
@@ -341,23 +456,420 @@ agent can't actually wait for a response without blocking the whole
 worker thread, and without bidirectional communication there's no
 transport for the response anyway).
 
+##### 2.9.2.a Transport choice — Redis pub/sub (not Streams)
+
+Harvey chose Redis pub/sub over Redis Streams on 2026-04-09 despite
+pub/sub being lossy if the subscriber is late. Rationale:
+
+- The subscriber (ai-worker's per-session return-channel listener) is
+  started **before** the tool yields `ClarificationRequested` and
+  **before** the client is told to ask the question. There is no
+  "subscriber late" window — if the subscriber isn't up, the tool
+  fails fast via §2.9.2.f and the session halts.
+- Pub/sub has a simpler lifecycle (no trim, no consumer group, no
+  acks) which matches the one-shot "question → single response → done"
+  pattern. Streams would require consumer groups to support
+  multi-pod ai-worker deployments, and chronos is single-pod.
+- Message loss on disconnect is handled by the future timeout
+  (§2.9.2.f) which halts the session cleanly — same semantics as any
+  network-partition failure mode.
+
+If chronos ever scales to multi-pod ai-worker, the subscriber lives
+inside the pod that holds the session's `QueryEngine` instance. A
+later project (sticky session routing at the forge-core layer) can
+address multi-pod; it's out of chronos scope.
+
+##### 2.9.2.b Channel schema (pinned)
+
+**Channel name:** `agent:return:{session_id}`. One channel per session.
+Created when the session starts (see §2.9.2.c subscriber lifecycle),
+destroyed when the session ends.
+
+**Message shape** (JSON, UTF-8, published as a single Redis pub/sub
+message):
+
+```json
+{
+  "type": "clarification_response",
+  "session_id": "sess_01HX...",
+  "tool_use_id": "toolu_01HY...",
+  "response": "user's text answer"
+}
+```
+
+Fields:
+- `type` (string, required) — only `"clarification_response"` in
+  Round 2. Extensible for future return-channel message types (e.g.
+  P3 permission approvals).
+- `session_id` (string, required) — must match the subscriber's
+  session. Used for defense-in-depth; forge-core's
+  `POST /api/sessions/{id}/clarify` already validates the path
+  matches, but the subscriber verifies too.
+- `tool_use_id` (string, required) — the Anthropic tool-use ID that
+  this response corresponds to. Threaded through from
+  `ClarificationRequested(tool_use_id)`. Without this, two
+  clarifications in the same turn (e.g. "what language? what test
+  framework?") would race.
+- `response` (string, required) — the user's answer. May be empty
+  string (user hit enter with nothing). Max 4 KiB enforced at the
+  forge-core endpoint.
+
+**Rejected on receipt** (subscriber discards the message):
+- Wrong `session_id` — logs warning, discards.
+- Wrong `type` — logs warning, discards.
+- `tool_use_id` not in the pending futures map — logs warning,
+  discards (stale response after timeout, or replay).
+- Malformed JSON — logs warning, discards.
+
+None of these cause session halt — a malicious or buggy publisher
+should not be able to crash the agent. Only a legitimate timeout
+(§2.9.2.f) halts.
+
+##### 2.9.2.c Subscriber lifecycle (pinned)
+
+**Where the subscriber lives:** ai-worker, inside a new module
+`ai-worker/src/openharness/engine/return_channel.py`. One subscriber
+per session, owned by the session's `QueryEngine` instance, not a
+global singleton.
+
+**Startup:** `QueryEngine.__init__` (or the existing session-cache
+path in `api_server.py::_get_or_create_engine`) awaits
+`return_channel = await ReturnChannel.open(session_id, redis_client)`,
+which:
+1. `await redis.pubsub()` — creates a pub/sub client.
+2. `await pubsub.subscribe(f"agent:return:{session_id}")`.
+3. Spawns a `asyncio.Task` that calls `pubsub.listen()` in a loop and
+   dispatches messages to the `ClarificationCoordinator` (see
+   §2.9.2.d).
+4. Returns the `ReturnChannel` instance.
+
+**Shutdown:** `QueryEngine.close()` (new method, called on LRU
+eviction or DELETE `/api/sessions/{id}`):
+1. Cancels the listener task.
+2. `await pubsub.unsubscribe(f"agent:return:{session_id}")`.
+3. `await pubsub.close()`.
+4. Cancels any still-pending clarification futures with
+   `CancelledError` (the tools waiting on them yield
+   `ToolResult(is_error=True, output="session cancelled")`, and the
+   agent loop halts via `ErrorEvent`).
+
+**Connection pooling:** one `redis.asyncio.Redis` client at the
+process level (already exists in `api_server.py::_get_redis`), shared
+across sessions. Each session creates its own `pubsub()` handle (which
+multiplexes on the shared connection). No per-session TCP connection.
+
+**Failure during listener loop:** if `pubsub.listen()` raises (Redis
+dropped, network partition), the listener task logs with
+`logger.exception` and cancels all pending futures with a
+`ReturnChannelError`. Tools yield `ToolResult(is_error=True, "return
+channel lost")`. The session halts via §2.9.2.f.
+
+##### 2.9.2.d Pause/resume state machine (pinned)
+
+The pause point lives in `RequestClarificationTool`, not in
+`_execute_tool_call`. §4.1's tool contract is preserved — the tool is
+an `AsyncIterator[StreamEvent | ToolResult]` that may do arbitrary
+async work (including awaiting an external future) between yields,
+as long as it yields exactly one terminal `ToolResult` on the happy
+path, or raises a `SessionHaltError` subclass to halt the session
+(see §4.1 updated contract).
+
+First, the `SessionHaltError` base class (lives in
+`ai-worker/src/openharness/engine/agent_hooks.py` alongside
+`ClarificationCoordinator`):
+
+```python
+class SessionHaltError(Exception):
+    """Base class for errors that halt the session rather than being
+    translated to ToolResult(is_error=True). See §4.1 BaseTool contract
+    and §2.9.2.f timeout policy."""
+
+class ClarificationTimeout(SessionHaltError):
+    def __init__(self, tool_use_id: str, timeout_seconds: float):
+        super().__init__(
+            f"clarification timeout after {timeout_seconds}s "
+            f"(tool_use_id={tool_use_id})"
+        )
+        self.tool_use_id = tool_use_id
+        self.timeout_seconds = timeout_seconds
+
+class ReturnChannelError(SessionHaltError):
+    """Raised when the Redis return channel is lost mid-wait."""
+```
+
+A new object `ClarificationCoordinator` lives on the `QueryEngine`
+instance (one per session). It holds:
+
+```python
+class ClarificationCoordinator:
+    def __init__(self):
+        self._pending: dict[str, asyncio.Future[str]] = {}
+        # key: tool_use_id -> future that resolves to the user's response
+
+    async def wait_for(self, tool_use_id: str, timeout: float) -> str:
+        fut = asyncio.get_running_loop().create_future()
+        self._pending[tool_use_id] = fut
+        try:
+            return await asyncio.wait_for(fut, timeout=timeout)
+        finally:
+            self._pending.pop(tool_use_id, None)
+
+    def deliver(self, tool_use_id: str, response: str) -> None:
+        fut = self._pending.get(tool_use_id)
+        if fut is None:
+            logger.warning("clarification response for unknown tool_use_id: %s", tool_use_id)
+            return
+        if fut.done():
+            logger.warning("clarification response arrived after completion: %s", tool_use_id)
+            return
+        fut.set_result(response)
+
+    def cancel_all(self) -> None:
+        for fut in list(self._pending.values()):
+            if not fut.done():
+                fut.cancel()
+        self._pending.clear()
+```
+
+`ToolExecutionContext` gains a `clarification_coordinator:
+ClarificationCoordinator | None` field (optional for tools that don't
+use it) and a `tool_use_id: str | None` field (also optional —
+populated by `_execute_tool_call` before invoking a tool that needs
+it). `RequestClarificationTool.execute`:
+
+```python
+async def execute(self, arguments, context):
+    tool_use_id = context.tool_use_id  # populated by _execute_tool_call
+    yield ClarificationRequested(question=arguments.question, tool_use_id=tool_use_id)
+    try:
+        response = await context.clarification_coordinator.wait_for(
+            tool_use_id, timeout=CLARIFICATION_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        # Fail-fast: halt the session per §2.9.2.f
+        raise ClarificationTimeout(tool_use_id, CLARIFICATION_TIMEOUT_SECONDS)
+    except asyncio.CancelledError:
+        # Session is being torn down; propagate
+        raise
+    yield ToolResult(output=response, is_error=False)
+```
+
+**Why the future lives on `ClarificationCoordinator` and not
+`ToolExecutionContext`:** the subscriber task (owned by
+`ReturnChannel`) needs to deliver the response without holding a
+reference to the tool's execution context (which is per-call and
+disposable). The coordinator is per-session and stable.
+
+**Why this doesn't block the worker thread:** `uvicorn` runs on
+`asyncio`. The tool is inside an async generator that yields control
+back to the event loop via `await`. Other sessions' requests are
+serviced by the event loop while this session's future is pending. No
+thread is blocked. This is the one-sentence "how" Harvey asked for.
+
+**Contract with §4.1:** `test_base_tool_contract.py`'s
+`test_tool_yields_exactly_one_tool_result` still applies to
+`RequestClarificationTool` — the tool yields exactly one
+`ClarificationRequested` (StreamEvent) followed by exactly one
+`ToolResult`. The test does not need to know that an external
+future resolved between the two yields; from the contract test's
+perspective it's just a normal async tool that happens to be slow.
+§7.3 adds a **contract-test fixture** that auto-delivers a canned
+response when it sees `ClarificationRequested` — the test verifies
+the tool yields the delivered response as its `ToolResult.output`.
+
+##### 2.9.2.e Event vocabulary: `ClarificationRequested` vs
+`ToolExecutionStarted/Completed`
+
+Both pairs of events fire. The tool-execution lifecycle events remain
+authoritative for the step ribbon and tool-card UI; the clarification
+event is an additional mid-execution stream event that the frontend
+renders as an inline input component. Ordering inside a single tool
+call:
+
+```
+ToolExecutionStarted(tool_use_id, tool_name="request_clarification", tool_input={"question": "..."})
+ClarificationRequested(question, tool_use_id)
+  [pause — future awaited]
+  [user types answer, POST /api/sessions/{id}/clarify publishes to channel]
+  [subscriber receives, coordinator delivers, future resolves]
+ToolExecutionCompleted(tool_use_id, tool_name="request_clarification", output=<response>, is_error=False)
+```
+
+The frontend uses `ClarificationRequested` to render the input box
+*under* the tool card. On submit, it POSTs to
+`/api/sessions/{id}/clarify`, then waits for
+`ToolExecutionCompleted` with matching `tool_use_id` to know the
+round-trip finished. No new event beyond `ClarificationRequested` is
+required — the Completed event already carries `tool_use_id`.
+
+`ClarificationResponse` is a **channel message**, not a stream event.
+It exists only on Redis, never on the SSE outbound stream. The
+frontend never sees it directly; the user's typed response travels
+via HTTP POST to forge-core, which publishes the channel message.
+
+##### 2.9.2.f Timeout behavior — session halts (no fallback)
+
+**Decision:** On clarification timeout, the entire session halts via
+`ErrorEvent`. The tool does NOT return `is_error=True` and let the
+agent continue.
+
+Rationale (all three are load-bearing — this section is the policy
+call, not a preference):
+
+1. **§2.8 "no fallbacks" / "one code path".** A silent timeout
+   returning `ToolResult(is_error=True, output="no user response
+   within N seconds")` is a second code path in the agent loop —
+   "clarification timed out" vs "user responded". Both need distinct
+   frontend handling, distinct tests, distinct agent retry logic.
+   §2.8 explicitly bans this.
+2. **§2.7 precedent.** Clone failure → `ErrorEvent`, session halts.
+   Bash timeout → `ErrorEvent`, session halts. Clarification timeout
+   is the same failure class: the user promised to be interactive
+   and wasn't. Halt is the established response.
+3. **Product correctness.** If the agent continues on timeout, it's
+   guessing at defaults against a request the user explicitly said
+   was ambiguous. PMs/ops cannot review the result. That's the
+   exact anti-pattern §2.9.1's verification hooks are trying to
+   prevent. Halting forces the user to start a new session with
+   context, which is the correct product behavior.
+
+**Implementation:**
+
+- `ClarificationTimeout(SessionHaltError)` is a new exception type in
+  `ai-worker/src/openharness/engine/agent_hooks.py`, a subclass of
+  `SessionHaltError` (see §2.9.2.d and §4.1 BaseTool contract).
+- `RequestClarificationTool.execute` catches `asyncio.TimeoutError`
+  and raises `ClarificationTimeout(tool_use_id, timeout_seconds)`.
+- `_execute_tool_call` (§4.1, Round 2 code block) catches
+  `SessionHaltError` and yields `ErrorEvent(recoverable=False)`
+  followed by a terminal `ToolResultBlock(tool_use_id=...,
+  content="session halted: clarification timeout", is_error=True)`.
+- `run_agent_loop`'s outer tool-execution block picks up the terminal
+  `ToolResultBlock` and emits `ToolExecutionCompleted(tool_use_id,
+  tool_name, output=..., is_error=True)` before the `ErrorEvent`
+  closes the SSE stream. This means the frontend tool card
+  transitions out of the "running" state before the session banner
+  appears — unwind is clean.
+- Default timeout: **10 minutes** (`CLARIFICATION_TIMEOUT_SECONDS =
+  600`). Configurable via env `FORGE_CLARIFICATION_TIMEOUT_SECONDS`.
+  5 minutes in the original proposal was too short for "user walked
+  away from keyboard"; 10 minutes is the middle ground. This default
+  is the only configuration surface for Round 2.
+- Frontend renders the `ErrorEvent` as a terminal error banner. The
+  clarification input becomes disabled with a "session expired" hint.
+
+**What the frontend does on timeout:** the `ErrorEvent` closes the
+SSE stream. The UI shows a red banner "Session ended: clarification
+timeout after 10 minutes. Start a new session to continue." No
+recovery UI in Round 2.
+
+##### 2.9.2.g `POST /api/sessions/{id}/clarify` endpoint contract
+
+Lives in **forge-core** (`forge-core/internal/module/agent/handler.go`).
+forge-core publishes to Redis; ai-worker subscribes. This keeps
+ai-worker's surface to the frontend read-only (forward SSE only).
+
+**Request:**
+```
+POST /api/sessions/{id}/clarify
+Content-Type: application/json
+Authorization: Bearer <tenant-scoped JWT>
+
+{
+  "tool_use_id": "toolu_01HY...",
+  "response": "use TypeScript"
+}
+```
+
+**Validation:**
+- JWT must match a user with access to the session's tenant. Uses the
+  same auth middleware as other `/api/sessions/*` routes.
+- Session must exist and belong to the caller's tenant. Look up via
+  the existing session DAO.
+- `tool_use_id` must be non-empty and ≤ 128 chars (Anthropic format
+  cap).
+- `response` must be a string, ≤ 4 KiB. Empty string is allowed.
+
+**Responses:**
+- `204 No Content` — published successfully.
+- `400 Bad Request` — invalid body shape or size limit exceeded.
+- `401 Unauthorized` — JWT missing or invalid.
+- `403 Forbidden` — tenant mismatch.
+- `404 Not Found` — session ID not in DAO.
+- `409 Conflict` — session is not currently awaiting clarification.
+  (forge-core checks a session state field; see below.)
+- `410 Gone` — session is already completed or halted.
+
+**How forge-core knows if a clarification is pending:** forge-core
+does NOT subscribe to Redis. Instead, it tracks a flag
+`session.awaiting_clarification` in the session DAO. This flag is set
+by ai-worker when it receives a `ClarificationRequested` event in its
+own SSE consumer loop (which already exists for
+`engine.agent_messages` persistence — see §5.8 LRU cache discussion).
+Actually — ai-worker does not own the session DAO. Revision:
+
+**Revised:** forge-core publishes **without checking** whether a
+clarification is pending. The subscriber on the ai-worker side handles
+the mismatch (rejects on `tool_use_id` not found, logs warning, no
+effect). forge-core returns `204` if the Redis `PUBLISH` succeeds.
+This is simpler and matches the §2.8 "one code path" rule — no shared
+state between forge-core and ai-worker about pending clarifications.
+
+The `409 Conflict` case is removed; forge-core cannot distinguish it
+from `204` without polling ai-worker state. The UI uses the forward
+SSE stream as the source of truth (only enables the input after
+seeing `ClarificationRequested`, disables it after seeing
+`ToolExecutionCompleted` with matching `tool_use_id`).
+
+Updated response set: `204`, `400`, `401`, `403`, `404`, `410`. The
+`410` case is when the session DAO row is in a terminal state
+(completed/halted); forge-core still checks this before publishing
+to avoid spamming Redis for dead sessions.
+
+##### 2.9.2.h Concurrency
+
+Multiple sessions may concurrently await clarification. Each has its
+own `ClarificationCoordinator` (per-session), its own
+`ReturnChannel` subscriber, and its own entry in the Redis pub/sub
+namespace. No shared state. Stress test target: 10 concurrent
+sessions, each in a clarification wait, each receiving its response
+within timeout. Verified in Phase 5a integration tests.
+
+A single session may issue multiple clarifications in one turn —
+e.g. `request_clarification("what language?")` then
+`request_clarification("what test framework?")`. Both are separate
+tool calls with distinct `tool_use_id`s. The coordinator's
+`_pending` dict keys on `tool_use_id` so the two don't collide.
+However: the agent executes tool calls sequentially in a turn, so
+at any given instant only one future is pending per session. Parallel
+tool calls within a turn are not in chronos scope (§4.1 shows
+sequential tool execution).
+
 **Scope:**
-- New Phase 5a (~8-10 tasks, ~2000 lines) delivers:
-  - Redis pub/sub return channel (`agent:return:{session_id}`)
-  - `ClarificationRequested` stream event
-  - `ClarificationResponse` message on the return channel
-  - pause/resume state machine in the agent loop (async future that
-    waits on the return channel with a configurable timeout, default
-    5 minutes; timeout returns `ToolResult(is_error=True, output="no
-    user response within N seconds")`)
-  - Per-session return channel subscriber that wires user input from
-    forge-core's `POST /api/sessions/{id}/clarify` endpoint into the
-    Redis channel
-- Phase 4 stream events add `ClarificationRequested(question: str)`
-  and internal routing logic
-- Phase 5 adds `RequestClarificationTool` to the agent's tool registry
+- New Phase 5a (~9 tasks, ~2000 lines) delivers:
+  - `return_channel.py` module with `ReturnChannel` class and
+    `agent:return:{session_id}` channel schema
+  - `agent_hooks.py` `ClarificationCoordinator` class (lives in the
+    same module as the agent hooks so the imports stay clean)
+  - `ClarificationRequested(question, tool_use_id)` stream event
+  - `ClarificationResponse` JSON message shape (dataclass +
+    validation helpers in `return_channel.py`)
+  - Pause/resume state machine via `ClarificationCoordinator` +
+    `asyncio.wait_for` timeout (10 minutes default), halting the
+    session on timeout per §2.9.2.f
+  - Per-session return-channel subscriber lifecycle in
+    `QueryEngine.__init__` / `close()`
+  - forge-core `POST /api/sessions/{id}/clarify` endpoint
+  - Concurrent-session integration test (10 sessions)
+- Phase 4 stream events add `ClarificationRequested(question,
+  tool_use_id)`
+- Phase 5 adds `RequestClarificationTool` to the agent's tool
+  registry via a new `register_interaction_tools` helper
+- Phase 5 adds `tool_use_id` to `ToolExecutionContext`
+- Phase 5 adds `ClarificationCoordinator` instantiation in
+  `_create_engine`
 - Phase 6 frontend adds a clarification input component that renders
-  below a `clarification_requested` event, submits via the new
+  below a `ClarificationRequested` event, submits via the new
   `/api/sessions/{id}/clarify` endpoint, and disables input when the
   agent is not waiting
 - Phase 1a `/api/workspace/prep` client remains as planned (the
@@ -381,31 +893,267 @@ of "plausible-looking but wrong" errors that self-review-via-tests
 misses.
 
 **Decision:** add a `request_review(summary: str) -> str` meta-tool
-that the agent can invoke voluntarily. When called:
+that the agent can invoke voluntarily.
 
-1. The tool constructs a dedicated "reviewer prompt" (critical-only,
-   no tool access, read-only context)
-2. Fires a second LLM call via the same `ModelRouter` adapter
-3. The reviewer sees the current working tree state (via
-   `bash git diff` dump in the prompt) and the user's original request
-4. The reviewer returns one of: `APPROVE` | `REVISE <what>` | `REJECT <why>`
-5. The tool yields `ToolResult(output=<reviewer_response>)`
-6. The agent decides what to do with the feedback (continue, iterate,
-   or end turn)
+##### 2.9.3.a Tool behavior (pinned)
 
-Critical design point: `request_review` is **agent-invoked**, not
-automatic. The agent is instructed in the system prompt to call it
-"at major milestones: before `end_turn`, before committing, before
-shipping". The decision of when to invoke stays with the agent — we
-don't force a review on every turn because that doubles the LLM cost
-and most turns don't benefit from it.
+`RequestReviewTool` subclasses `SimpleTool` (not `BaseTool`) — it does
+not yield mid-execution stream events, it just performs an async LLM
+call and returns the verdict. Implementation outline:
 
-**Scope:** Phase 5 adds `RequestReviewTool` alongside
-`RequestClarificationTool`. Uses the existing `ModelRouter` with a
-different `Purpose` (re-introduces `Purpose.REVIEW` but only for this
-tool's internal use — public API stays single-purpose). Reviewer prompt
-lives in `prompts.py` as `build_reviewer_prompt(task, current_diff,
-original_request)`.
+```python
+class RequestReviewInput(BaseModel):
+    summary: str  # what the agent wants reviewed; agent's own summary
+
+class RequestReviewTool(SimpleTool):
+    name = "request_review"
+    description = "Request an independent reviewer LLM to critique your current work before finalizing."
+    input_model = RequestReviewInput
+
+    def __init__(self, model_router: ModelRouter, workspace_dir: Path):
+        self._router = model_router
+        self._workspace = workspace_dir
+
+    async def _execute_simple(self, arguments, context):
+        diff = await self._collect_git_diff()
+        prompt = build_reviewer_prompt(
+            summary=arguments.summary,
+            current_diff=diff,
+            original_request=context.original_user_request,
+        )
+        try:
+            response_text = await self._router.generate(
+                purpose=Purpose.REVIEW,
+                system_prompt=REVIEWER_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=1024,
+            )
+        except ModelRouterError as exc:
+            return ToolResult(
+                output=f"reviewer unavailable: {exc}",
+                is_error=True,
+            )
+        return ToolResult(output=response_text, is_error=False)
+```
+
+##### 2.9.3.b `Purpose.REVIEW` — internal to the tool only
+
+**Resolving the §4.12 / §8 contradiction:** §4.12 and §8 both say the
+`Purpose.REVIEW` branch in `_create_engine` is deleted. **Those
+deletions stand.** Round 2 does not reintroduce a `Purpose.REVIEW`
+branch to `_create_engine`'s system-prompt selection path. The agent
+loop is still single-purpose at the engine level.
+
+Where `Purpose.REVIEW` lives in Round 2:
+
+- The `Purpose` enum in `ai-worker/src/openharness/model_router.py`
+  still defines the value (it was not deleted from the enum, only
+  from `_create_engine`'s switch).
+- `RequestReviewTool.__init__` receives a `ModelRouter` instance
+  directly (not a `ModelRouterAdapter` bound to `Purpose.GENERATE`).
+- Inside `_execute_simple`, the tool calls
+  `await self._router.generate(purpose=Purpose.REVIEW, ...)` — the
+  purpose is selected per-call at the `ModelRouter` layer, where it
+  controls model selection and routing (e.g. cheaper model for
+  reviews, different temperature). This is the existing
+  `ModelRouter.generate(purpose, ...)` contract — nothing new.
+- The tool is wired in `_create_engine` via
+  `register_interaction_tools(tool_registry, model_router,
+  workspace_dir)` which constructs both `RequestClarificationTool`
+  and `RequestReviewTool` with the shared `ModelRouter` instance.
+
+**Public API stays single-purpose:** `_create_engine` still takes
+only a workspace path and a `RunRequest`; it does not accept a
+`Purpose` parameter. `QueryEngine` still has one system prompt. The
+reviewer is a tool invocation, not an engine mode.
+
+**§8 update:** §8 Step 3 line "Remove all remaining `fix_loop_*`
+references, `Purpose.REVIEW` branch in `_create_engine`" stays as
+written. The `Purpose.REVIEW` **enum value** is not removed (the tool
+still uses it internally); only the `_create_engine` branch is
+removed. Clarified in §8 Step 3.
+
+##### 2.9.3.c Reviewer prompt template (pinned)
+
+`build_reviewer_prompt` lives in `ai-worker/src/openharness/engine/
+prompts.py` alongside `build_system_prompt`. Signature:
+
+```python
+def build_reviewer_prompt(
+    summary: str,
+    current_diff: str,
+    original_request: str,
+) -> str:
+    """Render the reviewer prompt. All three arguments are required.
+
+    summary:
+        The agent's own description of what it built and why it
+        believes the work is complete. Passed through from
+        RequestReviewInput.summary.
+
+    current_diff:
+        Output of `git diff HEAD` run inside the workspace, capped
+        at REVIEWER_DIFF_MAX_BYTES (default 32 KiB). If the diff
+        exceeds the cap, it is truncated with a "<diff truncated
+        at 32KiB>" marker at the end.
+
+    original_request:
+        The user's original message that kicked off the session.
+        Pulled from QueryEngine._messages[0].content.
+    """
+```
+
+The output of `build_reviewer_prompt` is a plain string (the user
+message the reviewer LLM will see). The reviewer system prompt is a
+separate constant `REVIEWER_SYSTEM_PROMPT` in the same file.
+
+**System prompt (pinned):**
+
+```
+You are a senior engineer reviewing another AI agent's work on a
+user's codebase. You have no tools. You see only: (1) the user's
+original request, (2) the AI agent's own summary of what it built,
+(3) the git diff showing the agent's changes.
+
+Your job: judge whether the agent's work actually does what the user
+asked. Focus on:
+- Intent mismatch: the diff does something subtly different from the
+  user's request (wrong field name, wrong endpoint, wrong default)
+- Missing cases: the user asked for X including edge cases, the diff
+  handles X but not the edge cases
+- Obvious bugs: null dereferences, off-by-one, unsafe SQL, missing
+  error handling in load-bearing paths
+- Non-goals: the diff adds functionality the user did not ask for
+
+Do NOT flag: coding style, naming preferences, architectural taste,
+"could be more elegant", "might be slow", "should add tests" (unless
+tests are part of the user's request).
+
+Respond with EXACTLY one of these formats, on a single line, no
+preamble:
+
+    APPROVE
+    REVISE <what to change>
+    REJECT <why it's fundamentally wrong>
+
+Your verdict is parsed by regex. Any text before the verdict line
+or after it will be ignored.
+```
+
+**User message template** (what `build_reviewer_prompt` returns):
+
+```
+## User's original request
+{original_request}
+
+## Agent's summary of work
+{summary}
+
+## Git diff
+{current_diff}
+
+Review the above and respond with APPROVE / REVISE / REJECT.
+```
+
+##### 2.9.3.d Verdict parsing
+
+The tool parses the reviewer's response with a simple regex:
+
+```python
+VERDICT_PATTERN = re.compile(
+    r"^(APPROVE|REVISE|REJECT)(?:\s+(.*))?$",
+    re.MULTILINE,
+)
+
+def parse_verdict(text: str) -> tuple[Literal["APPROVE", "REVISE", "REJECT"], str]:
+    for line in text.splitlines():
+        match = VERDICT_PATTERN.match(line.strip())
+        if match:
+            verdict = match.group(1)
+            details = (match.group(2) or "").strip()
+            return verdict, details
+    raise ReviewerParseError(
+        f"Reviewer response did not contain a verdict line: {text[:200]!r}"
+    )
+```
+
+If parsing fails, the tool returns `ToolResult(is_error=True,
+output=f"reviewer output could not be parsed: {exc}")`. No retry —
+the agent sees the error and decides whether to retry the
+`request_review` call or continue without a verdict.
+
+##### 2.9.3.e Git diff collection
+
+`RequestReviewTool._collect_git_diff` runs `git diff HEAD` inside the
+workspace **directly via `asyncio.create_subprocess_exec`**, NOT
+through `BashTool`/bwrap. Rationale:
+
+- The reviewer needs read-only access to the working tree state.
+  `git diff HEAD` is deterministic and safe — no user-controlled
+  input, no shell expansion.
+- Running it through `BashTool` would emit spurious
+  `ThinkingStarted`/`ThinkingStopped` events and a tool card for an
+  internal operation the user does not care about.
+- bwrap's network/filesystem restrictions do not apply — `git diff`
+  reads the workspace which is already accessible.
+
+**Exemption from §4.6 bwrap policy:** `git diff HEAD` is one of
+exactly two subprocess calls in Round 2 that bypass bwrap (the other
+is `git` commands run by the workspace manager — §3.5). Both are
+hardcoded, parameter-less, read-only git invocations. No other
+subprocess may bypass bwrap without a spec amendment. The
+`_collect_git_diff` method's argv is literally
+`["git", "diff", "HEAD"]` with no parameters — no shell, no user
+input, no format strings.
+
+Output capped at `REVIEWER_DIFF_MAX_BYTES = 32_768`. If exceeded,
+truncated and marked. `cwd` is the session's workspace directory.
+
+##### 2.9.3.f Model selection for `Purpose.REVIEW`
+
+The `ModelRouter` picks the model based on `Purpose`. Round 2 does
+not hardcode which model serves `Purpose.REVIEW`; that's the router's
+existing responsibility. The only Round 2 requirement is that the
+router has a registered model for `Purpose.REVIEW` — verified at
+`ModelRouter` construction time with a fail-fast assertion. If no
+model is registered, `_create_engine` fails and the agent does not
+start.
+
+**Rationale for fail-fast:** §2.8 no-fallbacks. If the reviewer model
+isn't configured, we do not silently disable `request_review` — the
+agent would think it has a tool that doesn't work.
+
+##### 2.9.3.g Tests
+
+- Mock the `ModelRouter.generate` call so tests don't pay LLM cost.
+- Test: `build_reviewer_prompt` substitutes all three inputs
+  correctly (substring invariants, same style as existing
+  `build_system_prompt` tests).
+- Test: `parse_verdict` on `"APPROVE"`, `"REVISE foo bar"`,
+  `"REJECT not at all"`, `"some text\nAPPROVE\nmore text"`, and
+  unparseable input.
+- Test: `_collect_git_diff` runs in a real git workspace fixture,
+  returns the expected diff.
+- Test: timeout on `git diff` (> 30s) raises and the tool returns
+  `is_error=True`.
+- Test: `RequestReviewTool.execute` on a mocked router returns the
+  verdict text unchanged as `ToolResult.output`.
+- Contract test: auto-covered by the 12-tool (now 14-tool) contract
+  suite; the tool's `input_model` has `summary` which the contract
+  test's `_make_valid_arguments` must support. Update the contract
+  fixture accordingly.
+
+**System prompt update (pinned):** §5.2's "How to work" section gains
+a new bullet instructing the agent when to call `request_review`:
+
+> 7. At major milestones — before `end_turn`, before a git commit that
+>    represents a user-visible feature boundary — call
+>    `request_review` with a short summary of what you built and why
+>    you believe it's correct. The reviewer is an independent LLM that
+>    sees your diff and the user's original request. Act on the
+>    verdict: APPROVE → proceed, REVISE → address the listed items,
+>    REJECT → reconsider the approach. You are not required to invoke
+>    the reviewer on every turn; use judgment.
 
 **Explicit trade-off acknowledged:** this partially walks back Round 1
 Q2 A2's rejection of pair_pipeline's 2-agent model. The difference:
@@ -413,6 +1161,13 @@ Round 1's A2 killed the *mandatory* 2-agent outer loop.
 `request_review` is an *optional* meta-tool. The agent is still a
 single agent; the reviewer is a LLM call the agent makes, not a
 second permanent agent instance.
+
+**Scope:** Phase 5 adds `RequestReviewTool` alongside
+`RequestClarificationTool`. Uses the existing `ModelRouter` with a
+different `Purpose.REVIEW` (the enum value stays, only the
+`_create_engine` branch is deleted). Reviewer prompt lives in
+`prompts.py` as `build_reviewer_prompt(summary, current_diff,
+original_request)` plus the `REVIEWER_SYSTEM_PROMPT` constant.
 
 #### 2.9.4 Phase 1 split: 1a (minimal) + 1b (deploy keys) (High 4)
 
@@ -449,23 +1204,121 @@ tasks 1.2-1.4 (deploy keys + GitHub upload + SSH git wrapper) move to
 1b. Phase 1a's `RealGitRunner` uses a temporary HTTPS+token path that
 Phase 1b replaces.
 
+##### 2.9.4.a Tagged sections in §3 (authoritative mapping)
+
+The existing §3 (workspace manager layer) was written assuming a
+single Phase 1 that migrated to SSH deploy keys wholesale. With the
+1a/1b split, several §3 subsections apply only to Phase 1b. The table
+below is authoritative for the Round 2 plan writer:
+
+| §3 subsection | Phase 1a scope | Phase 1b scope |
+|---|---|---|
+| §3.1 Module responsibility | All of it | (no change) |
+| §3.2 Current-state baseline / extension plan | State DAO + ensure state machine. `RealGitRunner` implemented with HTTPS+token (temporary `injectToken` path retained). | Replace `RealGitRunner` to use SSH deploy keys. Delete `injectToken`. |
+| §3.3 New files inside `workspace/` | `state.go`, `ensure.go`, `prep.go`, `state_test.go`, `ensure_test.go`. `git.go` exists but uses HTTPS+token. | `keys.go` (ed25519 gen, AES-GCM, GitHub upload), `keys_test.go`. `git.go` rewritten to use SSH. |
+| §3.4 Shared workspace volume | All of it — volume mount + path config | (no change) |
+| §3.5 Auth migration: token → deploy key | **Deferred to Phase 1b in full.** Phase 1a keeps `injectToken(repoURL, token)` exactly as it is today in `manager.go`. No SSH URL conversion. `ProjectLookup` in Phase 1a returns `(httpsURL, token, defaultBranch)` — same shape as today. See §2.9.4.b for the transitional interface. | Implements the entire §3.5 migration: delete `injectToken`, add `gitCommand()` helper, convert HTTPS URLs to SSH via `toSSHURL(httpsURL)`. `ProjectLookup` becomes `(sshURL, defaultBranch)` — Phase 1b is a **breaking change** to the interface signature documented and planned in §2.9.4.b. |
+| §3.6 Data model — `engine.workspaces` | Phase 1a creates this table | (no change) |
+| §3.6 Data model — `engine.project_deploy_keys` | **Phase 1a does NOT create this table.** It stays unused. | Phase 1b creates the `engine.project_deploy_keys` table migration and all code that reads/writes it. |
+| §3.7 `EnsureReady` state machine | Phase 1a implements the full state machine using HTTPS+token auth inside `RealGitRunner` | (no change — state machine is auth-independent; only `RealGitRunner`'s internals swap) |
+| §3.8 SSH deploy key lifecycle | **Deferred to Phase 1b entirely.** | All of it. |
+| §3.9 Dependency pre-install | All of it — independent of auth mechanism | (no change) |
+| §3.10 Path plumbing to ai-worker | All of it | (no change) |
+| §3.11 Concurrency semantics | All of it | (no change) |
+| §3.12 Failure-mode matrix row: "Deploy key upload to GitHub fails" | N/A (deploy keys don't exist yet) | Row becomes active. |
+| §3.12 Failure-mode matrix row: "GitHub PAT revoked" | **Phase 1a addition** — if `injectToken`'s token is rejected by GitHub, clone fails with `last_error="github_auth_failed"`. Row is deleted again in Phase 1b when PAT usage ends. | Row deleted. |
+| §Appendix B Files touched | `keys.go`, `keys_test.go`, the `project_deploy_keys` migration, the `EnsureClone`→SSH deletion of `injectToken`, and the `manager.go` SSH rewrite are all **Phase 1b**. Everything else in Appendix B under workspace is **Phase 1a**. | — |
+
+##### 2.9.4.b `ProjectLookup` interface — the breaking change
+
+Phase 1a and Phase 1b use **two different `ProjectLookup` signatures**
+because Phase 1a needs a token and Phase 1b doesn't. The plan must
+either (a) version the interface, (b) use an adapter, or (c) do a
+hard cutover in Phase 1b.
+
+**Decision:** (c) hard cutover. Phase 1a introduces `ProjectLookup` as:
+
+```go
+type ProjectLookup interface {
+    LookupProject(ctx context.Context, tenantID, projectID int64) (ProjectInfo, error)
+}
+
+type ProjectInfo struct {
+    RepoURL       string  // HTTPS URL in 1a, SSH URL in 1b
+    AccessToken   string  // populated in 1a, empty in 1b
+    DefaultBranch string
+}
+```
+
+Phase 1b rewrites `ProjectInfo` to drop `AccessToken` and renames
+`RepoURL` to `SSHURL`. All callers migrate in the same Phase 1b
+commit. This is a narrow surface (one interface, one struct, ≤5
+callers), so a hard cutover is cheaper than versioning.
+
+The Phase 1b rewrite is a breaking change **inside the monorepo** —
+no external clients consume `ProjectLookup`. Hard cutover is safe.
+
+##### 2.9.4.c Phase 1a temporary path retained in one place
+
+Phase 1a's `RealGitRunner` retains `injectToken` — but only inside
+`workspace.git.go` (Phase 1a version). No other Phase 1a file
+imports `injectToken`. Phase 1b's first task is to delete the
+Phase 1a `git.go` wholesale and replace it with the SSH version.
+This keeps the "temporary code" surface area to one file.
+
 **Out-of-scope for Round 2:** key rotation implementation. Deploy keys
 are generated once and reused; rotation is a follow-up project.
 
+##### 2.9.4.d Phase 1b gating for public deployment
+
+Phase 1b is **not optional** for public deployment. The §3.8 security
+rationale ("deploy keys live in forge-core for prompt-injection
+containment") still holds. If Phase 1b is deferred indefinitely, the
+MVP can ship for solo-dev / internal testing but public deployment is
+blocked until Phase 1b lands. Round 2's `index.md` must call this
+out explicitly.
+
 #### 2.9.5 Execution / documentation consequences
 
-The four decisions above have cascading effects on the Round 1 plan
-files:
+The four decisions above have cascading effects on both the Round 1
+plan files **and** this spec itself. All edits are bundled into
+Round 2.
+
+##### 2.9.5.a Spec self-edits (this document)
+
+§2.9 is a non-terminal amendment. Several earlier sections must be
+updated in lockstep to avoid contradictions:
+
+| Section | Round 2 edit |
+|---|---|
+| §3.5 Auth migration | Tagged "Phase 1b entirely" per §2.9.4.a. Add a reference to §2.9.4.a at the top of §3.5 so readers know 1a defers the migration. |
+| §3.6 Data model | `engine.project_deploy_keys` table migration tagged "Phase 1b". |
+| §3.8 SSH deploy key lifecycle | Tagged "Phase 1b entirely". |
+| §3.12 Failure-mode matrix | Add row "GitHub PAT revoked (Phase 1a only)". Tag row "Deploy key upload fails" as Phase 1b. |
+| §4.12 `_create_engine` | Update code block to construct empty `AgentHookRegistry` and `ClarificationCoordinator`, and to call `register_interaction_tools` for the two new meta-tools. Note that the `Purpose.REVIEW` branch is still removed; the `Purpose.REVIEW` enum value is retained for `RequestReviewTool` internal use. |
+| §5.1 `run_agent_loop` changes | Note that the loop now invokes `registry.pre_turn` / `registry.post_turn` around each turn, and `registry.pre_tool_call` inside `_execute_tool_call`. |
+| §5.2 System prompt | Add slot-substitution mechanism (`{{slot_name}}` replacement). Add the "at major milestones, call request_review" bullet from §2.9.3.g. |
+| §5.3 Event vocabulary | No longer "final" — add `ClarificationRequested(question, tool_use_id)` and `ErrorEvent` note for clarification timeout. Rename section from "final" to "Event vocabulary". |
+| §7.1 Adversarial tests | Add 3 new rows: clarification timeout halts session; clarification response with wrong session_id rejected; clarification response with unknown tool_use_id rejected. |
+| §7.2 Unit tests per tool | Add `RequestClarificationTool`, `RequestReviewTool` rows. |
+| §7.3 Contract tests | Add a test fixture for `RequestClarificationTool` — auto-delivers a canned response when the tool yields `ClarificationRequested`. The single-`ToolResult` contract still holds; the test just needs a delivery mechanism. Document the fixture pattern for the plan writer. |
+| §7.4 Agent loop integration tests | Add 2 new scenarios: clarification round-trip (happy path with injected delivery) and clarification timeout (session halts). Add 1 scenario: `request_review` tool with mocked `ModelRouter.generate`. Add 1 scenario: `AgentHookRegistry.pre_tool_call` blocks a tool. |
+| §7.6 E2E smoke test | Rewrite assertions to cover a clarification round-trip: the fixture project's instructions include an ambiguity that forces the agent to call `request_clarification`; a test harness publishes to the return channel on seeing `ClarificationRequested`; assertions check that the agent received the injected response and continued. Fixture setup is new, not "minor". |
+| §7.8 Observability | Add `agent.clarification_requested`, `agent.clarification_responded`, `agent.clarification_timeout`, `agent.review_requested`, `agent.review_verdict` log points. Document the structured fields (session_id, tool_use_id, latency_ms). |
+| §8 Step 3 | Keep the line "`Purpose.REVIEW` branch in `_create_engine` removed". Add a parenthetical "(the `Purpose.REVIEW` enum value is retained for `RequestReviewTool` internal use — see §2.9.3.b)". |
+| Appendix B Files touched | Add new files: `ai-worker/src/openharness/engine/agent_hooks.py`, `ai-worker/src/openharness/engine/return_channel.py`, `ai-worker/src/openharness/tools/interaction_tools.py`, `forge-core/internal/module/agent/clarify_handler.go`, corresponding tests. Tag deploy-key files as Phase 1b per §2.9.4.a. |
+
+##### 2.9.5.b Plan file deltas (`docs/plans/chronos-2026-04-09/`)
 
 | Round 1 file | Round 2 change |
 |---|---|
-| `index.md` | Rewritten — 9 phases, new dependency graph, Round 2 status note |
-| `phase-1-workspace.md` | Split into `phase-1a-workspace-minimal.md` + `phase-1b-deploy-keys.md` |
-| `phase-4-bash-events.md` | Add `ClarificationRequested` event + routing (Task 4.9) |
-| new `phase-5a-bidirectional-rpc.md` | ~8-10 tasks, ~2000 lines, Redis pub/sub + pause/resume |
-| `phase-5-agent-loop.md` | Add tasks for `RequestClarificationTool`, `RequestReviewTool`, hook registry wiring, `system_prompt_slots`, `build_reviewer_prompt`. ~+800 lines |
-| `phase-6-frontend.md` | Add clarification input component (Task 6.10) + return channel wiring (Task 6.11). ~+400 lines |
-| `phase-7-deploy.md` | Update smoke test shape assertions to include a clarification round-trip. Minor |
+| `index.md` | Rewritten — 9 phases, new dependency graph, Round 2 status note → replaced with "delivered" when Round 2 plan writing completes |
+| `phase-1-workspace.md` | **Delete.** Split into `phase-1a-workspace-minimal.md` + `phase-1b-deploy-keys.md` |
+| `phase-4-bash-events.md` | Add `ClarificationRequested(question, tool_use_id)` event + serialization (Task 4.9) |
+| new `phase-5a-bidirectional-rpc.md` | ~9 tasks, ~2000 lines: `return_channel.py` module, `ClarificationCoordinator`, forge-core `/api/sessions/{id}/clarify` endpoint, integration tests |
+| `phase-5-agent-loop.md` | Add tasks for `AgentHookRegistry` wiring (5.8), hook contract tests (5.9), `RequestClarificationTool` (5.10), `register_interaction_tools` helper (5.11), `RequestReviewTool` (5.12), `build_reviewer_prompt` (5.13), system prompt update (5.14). ~+800 lines |
+| `phase-6-frontend.md` | Add clarification input component (Task 6.10) + clarification state machine integration (Task 6.11). ~+400 lines |
+| `phase-7-deploy.md` | Update smoke test to include a clarification round-trip assertion per §7.6 rewrite |
 
 Round 2 plan size estimate: ~21,000 lines across 11 files (9 phases +
 `index.md` + `deploy-runbook.md` + `retro.md`), ~76 tasks total.
@@ -651,8 +1504,18 @@ without code change — the relative fragment is the constant.
 
 ### 3.5 Auth migration: token → deploy key
 
+> **Round 2 phasing note:** the migration in this section is deferred
+> to **Phase 1b entirely**. Phase 1a retains the existing
+> `injectToken(repoURL, token)` path unchanged. `ProjectLookup` in
+> Phase 1a returns `(httpsURL, token, defaultBranch)`; Phase 1b
+> rewrites it to `(sshURL, defaultBranch)` as a breaking change in
+> the same commit that deletes `injectToken`. See §2.9.4.a for the
+> full 1a/1b task mapping and §2.9.4.b for the `ProjectLookup`
+> interface cutover.
+
 Currently `manager.EnsureClone` uses `injectToken(repoURL, token)` to
-stuff a GitHub PAT into the HTTPS URL. This is replaced wholesale:
+stuff a GitHub PAT into the HTTPS URL. In **Phase 1b** this is
+replaced wholesale:
 
 - `injectToken` is **deleted**.
 - All git invocations go through a new `gitCommand()` helper in `git.go`
@@ -694,7 +1557,9 @@ CREATE TABLE engine.workspaces (
 
 CREATE INDEX idx_workspaces_tenant_project ON engine.workspaces(tenant_id, project_id);
 
--- engine.project_deploy_keys
+-- engine.project_deploy_keys — Phase 1b ONLY (see §2.9.4.a)
+-- Phase 1a does not create this table. Phase 1b's first migration
+-- adds it as part of the deploy-key rollout.
 CREATE TABLE engine.project_deploy_keys (
     project_id      BIGINT PRIMARY KEY,
     tenant_id       BIGINT NOT NULL,
@@ -781,6 +1646,10 @@ concurrent callers to block, not fail.
   service does not know about sessions.
 
 ### 3.8 SSH deploy key lifecycle
+
+> **Round 2 phasing note:** this entire subsection is **Phase 1b
+> only**. Phase 1a does not implement any deploy-key lifecycle. See
+> §2.9.4.a for the task mapping.
 
 **Generation (first EnsureReady call for a project with no key row):**
 
@@ -912,16 +1781,17 @@ Changes:
 
 ### 3.12 Failure-mode matrix
 
-| Failure point | Status | last_error | Behavior |
-|---|---|---|---|
-| Deploy key upload to GitHub fails (4xx/5xx) | `error` | `deploy_key_upload failed: <code>` | Session halts, agent emits ErrorEvent |
-| Clone fails — auth | `error` | `clone failed: authentication` | Halt; human must check GitHub deploy key permissions |
-| Clone fails — network | `error` | `clone failed: network` | Halt; next call retries automatically |
-| Clone fails — unknown | `error` | `clone failed: <stderr>` | Halt |
-| Dependency prep fails | `ready` | (warning logged) | **Does not halt.** Agent will see build errors if deps are needed. |
-| `git reset --hard` on resync fails | fall back to wipe + re-clone | — | Transparent recovery |
-| Workspace directory missing (manual cleanup) | treated as "no record" | — | Re-clones from scratch |
-| Disk full | not handled this release | — | Future: disk-check hook pre-clone |
+| Failure point | Phase | Status | last_error | Behavior |
+|---|---|---|---|---|
+| GitHub PAT revoked / expired | **1a only** | `error` | `clone failed: github_auth_failed` | Halt; human must refresh the PAT in forge-core project settings. Row is deleted in Phase 1b when PAT usage ends. |
+| Deploy key upload to GitHub fails (4xx/5xx) | **1b only** | `error` | `deploy_key_upload failed: <code>` | Session halts, agent emits ErrorEvent |
+| Clone fails — auth | 1a + 1b | `error` | `clone failed: authentication` | Halt; human must check credentials (PAT in 1a, deploy key permissions in 1b) |
+| Clone fails — network | 1a + 1b | `error` | `clone failed: network` | Halt; next call retries automatically |
+| Clone fails — unknown | 1a + 1b | `error` | `clone failed: <stderr>` | Halt |
+| Dependency prep fails | 1a + 1b | `ready` | (warning logged) | **Does not halt.** Agent will see build errors if deps are needed. |
+| `git reset --hard` on resync fails | 1a + 1b | fall back to wipe + re-clone | — | Transparent recovery |
+| Workspace directory missing (manual cleanup) | 1a + 1b | treated as "no record" | — | Re-clones from scratch |
+| Disk full | not handled this release | — | — | Future: disk-check hook pre-clone |
 
 ---
 
@@ -966,8 +1836,22 @@ class BaseTool(ABC):
         self, arguments: BaseModel, context: ToolExecutionContext,
     ) -> AsyncIterator[StreamEvent | ToolResult]:
         """Yield zero or more StreamEvents during execution, then yield
-        exactly one ToolResult as the final value. Must not raise —
-        errors should be returned as ToolResult(is_error=True, output=...).
+        exactly one ToolResult as the final value.
+
+        Must not raise unhandled exceptions EXCEPT for the session-halt
+        class defined in `openharness.engine.agent_hooks`:
+
+            class SessionHaltError(Exception):
+                '''Base class for errors that should halt the session
+                rather than be translated to ToolResult(is_error=True).
+                Subclasses: ClarificationTimeout, ReturnChannelError.'''
+
+        All other error conditions MUST be returned as
+        `ToolResult(is_error=True, output=...)`. The agent loop
+        catches `SessionHaltError` in `_execute_tool_call` and
+        translates it into `ErrorEvent(recoverable=False)` plus a
+        terminal `ToolResultBlock(is_error=True)` so the UI can
+        unwind cleanly and the session halts. See §2.9.2.f.
         """
         ...
 
@@ -1006,19 +1890,34 @@ async def _execute_tool_call(
     context, tool_name, tool_use_id, tool_input,
 ) -> AsyncIterator[StreamEvent | ToolResultBlock]:
     tool_result: ToolResult | None = None
-    async for item in tool.execute(parsed, exec_ctx):
-        if isinstance(item, StreamEvent):
-            yield item
-        elif isinstance(item, ToolResult):
-            if tool_result is not None:
-                raise RuntimeError(
-                    f"tool {tool.name} yielded multiple ToolResults"
+    try:
+        async for item in tool.execute(parsed, exec_ctx):
+            if isinstance(item, StreamEvent):
+                yield item
+            elif isinstance(item, ToolResult):
+                if tool_result is not None:
+                    raise RuntimeError(
+                        f"tool {tool.name} yielded multiple ToolResults"
+                    )
+                tool_result = item
+            else:
+                raise TypeError(
+                    f"tool {tool.name} yielded unexpected: {type(item).__name__}"
                 )
-            tool_result = item
-        else:
-            raise TypeError(
-                f"tool {tool.name} yielded unexpected: {type(item).__name__}"
-            )
+    except SessionHaltError as halt:
+        # Session-halt exceptions (ClarificationTimeout, ReturnChannelError
+        # — see §2.9.2.f) get translated to ErrorEvent + terminal error
+        # ToolResultBlock so the UI can unwind the tool card cleanly.
+        yield ErrorEvent(
+            message=f"{type(halt).__name__}: {halt}",
+            recoverable=False,
+        )
+        yield ToolResultBlock(
+            tool_use_id=tool_use_id,
+            content=f"session halted: {halt}",
+            is_error=True,
+        )
+        return
 
     if tool_result is None:
         yield ToolResultBlock(
@@ -1034,6 +1933,13 @@ async def _execute_tool_call(
         is_error=tool_result.is_error,
     )
 ```
+
+The surrounding `run_agent_loop` block also emits
+`ToolExecutionCompleted(tool_use_id, tool_name, output=...,
+is_error=True)` after the halt path's `ToolResultBlock` so the frontend
+tool card transitions out of the running state before the `ErrorEvent`
+closes the stream. This is handled by the existing "tool_results[-1]"
+lookup in `run_agent_loop` — no changes needed there.
 
 `run_agent_loop`'s tool execution block:
 
@@ -1542,10 +2448,15 @@ self-contained, symmetric with `BashTool`, and free of hidden coupling.
 
 ### 4.12 Tool registry construction
 
-`_create_engine` in `api_server.py`:
+`_create_engine` in `api_server.py` (Round 2, with §2.9.1 hook
+registries and §2.9.2 clarification coordinator wired in):
 
 ```python
-def _create_engine(req: RunRequest, workspace_dir: Path) -> QueryEngine:
+async def _create_engine(
+    req: RunRequest,
+    workspace_dir: Path,
+    redis_client: Redis,
+) -> QueryEngine:
     tool_registry = ToolRegistry()
 
     # T2 file/exec tools — all scoped to workspace_dir
@@ -1557,36 +2468,70 @@ def _create_engine(req: RunRequest, workspace_dir: Path) -> QueryEngine:
     tool_registry.register(ListDirectoryTool(workspace_dir))
     tool_registry.register(BashTool(workspace_dir))
 
-    # Meta tool
+    # Meta tools
     tool_registry.register(SetPhaseTool())
 
     # Legacy context tools (now using SimpleTool adapter)
     profiles = _load_project_profiles(req.project_id)
     register_context_tools(tool_registry, profiles, req.project_id)
 
-    hook_registry = HookRegistry()
-    hook_executor = HookExecutor(hook_registry)
-    permission_checker = PermissionChecker(mode=PermissionMode.FULL_AUTO)
+    # Subprocess hooks (existing)
+    command_hook_registry = HookRegistry()
+    command_hook_executor = HookExecutor(command_hook_registry)
 
-    model = req.model or settings.default_model
-    system_prompt = req.system_prompt or _build_system_prompt(
-        language=detect_language(workspace_dir),
-        workspace_path=str(workspace_dir),
+    # In-process agent hooks (new Round 2 — §2.9.1)
+    agent_hook_registry = AgentHookRegistry()  # empty by default
+    agent_hook_context = AgentHookContext(
+        project_id=req.project_id,
+        session_id=req.session_id,
+        workspace_dir=workspace_dir,
+        system_prompt_buffer=[],
     )
 
+    # Clarification coordinator + return channel (new Round 2 — §2.9.2)
+    clarification_coordinator = ClarificationCoordinator()
+    return_channel = await ReturnChannel.open(
+        session_id=req.session_id,
+        redis=redis_client,
+        coordinator=clarification_coordinator,
+    )
+
+    permission_checker = PermissionChecker(mode=PermissionMode.FULL_AUTO)
+
+    # Interaction tools share the same ModelRouter instance (new Round 2)
     try:
         router = ModelRouter()
+        # Fail fast if reviewer model not configured (§2.9.3.f)
+        router.require_model_for(Purpose.REVIEW)
         api_client = ModelRouterAdapter(router, purpose=Purpose.GENERATE)
     except Exception as e:
         logger.error("ModelRouter unavailable: %s", e)
         raise  # fail fast, no AsyncMock fallback
+
+    register_interaction_tools(
+        tool_registry,
+        model_router=router,
+        workspace_dir=workspace_dir,
+    )
+
+    model = req.model or settings.default_model
+    system_prompt = req.system_prompt or await build_system_prompt(
+        language=detect_language(workspace_dir),
+        workspace_path=str(workspace_dir),
+        slots=agent_hook_registry.system_prompt_slots,  # empty by default
+        hook_context=agent_hook_context,
+    )
 
     return QueryEngine(
         api_client=api_client,
         tool_registry=tool_registry,
         model=model,
         system_prompt=system_prompt,
-        hook_executor=hook_executor,
+        command_hook_executor=command_hook_executor,
+        agent_hook_registry=agent_hook_registry,
+        agent_hook_context=agent_hook_context,
+        clarification_coordinator=clarification_coordinator,
+        return_channel=return_channel,
         permission_checker=permission_checker,
         cwd=workspace_dir,
     )
@@ -1598,15 +2543,38 @@ the `Purpose.REVIEW` branch of system_prompt selection, the
 ModelRouter is down, the agent is down, and we want to know
 immediately rather than silently running with a mock).
 
+**Note on `Purpose.REVIEW`:** the `Purpose.REVIEW` **enum value**
+is retained for `RequestReviewTool`'s internal use (§2.9.3.b). Only
+the `_create_engine` switch branch that selected a different system
+prompt for reviewer mode is removed. `router.require_model_for
+(Purpose.REVIEW)` fail-fast assertion replaces any runtime check.
+
 ---
 
 ## 5. Agent loop and event layer
 
 ### 5.1 `run_agent_loop` changes
 
-Only the tool execution block changes (adapting to the new `BaseTool`
-signature). The overall flow — stream API, detect `tool_use`, execute
-tools, pass results back, repeat — is unchanged. Code shown in §4.1.
+Two blocks change in Round 2:
+
+1. **Tool execution block** — adapts to the new `BaseTool`
+   async-iterator signature. Code shown in §4.1.
+2. **Agent hook invocation points** (new in Round 2, §2.9.1):
+   - Before each turn: `messages = await registry.pre_turn(ctx,
+     messages)` for each hook in registry order. If a hook raises, the
+     loop yields `ErrorEvent(recoverable=False)` and halts.
+   - Inside `_execute_tool_call`, between permission check and tool
+     execution: `for hook in registry.pre_tool_call: result = await
+     hook(ctx, tool_name, parsed)`; if any hook returns
+     `PreToolCallBlock(reason)`, the loop short-circuits with
+     `ToolResultBlock(is_error=True, content=reason)` per §2.9.1.c.
+   - After each turn completes with `stop_reason=end_turn`: `for hook
+     in registry.post_turn: await hook(ctx, final_message)`. Errors
+     halt the loop.
+
+   The registry is owned by `QueryEngine` and passed via
+   `_create_engine` as an empty default; downstream projects populate
+   it via a project-scoped factory.
 
 **Unchanged safety/limits:**
 - `max_turns` default 25
@@ -1616,17 +2584,24 @@ tools, pass results back, repeat — is unchanged. Code shown in §4.1.
 
 ### 5.2 System prompt
 
-`_build_system_prompt` is a new function in `api_server.py` or
-`prompt_templates.py`:
+`build_system_prompt` (renamed from `_build_system_prompt`, now
+public) lives in `ai-worker/src/openharness/engine/prompts.py`. In
+Round 2 it accepts optional slot fillers for §2.9.1 `system_prompt_slots`:
 
 ```python
-def _build_system_prompt(language: str | None, workspace_path: str) -> str:
+async def build_system_prompt(
+    language: str | None,
+    workspace_path: str,
+    slots: dict[str, PromptSlotFiller] | None = None,
+    hook_context: AgentHookContext | None = None,
+) -> str:
     lang_hint = (
         f"- Project language: {language}"
         if language else
         "- Project language: unknown (inspect files to detect)"
     )
-    return f"""You are Forge Agent, an AI coding assistant embedded in a Harness Engineering platform.
+
+    template = f"""You are Forge Agent, an AI coding assistant embedded in a Harness Engineering platform.
 You work on a user's codebase inside a sandboxed workspace.
 
 ## Your environment
@@ -1636,11 +2611,18 @@ You work on a user's codebase inside a sandboxed workspace.
 
 ## Available tools
 You have tools for reading, writing, and editing files, searching code
-(glob, grep), listing directories, running shell commands (bash), and
-signaling your current phase to the UI (set_phase).
+(glob, grep), listing directories, running shell commands (bash),
+signaling your current phase to the UI (set_phase), asking the user
+clarifying questions (request_clarification), and requesting an
+independent reviewer (request_review).
+
+{{{{project_specs}}}}
 
 ## How to work
-1. Understand the user's request. Ask for clarification if it's ambiguous.
+1. Understand the user's request. If the request is ambiguous, call
+   `request_clarification` with a specific question rather than
+   guessing. The user will type a response and you will receive it as
+   the tool's return value.
 2. Before making changes, read the relevant existing code. Use glob/grep
    to find things. Use read_file to see exact content.
 3. Signal phases with set_phase. Phases are: Analyze (understanding),
@@ -1655,6 +2637,14 @@ signaling your current phase to the UI (set_phase).
 6. Stop when the user's request is satisfied. Do not over-engineer. Do
    not add features the user did not ask for. Do not refactor adjacent
    code unrelated to the task.
+7. At major milestones — before `end_turn`, before a git commit that
+   represents a user-visible feature boundary — call `request_review`
+   with a short summary of what you built and why you believe it's
+   correct. The reviewer is an independent LLM that sees your diff and
+   the user's original request. Act on the verdict: APPROVE → proceed,
+   REVISE → address the listed items, REJECT → reconsider the approach.
+   You are not required to invoke the reviewer on every turn; use
+   judgment.
 
 ## Constraints
 - File operations stay inside the workspace.
@@ -1672,13 +2662,41 @@ signaling your current phase to the UI (set_phase).
   read it.
 - When a build fails, don't announce "I'll fix this" — just fix it.
 """
+
+    # Slot substitution (§2.9.1.c): `{{slot_name}}` → filler output
+    if slots:
+        for slot_name, filler in slots.items():
+            placeholder = f"{{{{{slot_name}}}}}"
+            if placeholder in template:
+                value = await filler(hook_context) if hook_context else ""
+                template = template.replace(placeholder, value)
+            else:
+                logger.warning("system_prompt_slot '%s' not in template", slot_name)
+    # Strip any unfilled `{{slot}}` placeholders so the agent never
+    # sees them literally.
+    template = re.sub(r"\{\{[a-zA-Z_][a-zA-Z_0-9]*\}\}", "", template)
+    return template
 ```
 
 This is a starting-point skeleton. It will be iterated based on real
 agent runs. The prompt lives in source control and has unit tests that
-verify the `{language}` and `{workspace_path}` substitutions work.
+verify:
+- the `{language}` and `{workspace_path}` substitutions work (same as
+  Round 1)
+- an unregistered `{{project_specs}}` placeholder is stripped to
+  empty string (no literal `{{project_specs}}` in the final prompt)
+- a registered slot filler's return value replaces the placeholder
+- a filler that raises propagates the exception (fail-fast per §2.8)
+- the "request_review" and "request_clarification" instruction
+  bullets are present (substring assertions)
 
-### 5.3 Event vocabulary (final)
+### 5.3 Event vocabulary
+
+> **Round 2 note:** this table was labeled "(final)" in Round 1. §2.9.2
+> adds `ClarificationRequested`; the table is no longer final and the
+> label is removed. Any future addition requires a spec amendment with
+> matching updates to `stream_events.py` and the frontend event
+> dispatcher.
 
 | Event | Source | Change |
 |---|---|---|
@@ -1689,10 +2707,19 @@ verify the `{language}` and `{workspace_path}` substitutions work.
 | `ThinkingStarted(label)` | `BashTool.execute()` | Repurposed: bash only |
 | `ThinkingStopped` | `BashTool.execute()` finally block | Repurposed |
 | `PhaseChanged(phase)` | `SetPhaseTool.execute()` | **New** |
+| `ClarificationRequested(question, tool_use_id)` | `RequestClarificationTool.execute()` | **New in Round 2** — §2.9.2 |
 | `SessionComplete(...)` | `QueryEngine.submit_message` end | Retained, new trigger logic |
-| `ErrorEvent(message, recoverable)` | Any exception path | Unchanged |
+| `ErrorEvent(message, recoverable)` | Any exception path | Unchanged. Fires on clarification timeout per §2.9.2.f |
 | ~~`FixLoopStarted`~~ | ~~pair_pipeline~~ | **Deleted** |
 | ~~`FixLoopCompleted`~~ | ~~pair_pipeline~~ | **Deleted** |
+
+**Note on `ClarificationRequested` vs `ToolExecutionStarted/Completed`:**
+per §2.9.2.e, both pairs fire around a `request_clarification` tool
+call. The sequence is
+`ToolExecutionStarted → ClarificationRequested → [pause] →
+ToolExecutionCompleted`. `ClarificationResponse` is a **channel
+message**, not a stream event — it lives on Redis and is never
+forwarded via SSE.
 
 ### 5.4 `PhaseChanged` event
 
@@ -1860,7 +2887,8 @@ zero-tool-call sessions" decision.
 
 ### 5.7 Routing simplification
 
-`_route_and_stream` becomes:
+`_route_and_stream` becomes (Round 2 — `_create_engine` is now async
+and requires a `redis_client` argument per §4.12):
 
 ```python
 async def _route_and_stream(
@@ -1881,10 +2909,16 @@ async def _route_and_stream(
             detail=f"workspace not ready: {resolved}",
         )
 
+    redis_client = _get_redis()  # process-level singleton (preexisting)
+
     engine = _sessions.get(session_id)
     if engine is None:
-        engine = _create_engine(req, workspace_dir=resolved)
-        _sessions.put(session_id, engine)
+        engine = await _create_engine(
+            req,
+            workspace_dir=resolved,
+            redis_client=redis_client,
+        )
+        await _sessions.put(session_id, engine)
 
     async for event in engine.submit_message(req.message):
         yield event
@@ -1892,7 +2926,9 @@ async def _route_and_stream(
 
 ### 5.8 Session cache (LRU)
 
-Replace `_sessions: Dict[str, Any]` with an `LRUSessionCache`:
+Replace `_sessions: Dict[str, Any]` with an `LRUSessionCache`. Round 2:
+eviction must `await engine.close()` to tear down the return channel
+subscriber task cleanly, so `put` is now `async`:
 
 ```python
 class LRUSessionCache:
@@ -1906,22 +2942,26 @@ class LRUSessionCache:
             return self._cache[session_id]
         return None
 
-    def put(self, session_id: str, engine: QueryEngine) -> None:
+    async def put(self, session_id: str, engine: QueryEngine) -> None:
         if session_id in self._cache:
             self._cache.move_to_end(session_id)
         else:
             self._cache[session_id] = engine
             if len(self._cache) > self._maxsize:
                 oldest_id, oldest_engine = self._cache.popitem(last=False)
-                oldest_engine.clear()
+                await oldest_engine.close()  # tears down ReturnChannel subscriber
                 logger.info("Evicted LRU session %s", oldest_id)
 
-    def pop(self, session_id: str) -> QueryEngine | None:
-        return self._cache.pop(session_id, None)
+    async def pop(self, session_id: str) -> QueryEngine | None:
+        engine = self._cache.pop(session_id, None)
+        if engine is not None:
+            await engine.close()
+        return engine
 ```
 
 100 sessions × ~2MB per (messages + local state) = ~200MB ceiling. Fine
-for dev; when prod load justifies, swap for Redis-backed store.
+for dev; when prod load justifies, swap for Redis-backed store. `close()`
+is idempotent per §2.9.2.c — safe to call twice.
 
 ---
 
@@ -2132,13 +3172,28 @@ corruption.
 **Workspace tenant isolation** —
 `forge-core/internal/module/workspace/service_test.go`:
 
-| Test | Expected |
+| Test | Phase | Expected |
+|---|---|---|
+| `TestTenantIsolation_ProjectPathsNoOverlap` | 1a | tenant A project 1 and tenant B project 1 have distinct paths |
+| `TestDeployKey_PrivateKeyEncryptionRoundtrip` | 1b | encrypt(decrypt(x)) == x |
+| `TestDeployKey_CiphertextDoesNotContainPlaintext` | 1b | encrypted blob has no plaintext substring |
+| `TestDeployKey_EachKeyHasUniqueNonce` | 1b | two encryptions of same plaintext produce different ciphertexts |
+| `TestEnsureReady_ConcurrentCallers_SingleClone` | 1a | two concurrent calls trigger one git clone, not two |
+
+**Bidirectional RPC adversarial suite (Round 2)** —
+`tests/openharness/engine/test_return_channel_adversarial.py`:
+
+| Test | Expected behavior |
 |---|---|
-| `TestTenantIsolation_ProjectPathsNoOverlap` | tenant A project 1 and tenant B project 1 have distinct paths |
-| `TestDeployKey_PrivateKeyEncryptionRoundtrip` | encrypt(decrypt(x)) == x |
-| `TestDeployKey_CiphertextDoesNotContainPlaintext` | encrypted blob has no plaintext substring |
-| `TestDeployKey_EachKeyHasUniqueNonce` | two encryptions of same plaintext produce different ciphertexts |
-| `TestEnsureReady_ConcurrentCallers_SingleClone` | two concurrent calls trigger one git clone, not two |
+| `test_clarification_timeout_halts_session` | With 1-second timeout and no reply, tool raises `ClarificationTimeout`, agent loop emits `ErrorEvent(recoverable=False)`, SSE stream terminates |
+| `test_clarification_response_wrong_session_id_rejected` | Publishing `{session_id: "other"}` to `agent:return:{id}` is ignored; the waiting future does not resolve |
+| `test_clarification_response_unknown_tool_use_id_rejected` | Publishing with `tool_use_id` not in pending map logs warning and no future resolves |
+| `test_clarification_response_malformed_json_rejected` | Publishing non-JSON bytes is discarded; listener does not crash |
+| `test_clarification_response_wrong_type_rejected` | Publishing `{type: "other_type"}` is discarded |
+| `test_clarification_response_oversized_rejected` | Response >4 KiB is rejected at forge-core before Redis publish (tested in Go) |
+| `test_concurrent_sessions_isolation` | 10 sessions each awaiting clarification; each receives only its own response, no cross-talk |
+| `test_return_channel_disconnect_halts_session` | Redis connection drop during wait cancels the future, tool yields `ToolResult(is_error=True)`, agent halts |
+| `test_session_cancellation_cancels_pending_future` | `QueryEngine.close()` cancels pending clarification futures cleanly without leaking the subscriber task |
 
 All of the above must pass before deployment. A single failure is P0.
 
@@ -2155,21 +3210,60 @@ Each T2 tool plus SetPhaseTool gets a standard suite:
 Migrated context_tools tools get one test confirming they still work
 after SimpleTool migration.
 
+**Round 2 additions — interaction tools (§2.9.2, §2.9.3):**
+
+- `RequestClarificationTool`:
+  - Happy path: yields `ClarificationRequested(question, tool_use_id)`
+    then (after canned delivery from fixture) yields
+    `ToolResult(output=response)`
+  - Timeout path: raises `ClarificationTimeout` after configured
+    timeout; test uses a 100ms override
+  - Session cancellation: the tool's future is cancelled cleanly when
+    `ClarificationCoordinator.cancel_all` fires
+  - Input validation: empty question rejected, >4 KiB question
+    rejected (Pydantic)
+- `RequestReviewTool`:
+  - Happy path with mocked `ModelRouter.generate` returning `"APPROVE"`:
+    tool returns `ToolResult(output="APPROVE", is_error=False)`
+  - `build_reviewer_prompt` substring invariants (original_request,
+    summary, current_diff all appear in the rendered prompt)
+  - `parse_verdict` parses `"APPROVE"`, `"REVISE foo"`, `"REJECT bar"`,
+    multi-line responses with the verdict line in the middle
+  - `parse_verdict` raises `ReviewerParseError` on unparseable input
+  - `_collect_git_diff` runs against a real git fixture and returns
+    non-empty diff
+  - `_collect_git_diff` caps output at `REVIEWER_DIFF_MAX_BYTES` and
+    appends truncation marker
+  - ModelRouter unavailable: tool returns `ToolResult(is_error=True)`
+  - `Purpose.REVIEW` fail-fast assertion at `_create_engine`
+    construction time when no model is registered for that purpose
+
 ### 7.3 Contract tests (BaseTool)
 
 `tests/openharness/tools/test_base_tool_contract.py`:
 
 ```python
 @pytest.mark.parametrize("tool_class", ALL_REGISTERED_TOOL_CLASSES)
-async def test_tool_yields_exactly_one_tool_result(tool_class, workspace):
-    tool = tool_class(workspace)
+async def test_tool_yields_exactly_one_tool_result(
+    tool_class, workspace, contract_fixtures,
+):
+    tool = _construct_tool_for_contract(tool_class, workspace, contract_fixtures)
     arguments = _make_valid_arguments(tool)
-    context = ToolExecutionContext(cwd=workspace)
+    context = _make_contract_context(workspace, contract_fixtures)
 
+    # RequestClarificationTool pauses on an external future. The
+    # contract-test fixture auto-delivers a canned response when it
+    # sees ClarificationRequested — see _make_contract_context below.
     tool_result_count = 0
     items = []
     async for item in tool.execute(arguments, context):
         items.append(item)
+        if isinstance(item, ClarificationRequested):
+            # Test fixture delivers the response through the
+            # coordinator so the tool's future resolves.
+            contract_fixtures.clarification_coordinator.deliver(
+                item.tool_use_id, "contract-fixture canned response",
+            )
         if isinstance(item, ToolResult):
             tool_result_count += 1
 
@@ -2186,10 +3280,12 @@ async def test_tool_yields_exactly_one_tool_result(tool_class, workspace):
         )
 
 @pytest.mark.parametrize("tool_class", ALL_REGISTERED_TOOL_CLASSES)
-async def test_tool_does_not_raise_on_invalid_input(tool_class, workspace):
+async def test_tool_does_not_raise_on_invalid_input(
+    tool_class, workspace, contract_fixtures,
+):
     """Tools must return ToolResult(is_error=True) rather than raising."""
-    tool = tool_class(workspace)
-    context = ToolExecutionContext(cwd=workspace)
+    tool = _construct_tool_for_contract(tool_class, workspace, contract_fixtures)
+    context = _make_contract_context(workspace, contract_fixtures)
 
     # Deliberately invalid arguments that get past Pydantic but fail at execution
     # (e.g., non-existent file for read_file)
@@ -2207,6 +3303,60 @@ async def test_tool_does_not_raise_on_invalid_input(tool_class, workspace):
 These tests run against *every* registered tool class without hardcoding
 which tools exist, so new tools automatically get covered.
 
+**Contract fixture pattern (§2.9.2.d, §2.9.3.g):** tools that need
+external state get it via a shared `ContractFixtures` dataclass
+constructed per-test:
+
+```python
+@dataclass
+class ContractFixtures:
+    clarification_coordinator: ClarificationCoordinator
+    model_router: MagicMock  # mocked ModelRouter for RequestReviewTool
+    git_workspace: Path      # real git fixture for _collect_git_diff
+
+@pytest.fixture
+def contract_fixtures(workspace):
+    coordinator = ClarificationCoordinator()
+    router = _mock_model_router(default_response="APPROVE")
+    return ContractFixtures(
+        clarification_coordinator=coordinator,
+        model_router=router,
+        git_workspace=workspace,
+    )
+
+def _construct_tool_for_contract(tool_class, workspace, fixtures):
+    # Tools whose constructors need extra dependencies get them from
+    # fixtures. This is an enumerated switch, not a reflection hack,
+    # per §2.8 "no hardcoded special cases" — the switch IS the
+    # registration contract.
+    if tool_class is RequestClarificationTool:
+        return RequestClarificationTool()  # stateless
+    if tool_class is RequestReviewTool:
+        return RequestReviewTool(
+            model_router=fixtures.model_router,
+            workspace_dir=workspace,
+        )
+    return tool_class(workspace)
+
+def _make_contract_context(workspace, fixtures):
+    return ToolExecutionContext(
+        cwd=workspace,
+        tool_use_id="toolu_contract_test",
+        clarification_coordinator=fixtures.clarification_coordinator,
+        original_user_request="contract-test user request",
+    )
+```
+
+**Why this is not a violation of §2.8:** the contract test has to
+construct tools with their real dependencies somewhere. A switch on
+tool class in one place — the contract fixture constructor — is
+clearer than a dependency-injection framework and is contained to
+the test file. The production `register_interaction_tools` helper
+does the same enumeration in `_create_engine` (§4.12). If a tool
+class is added to `ALL_REGISTERED_TOOL_CLASSES` without a fixture
+branch here, the test fails loudly at construction time — the
+mechanical gate holds.
+
 ### 7.4 Agent loop integration tests
 
 `tests/openharness/engine/test_agent_loop_integration.py`, using
@@ -2221,6 +3371,51 @@ a mocked API client:
 - SessionCollector counting (write_file ×2 + edit_file ×3 + bash
   success → correct counts in SessionComplete)
 - Zero tool calls → no SessionComplete emitted
+
+**Round 2 additions:**
+
+- **`test_clarification_roundtrip_happy_path`** — mock API client
+  fires a `request_clarification` tool call; a background task
+  publishes a canned response to the session's return channel; the
+  agent's tool receives the response and continues; assert the
+  second API call carries the tool result with the canned response.
+- **`test_clarification_timeout_halts_session`** — mock API client
+  fires a `request_clarification`; no response is published;
+  `CLARIFICATION_TIMEOUT_SECONDS` is overridden to 0.1s; assert the
+  loop yields `ErrorEvent(recoverable=False)` and exits.
+- **`test_clarification_during_multi_tool_turn`** — agent calls
+  `read_file` then `request_clarification` in the same turn; the
+  first tool completes synchronously, the second pauses; response
+  arrives, second tool completes, agent continues.
+- **`test_request_review_happy_path`** — mock `ModelRouter.generate`
+  returns `"APPROVE\n"`; agent calls `request_review`; tool result
+  is `APPROVE`; agent continues.
+- **`test_request_review_parses_verdict_with_details`** — mock router
+  returns `"REVISE add null check on line 42"`; tool result preserves
+  the full line.
+- **`test_pre_turn_hook_mutates_system_prompt`** — register a
+  `pre_turn` hook that appends `"<extra>"` to the system prompt
+  buffer; run one turn; assert the mock API client saw the modified
+  system prompt.
+- **`test_pre_tool_call_hook_blocks_tool`** — register a
+  `pre_tool_call` hook that returns `PreToolCallBlock("blocked by
+  test")` for tool name `"bash"`; agent tries to call bash; assert
+  the loop yields `ToolExecutionCompleted(is_error=True,
+  output="blocked by test")` without executing the bash tool.
+- **`test_post_turn_hook_fires_on_end_turn`** — register a
+  `post_turn` hook that increments a counter; run a turn with
+  `stop_reason=end_turn`; assert the counter is 1.
+- **`test_pre_turn_hook_exception_halts_loop`** — register a
+  `pre_turn` hook that raises `RuntimeError`; assert loop emits
+  `ErrorEvent(recoverable=False)` with the hook name in the message.
+- **`test_system_prompt_slot_substitution`** — register a
+  `system_prompt_slots["project_specs"]` filler returning
+  `"spec content"`; build system prompt; assert `"spec content"`
+  appears in place of the `{{project_specs}}` placeholder.
+- **`test_system_prompt_slot_missing_is_stripped`** — register no
+  slot fillers; build system prompt; assert no literal
+  `{{project_specs}}` appears in the output (the regex cleanup
+  stripped it).
 
 ### 7.5 Workspace manager integration tests
 
@@ -2242,34 +3437,105 @@ Mocking strategy: `git.go` and `keys.go` are thin wrappers; tests inject
 
 ### 7.6 End-to-end smoke test
 
-`tests/e2e/test_variant_b_smoke.py` — runs against a real LLM:
+`tests/e2e/test_variant_b_smoke.py` — runs against a real LLM with
+real Redis (docker-compose dev instance). Round 2 rewrites this test
+to exercise the clarification round-trip in addition to the original
+shape assertions.
 
 ```python
 @pytest.mark.e2e
 @pytest.mark.skipif(not os.getenv("FORGE_E2E_ENABLED"), reason="E2E disabled")
-async def test_agent_can_complete_variant_b_workflow():
+async def test_agent_can_complete_variant_b_workflow_with_clarification(
+    redis_client,
+):
     # 1. Set up a small fixture Go project in a temp workspace
     workspace = _setup_fixture_go_project()
+    session_id = f"test-e2e-{uuid.uuid4().hex[:8]}"
 
-    # 2. Create an agent session and submit a real message
-    engine = _create_engine(
+    # 2. Create an agent session with an intentionally ambiguous prompt
+    engine = await _create_engine(
         RunRequest(
-            session_id="test-e2e",
+            session_id=session_id,
             project_id=1,
             workspace_path=str(workspace.relative_to(FORGE_WORKSPACE_ROOT)),
-            message="Add a GET /hello endpoint that returns 'world' as JSON.",
+            message=(
+                "Add a new HTTP endpoint that returns greeting data. "
+                "The exact path, greeting message, and response format "
+                "are up to you — ask if you need clarification."
+            ),
         ),
         workspace_dir=workspace,
+        redis_client=redis_client,
     )
 
-    # 3. Collect events
+    # 3. Background task: when the agent asks for clarification, respond.
+    clarification_responded = asyncio.Event()
+
+    async def respond_to_clarifications():
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe(f"agent:clarification_watch:{session_id}")
+        # This is a test-only sidecar channel; ai-worker publishes
+        # ClarificationRequested events to it via an e2e-only hook.
+        async for message in pubsub.listen():
+            if message["type"] != "message":
+                continue
+            event = json.loads(message["data"])
+            if event["type"] == "clarification_requested":
+                # Respond via the real /api/sessions/{id}/clarify path
+                await forge_core_client.post(
+                    f"/api/sessions/{session_id}/clarify",
+                    json={
+                        "tool_use_id": event["tool_use_id"],
+                        "response": (
+                            "Path /hello, returns JSON {\"greeting\": \"world\"}, "
+                            "HTTP 200 status."
+                        ),
+                    },
+                )
+                clarification_responded.set()
+                break
+
+    responder_task = asyncio.create_task(respond_to_clarifications())
+
+    # 4. Collect events from the agent's forward SSE stream
     events: List[StreamEvent] = []
     async for event in engine.submit_message(
-        "Add a GET /hello endpoint that returns 'world' as JSON."
+        "Add a new HTTP endpoint that returns greeting data. "
+        "The exact path, greeting message, and response format "
+        "are up to you — ask if you need clarification."
     ):
         events.append(event)
 
-    # 4. Assert the workflow signature
+    responder_task.cancel()
+
+    # 5. Assert the clarification happened
+    clarification_events = [
+        e for e in events if isinstance(e, ClarificationRequested)
+    ]
+    assert len(clarification_events) >= 1, (
+        "Agent did not call request_clarification despite ambiguous prompt"
+    )
+    assert clarification_responded.is_set(), (
+        "Background responder did not publish to return channel"
+    )
+
+    # 6. Assert the tool execution completed (round-trip closed)
+    clarify_completions = [
+        e for e in events
+        if isinstance(e, ToolExecutionCompleted)
+        and e.tool_name == "request_clarification"
+    ]
+    assert len(clarify_completions) >= 1, (
+        "request_clarification did not complete (no ToolExecutionCompleted)"
+    )
+    assert clarify_completions[0].is_error is False, (
+        "Clarification round-trip returned an error"
+    )
+    assert "world" in clarify_completions[0].output or "/hello" in clarify_completions[0].output, (
+        "Clarification response did not contain the injected text"
+    )
+
+    # 7. Assert the original workflow shape (unchanged from Round 1)
     tool_calls = [e for e in events if isinstance(e, ToolExecutionCompleted)]
     tool_names = [t.tool_name for t in tool_calls]
 
@@ -2285,7 +3551,7 @@ async def test_agent_can_complete_variant_b_workflow():
     )
     assert session_complete is not None, "No SessionComplete emitted"
 
-    # 5. Verify the workspace actually has a /hello endpoint that compiles
+    # 8. Verify the workspace actually has a /hello endpoint that compiles
     result = subprocess.run(
         ["go", "build", "./..."],
         cwd=workspace,
@@ -2295,10 +3561,18 @@ async def test_agent_can_complete_variant_b_workflow():
     assert result.returncode == 0, f"Build failed: {result.stderr}"
 ```
 
-- Runs in CI only on merge to main (cost ~$0.10 per run).
+- Runs in CI only on merge to main (cost ~$0.20 per run — clarification
+  adds one extra LLM turn beyond Round 1's ~$0.10).
 - Uses a known-stable fixture project (small, ~5 files).
 - Does **not** assert specific tool call counts or phases — only the
   presence of the expected shape. Real agents are non-deterministic.
+- **Requires a running Redis instance.** The E2E test harness spins
+  up the docker-compose dev Redis before the test suite.
+- The `agent:clarification_watch:{session_id}` sidecar channel is a
+  **test-only construct**: during E2E runs, a hook is registered via
+  `AgentHookRegistry` that echoes `ClarificationRequested` events to
+  the watch channel. The production deploy has no such hook. This is
+  documented in the fixture setup file.
 
 The existing `ai-worker/tests/e2e/test_agent_pair_pipeline_e2e.py`
 (commit a9d60e8) is **deleted** since pair_pipeline doesn't exist.
@@ -2369,6 +3643,57 @@ logger.info(
         "duration_ms": ...,
     },
 )
+
+# Round 2 additions — bidirectional RPC (§2.9.2)
+
+logger.info(
+    "agent.clarification_requested",
+    extra={
+        "session_id": ...,
+        "tool_use_id": ...,
+        "question_length": len(question),
+    },
+)
+
+logger.info(
+    "agent.clarification_responded",
+    extra={
+        "session_id": ...,
+        "tool_use_id": ...,
+        "response_length": len(response),
+        "latency_ms": ...,  # from ClarificationRequested to response delivered
+    },
+)
+
+logger.warning(
+    "agent.clarification_timeout",
+    extra={
+        "session_id": ...,
+        "tool_use_id": ...,
+        "timeout_seconds": CLARIFICATION_TIMEOUT_SECONDS,
+    },
+)
+
+# Round 2 additions — reviewer meta-tool (§2.9.3)
+
+logger.info(
+    "agent.review_requested",
+    extra={
+        "session_id": ...,
+        "summary_length": len(summary),
+        "diff_bytes": len(current_diff),
+    },
+)
+
+logger.info(
+    "agent.review_verdict",
+    extra={
+        "session_id": ...,
+        "verdict": "APPROVE" | "REVISE" | "REJECT",
+        "details_length": len(details),
+        "latency_ms": ...,
+    },
+)
 ```
 
 ---
@@ -2424,8 +3749,11 @@ Only after Step 2 passes:
 
 - Delete `ai-worker/src/openharness/engine/pair_pipeline.py`.
 - Delete `forge-portal/components/agent/build-card.tsx` and test.
-- Remove all remaining `fix_loop_*` references, `Purpose.REVIEW` branch
-  in `_create_engine`, `AgentRole.coder|reviewer` usage.
+- Remove all remaining `fix_loop_*` references, the `Purpose.REVIEW`
+  branch in `_create_engine` (the **enum value** `Purpose.REVIEW` is
+  retained for `RequestReviewTool`'s internal use — see §2.9.3.b —
+  only the `_create_engine` switch branch that selected a different
+  system prompt is removed), `AgentRole.coder|reviewer` usage.
 - Delete `ai-worker/tests/e2e/test_agent_pair_pipeline_e2e.py`.
 - Commit as a single "remove legacy pair_pipeline" commit so rollback is
   clean if needed post-deploy.
@@ -2539,52 +3867,74 @@ brainstorming session. The confirmation chain:
 
 ## Appendix B — Files touched (summary)
 
+Files are tagged with their phase. **1a** = Phase 1a (workspace
+minimal), **1b** = Phase 1b (deploy keys), **2-4** = Phase 2/3/4
+(tool refactor), **5** = Phase 5 agent loop, **5a** = Phase 5a
+bidirectional RPC (Round 2), **6** = frontend, **7** = deploy.
+
 **New files:**
-- `forge-core/internal/workspace/state.go` — Workspace, DeployKey, status DAO
-- `forge-core/internal/workspace/ensure.go` — EnsureReady state machine
-- `forge-core/internal/workspace/git.go` — SSH-aware git command wrapper
-- `forge-core/internal/workspace/keys.go` — ed25519 gen, AES-GCM crypto, GitHub deploy key upload
-- `forge-core/internal/workspace/prep.go` — HTTP client for ai-worker /api/workspace/prep
-- `forge-core/internal/workspace/state_test.go`, `ensure_test.go`, `keys_test.go`
-- `forge-core/migrations/{nnn}_create_workspaces.sql`
-- `forge-core/migrations/{nnn+1}_create_project_deploy_keys.sql`
-- `ai-worker/src/openharness/tools/workspace_path.py`
-- `ai-worker/src/openharness/tools/file_tools.py` — Read/Write/Edit/Glob/Grep/ListDirectory
-- `ai-worker/src/openharness/tools/bash_tool.py` — BashTool + bwrap wrapper
-- `ai-worker/src/openharness/tools/phase_tool.py` — SetPhaseTool
-- `ai-worker/src/openharness/engine/session_collector.py`
-- `ai-worker/src/api_server.py` (new endpoint) — `POST /api/workspace/prep` handler
-- `ai-worker/tests/openharness/tools/test_bash_adversarial.py`
-- `ai-worker/tests/openharness/tools/test_workspace_path_adversarial.py`
-- `ai-worker/tests/openharness/tools/test_base_tool_contract.py`
-- `ai-worker/tests/e2e/test_variant_b_smoke.py`
+
+- *Workspace (Phase 1a):*
+  - `forge-core/internal/workspace/state.go` — Workspace status DAO **(1a)**
+  - `forge-core/internal/workspace/ensure.go` — EnsureReady state machine **(1a)**
+  - `forge-core/internal/workspace/git.go` — git command wrapper (HTTPS+token in 1a, rewritten to SSH in 1b) **(1a, rewritten in 1b)**
+  - `forge-core/internal/workspace/prep.go` — HTTP client for ai-worker /api/workspace/prep **(1a)**
+  - `forge-core/internal/workspace/state_test.go`, `ensure_test.go` **(1a)**
+  - `forge-core/migrations/{nnn}_create_workspaces.sql` **(1a)**
+- *Deploy keys (Phase 1b):*
+  - `forge-core/internal/workspace/keys.go` — ed25519 gen, AES-GCM crypto, GitHub deploy key upload **(1b)**
+  - `forge-core/internal/workspace/keys_test.go` **(1b)**
+  - `forge-core/migrations/{nnn+1}_create_project_deploy_keys.sql` **(1b)**
+- *Tool layer (Phase 2-4):*
+  - `ai-worker/src/openharness/tools/workspace_path.py` **(2)**
+  - `ai-worker/src/openharness/tools/file_tools.py` — Read/Write/Edit/Glob/Grep/ListDirectory **(3)**
+  - `ai-worker/src/openharness/tools/bash_tool.py` — BashTool + bwrap wrapper **(4)**
+  - `ai-worker/src/openharness/tools/phase_tool.py` — SetPhaseTool **(4)**
+  - `ai-worker/src/openharness/engine/session_collector.py` **(5)**
+  - `ai-worker/src/api_server.py` (new endpoint) — `POST /api/workspace/prep` handler **(1a)**
+  - `ai-worker/tests/openharness/tools/test_bash_adversarial.py` **(4)**
+  - `ai-worker/tests/openharness/tools/test_workspace_path_adversarial.py` **(2)**
+  - `ai-worker/tests/openharness/tools/test_base_tool_contract.py` **(2, expanded in 5)**
+  - `ai-worker/tests/e2e/test_variant_b_smoke.py` **(7)**
+- *Round 2 additions — Interaction tools + hooks + bidirectional RPC:*
+  - `ai-worker/src/openharness/engine/agent_hooks.py` — `AgentHookRegistry`, `AgentHookContext`, `PreToolCallBlock`, Protocol signatures, `ClarificationCoordinator`, `ClarificationTimeout` **(5 + 5a)**
+  - `ai-worker/src/openharness/engine/return_channel.py` — `ReturnChannel` class, Redis pub/sub subscriber lifecycle, `ClarificationResponse` validation **(5a)**
+  - `ai-worker/src/openharness/tools/interaction_tools.py` — `RequestClarificationTool`, `RequestReviewTool`, `register_interaction_tools` helper **(5)**
+  - `ai-worker/src/openharness/engine/prompts.py` — extracted `build_system_prompt` + new `build_reviewer_prompt` + `REVIEWER_SYSTEM_PROMPT` + `parse_verdict` **(5)**
+  - `ai-worker/tests/openharness/engine/test_return_channel_adversarial.py` — adversarial bidirectional RPC tests **(5a)**
+  - `ai-worker/tests/openharness/engine/test_hooks_integration.py` — hook contract tests **(5)**
+  - `ai-worker/tests/openharness/engine/test_clarification_roundtrip_integration.py` **(5a)**
+  - `ai-worker/tests/openharness/tools/test_interaction_tools.py` — unit tests for RequestClarificationTool, RequestReviewTool **(5)**
+  - `forge-core/internal/module/agent/clarify_handler.go` — `POST /api/sessions/{id}/clarify` handler **(5a)**
+  - `forge-core/internal/module/agent/clarify_handler_test.go` **(5a)**
 
 **Modified files:**
-- `forge-core/internal/workspace/manager.go` — replace `EnsureClone` with
-  `EnsureReady`, delete `injectToken`; keep `ProjectDir`/`TaskDir`/`CreateWorktree`/`WriteFiles`/`CleanupTask`
-- `forge-core/internal/workspace/manager_test.go` — remove `EnsureClone` tests, add `EnsureReady`
-- `forge-core/cmd/forge-core/main.go` — pass `ProjectLookup` into workspace.NewManager, wire deploy-key crypto service
-- `forge-core/internal/module/agent/service.go` — call `workspace.Manager.EnsureReady` before agent, pass relative workspace_path
-- `forge-core/internal/temporal/activity/build_activities.go` — migrate `EnsureClone` call at line 96 to `EnsureReady`
-- `forge-core/internal/temporal/activity/devops_activities.go` — migrate `EnsureClone` call at line 134 to `EnsureReady`
-- `ai-worker/src/openharness/tools/base.py` — new signature + SimpleTool
-- `ai-worker/src/openharness/tools/context_tools.py` — migrate to SimpleTool
-- `ai-worker/src/openharness/engine/query.py` — adapt tool execution to new AsyncIterator contract
-- `ai-worker/src/openharness/engine/query_engine.py` — SessionCollector integration
-- `ai-worker/src/openharness/engine/stream_events.py` — add PhaseChanged, add `tool_use_id` to ToolExecution* events, delete FixLoop*
-- `ai-worker/src/api_server.py` — remove pair routing, rewrite `_create_engine` to register T2 tools, LRU session cache
-- `ai-worker/Dockerfile` — add `apt install bubblewrap ripgrep`
-- `forge-portal/components/agent/agent-chat.tsx` — new event handling, visual fix-loop detection, remove coder/reviewer roles
-- `forge-portal/components/agent/step-ribbon.tsx` — dynamic phase tracking
-- `forge-portal/components/agent/tool-formatters.ts` — new tool formatters
-- `forge-portal/components/agent/code-panel.tsx` — degrade to read-only preview
-- `forge-portal/components/agent/thinking-indicator.tsx` — relocate rendering
+- `forge-core/internal/workspace/manager.go` — Phase 1a: call `workspace.EnsureReady` via manager; keep `injectToken` temporarily. Phase 1b: delete `injectToken`, route through `gitCommand()`. **(1a then 1b)**
+- `forge-core/internal/workspace/manager_test.go` — remove `EnsureClone` tests, add `EnsureReady` **(1a)**
+- `forge-core/cmd/forge-core/main.go` — Phase 1a: pass `ProjectLookup` (HTTPS+token shape) into workspace.NewManager. Phase 1b: update `ProjectLookup` to SSH shape, wire deploy-key crypto service. **(1a then 1b)**
+- `forge-core/internal/module/agent/service.go` — call `workspace.Manager.EnsureReady` before agent, pass relative workspace_path **(1a)**
+- `forge-core/internal/temporal/activity/build_activities.go` — migrate `EnsureClone` call at line 96 to `EnsureReady` **(1a)**
+- `forge-core/internal/temporal/activity/devops_activities.go` — migrate `EnsureClone` call at line 134 to `EnsureReady` **(1a)**
+- `ai-worker/src/openharness/tools/base.py` — new signature + SimpleTool **(2)**
+- `ai-worker/src/openharness/tools/context_tools.py` — migrate to SimpleTool **(2)**
+- `ai-worker/src/openharness/engine/query.py` — adapt tool execution to new AsyncIterator contract; add `AgentHookRegistry` invocation points (pre_turn, pre_tool_call, post_turn); thread `clarification_coordinator` into `ToolExecutionContext` **(2, expanded in 5)**
+- `ai-worker/src/openharness/engine/query_engine.py` — SessionCollector integration; `__init__` accepts hook registry + coordinator + return channel; new `close()` method for teardown **(5)**
+- `ai-worker/src/openharness/engine/stream_events.py` — add PhaseChanged, add `tool_use_id` to ToolExecution* events, delete FixLoop*, add `ClarificationRequested(question, tool_use_id)` **(4, expanded in 5a)**
+- `ai-worker/src/api_server.py` — remove pair routing, rewrite `_create_engine` to register T2 tools, LRU session cache, wire `AgentHookRegistry` + `ClarificationCoordinator` + `ReturnChannel`, `_serialize_event` branch for `ClarificationRequested` **(5, 5a)**
+- `ai-worker/Dockerfile` — add `apt install bubblewrap ripgrep` **(4)**
+- `forge-portal/components/agent/agent-chat.tsx` — new event handling, visual fix-loop detection, remove coder/reviewer roles, add clarification input state machine **(6)**
+- `forge-portal/components/agent/step-ribbon.tsx` — dynamic phase tracking **(6)**
+- `forge-portal/components/agent/tool-formatters.ts` — new tool formatters **(6)**
+- `forge-portal/components/agent/code-panel.tsx` — degrade to read-only preview **(6)**
+- `forge-portal/components/agent/thinking-indicator.tsx` — relocate rendering **(6)**
+- `forge-portal/components/agent/clarification-input.tsx` — **new** clarification input component **(6)**
 
 **Deleted files:**
-- `ai-worker/src/openharness/engine/pair_pipeline.py`
-- `ai-worker/tests/e2e/test_agent_pair_pipeline_e2e.py`
-- `forge-portal/components/agent/build-card.tsx`
-- `forge-portal/components/agent/build-card.test.tsx`
+- `ai-worker/src/openharness/engine/pair_pipeline.py` **(7 Step 3)**
+- `ai-worker/tests/e2e/test_agent_pair_pipeline_e2e.py` **(7 Step 3)**
+- `forge-portal/components/agent/build-card.tsx` **(7 Step 3)**
+- `forge-portal/components/agent/build-card.test.tsx` **(7 Step 3)**
+- `docs/plans/chronos-2026-04-09/phase-1-workspace.md` **(Round 2 plan rewrite, replaced by phase-1a + phase-1b)**
 
 ---
 
