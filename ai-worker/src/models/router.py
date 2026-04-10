@@ -118,11 +118,42 @@ def _is_auth_error(exc: Exception) -> bool:
     return False
 
 
+class ModelRouterError(RuntimeError):
+    """Raised by ModelRouter when no provider is available or all
+    providers fail for a given purpose. Used by RequestReviewTool
+    and require_model_for fail-fast checks."""
+
+
 class ModelRouter:
     """Routes LLM calls through a fallback chain with circuit breakers."""
 
     def __init__(self) -> None:
         self._breakers: dict[str, CircuitBreaker] = {}
+
+    def require_model_for(self, purpose: Purpose) -> None:
+        """Fail-fast assertion that at least one model is configured
+        for the given purpose. Used by _create_engine on startup so
+        missing reviewer model configuration is caught immediately
+        rather than at the first request_review call.
+
+        Spec §2.9.3.f: if Purpose.REVIEW has no model registered,
+        the agent does not start.
+        """
+        chain = ROUTING_RULES.get(purpose, [])
+        if not chain:
+            raise ModelRouterError(
+                f"no model registered for purpose {purpose.name} — "
+                f"check ROUTING_RULES in router.py"
+            )
+        # Check if at least one provider has an API key
+        for provider, _model in chain:
+            if self._get_api_key(provider):
+                return
+        raise ModelRouterError(
+            f"no API key configured for any provider in purpose "
+            f"{purpose.name} — set at least one of: "
+            + ", ".join(f"FORGE_{p.upper()}_API_KEY" for p, _ in chain)
+        )
 
     def _get_breaker(self, key: str) -> CircuitBreaker:
         if key not in self._breakers:

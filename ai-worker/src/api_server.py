@@ -4,6 +4,7 @@ Endpoints:
   POST /api/run           — submit a message, run QueryEngine, publish events to Redis
   DELETE /api/sessions/{id} — clear a session
   GET /health             — health check
+  POST /api/workspace/prep — language-specific dependency pre-install
 
 Dual-storage pattern (Stream 4b): every event is written to Redis
 Streams (hot SSE buffer, capped at settings.agent_stream_maxlen) AND
@@ -20,38 +21,23 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from src.openharness.engine.stream_events import StreamEvent  # trivial import, safe
+from src.openharness.engine.stream_events import StreamEvent
 
-try:
-    from src.openharness.engine.pair_pipeline import (
-        PairPipelineConfig,
-        run_pair_pipeline,
-    )
-    from src.models.router import Purpose
-    _PAIR_PIPELINE_AVAILABLE = True
-except Exception as e:
-    logging.getLogger(__name__).error(
-        "pair_pipeline imports failed at startup — pair_pipeline route "
-        "will return 503; falling back to QueryEngine for all requests: %s",
-        e,
-    )
-    PairPipelineConfig = None  # type: ignore
-    run_pair_pipeline = None  # type: ignore
-    Purpose = None  # type: ignore
-    _PAIR_PIPELINE_AVAILABLE = False
+# LRU-bounded session cache (spec §5.8, implemented in Phase 5 Task 5.4)
+from src.openharness.engine.session_cache import LRUSessionCache
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Forge AI Worker", version="1.0.0")
 
-# In-memory session store: session_id -> QueryEngine
-_sessions: Dict[str, Any] = {}
+# In-memory session store: session_id -> QueryEngine (LRU bounded)
+_sessions = LRUSessionCache(max_size=100)
 
 # Lazy-initialized PG pool for dual-storage writes. See _get_pg_pool.
 _pg_pool: Any = None
@@ -79,16 +65,10 @@ async def run_agent(req: RunRequest) -> RunResponse:
 
     Events are published to Redis Streams for the Go SSE handler to consume.
     Returns 202 Accepted immediately (fire-and-forget pattern).
-
-    Engine creation is lazy: _route_and_stream decides between pair_pipeline
-    (when workspace_path is set and resolves to a real directory) and the
-    legacy QueryEngine session path, creating/caching engines on demand.
     """
     session_id = req.session_id or str(uuid.uuid4())
     correlation_id = req.correlation_id or str(uuid.uuid4())
 
-    # Fire-and-forget: run in background task. _route_and_stream handles
-    # session engine lookup/creation on the legacy path.
     asyncio.create_task(
         _run_and_publish(req, session_id, correlation_id),
     )
@@ -102,7 +82,7 @@ async def run_agent(req: RunRequest) -> RunResponse:
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str) -> JSONResponse:
-    engine = _sessions.pop(session_id, None)
+    engine = _sessions.pop(session_id)
     if engine is None:
         raise HTTPException(status_code=404, detail="Session not found")
     engine.clear()
@@ -118,61 +98,286 @@ async def health() -> Dict[str, Any]:
     }
 
 
-def _create_engine(req: RunRequest, purpose: "Purpose | None" = None) -> Any:
-    """Create a QueryEngine for a new session.
+# ---------------------------------------------------------------------------
+# Workspace prep — dependency pre-install for the A2 architecture.
+# Called by forge-core's workspace.Manager.EnsureReady (Phase 1) after
+# a fresh clone. We run go mod download / mvn dependency:go-offline /
+# npm ci / etc. in the ai-worker container (which has network +
+# language toolchains, unlike the bwrap sandbox). Spec §3.9.
+# ---------------------------------------------------------------------------
 
-    purpose controls the ModelRouter routing and the default system
-    prompt. Purpose.GENERATE (default) gets the coder prompt;
-    Purpose.REVIEW gets the reviewer prompt used by pair_pipeline's
-    reviewer engine.
+
+class PrepRequest(BaseModel):
+    tenant_id: int
+    project_id: int
+    workspace_path: str  # relative to FORGE_WORKSPACE_ROOT
+
+
+class PrepResponse(BaseModel):
+    status: str  # "ok" | "skipped" | "error"
+    language: Optional[str] = None
+    command: Optional[str] = None
+    error: Optional[str] = None
+    reason: Optional[str] = None
+
+
+# Fallback prep commands by language name. Used when the
+# LanguageProfile doesn't expose a prep_command attribute.
+_FALLBACK_PREP_COMMANDS = {
+    "go": "go mod download",
+    "python": "pip install -r requirements.txt",
+    "java": "mvn dependency:go-offline -B",
+    "javascript": "npm ci",
+    "typescript": "npm ci",
+    "rust": "cargo fetch",
+}
+
+PREP_TIMEOUT_SECONDS = 600  # 10 minutes
+
+
+@app.post("/api/workspace/prep", response_model=PrepResponse)
+async def workspace_prep(req: PrepRequest) -> PrepResponse:
+    """Run language-specific dependency pre-install for a workspace.
+
+    Called by forge-core after a fresh clone (Phase 1 Task 1.5).
+    Runs OUTSIDE the bash sandbox because we need network access
+    and the language toolchains here — the ai-worker container
+    has all of them, the bwrap sandbox does not.
     """
+    from src.openharness.skills.project_language import (
+        detect_language,
+        load_all_language_profiles,
+    )
+
+    ws_root = os.environ.get("FORGE_WORKSPACE_ROOT", "/data/forge/workspaces")
+    workspace_dir = Path(os.path.join(ws_root, req.workspace_path))
+
+    if not workspace_dir.is_dir():
+        return PrepResponse(
+            status="error",
+            error=f"workspace directory does not exist: {workspace_dir}",
+        )
+
+    # Detect language
+    try:
+        profiles = load_all_language_profiles("skills/languages")
+        profile = detect_language(workspace_dir, profiles)
+    except Exception as e:
+        logger.warning("workspace prep: language detection failed: %s", e)
+        return PrepResponse(
+            status="skipped",
+            reason=f"language detection error: {e}",
+        )
+
+    if profile is None:
+        return PrepResponse(
+            status="skipped",
+            reason="no language detected; agent will see dependency errors if any",
+        )
+
+    # Resolve prep command
+    prep_cmd = getattr(profile, "prep_command", None)
+    if not prep_cmd:
+        prep_cmd = _FALLBACK_PREP_COMMANDS.get(profile.name.lower())
+    if not prep_cmd:
+        return PrepResponse(
+            status="skipped",
+            language=profile.name,
+            reason=(
+                f"language '{profile.name}' detected but no prep command known; "
+                "agent will see dependency errors if any"
+            ),
+        )
+
+    # Run the prep command — NOT in bwrap
+    logger.info(
+        "workspace prep: running %r in %s (language=%s)",
+        prep_cmd,
+        workspace_dir,
+        profile.name,
+    )
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            prep_cmd,
+            cwd=str(workspace_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await asyncio.wait_for(
+            proc.communicate(), timeout=PREP_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        return PrepResponse(
+            status="error",
+            language=profile.name,
+            command=prep_cmd,
+            error=f"prep command timed out after {PREP_TIMEOUT_SECONDS} seconds",
+        )
+    except Exception as e:
+        return PrepResponse(
+            status="error",
+            language=profile.name,
+            command=prep_cmd,
+            error=f"prep command failed to start: {e}",
+        )
+
+    if proc.returncode != 0:
+        tail = stdout.decode("utf-8", errors="replace")[-1000:]
+        return PrepResponse(
+            status="error",
+            language=profile.name,
+            command=prep_cmd,
+            error=f"prep command exited {proc.returncode}: ...{tail}",
+        )
+
+    logger.info("workspace prep: %s ok (language=%s)", prep_cmd, profile.name)
+    return PrepResponse(
+        status="ok",
+        language=profile.name,
+        command=prep_cmd,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Engine construction + routing
+# ---------------------------------------------------------------------------
+
+
+def _create_engine(req: RunRequest, workspace_dir: Path) -> Any:
+    """Create a QueryEngine wired with the full T2 tool set.
+
+    Called lazily by _route_and_stream when a new session_id is seen.
+    Hard-fails if the model router is unavailable — no AsyncMock
+    fallback.
+    """
+    from src.openharness.engine.agent_hooks import AgentHookContext, AgentHookRegistry
+    from src.openharness.engine.prompts import build_system_prompt
     from src.openharness.engine.query_engine import QueryEngine
-    from src.openharness.tools.base import ToolRegistry
-    from src.openharness.hooks.loader import HookRegistry
     from src.openharness.hooks.executor import HookExecutor
+    from src.openharness.hooks.loader import HookRegistry
     from src.openharness.permissions.checker import PermissionChecker
     from src.openharness.permissions.modes import PermissionMode
-    # NOTE: Purpose is lazy-imported here to tolerate pair_pipeline startup
-    # failures — when the module-level guarded import above sets Purpose to
-    # None, the legacy QueryEngine path still needs a real Purpose value.
-    # See try/except at top of file.
-    from src.models.router import Purpose as _Purpose
+    from src.openharness.tools import (
+        register_exec_tools,
+        register_file_tools,
+    )
+    from src.openharness.tools.base import ToolRegistry
+    from src.openharness.tools.context_tools import register_context_tools
+    from src.openharness.tools.interaction_tools import register_interaction_tools
 
-    if purpose is None:
-        purpose = _Purpose.GENERATE
-
-    # Try to load model router adapter
+    # ModelRouter — required. No AsyncMock fallback.
     try:
-        from src.models.router import ModelRouter
+        from src.models.router import ModelRouter, Purpose
         from src.openharness.api.providers.router_adapter import ModelRouterAdapter
-        router = ModelRouter()
-        api_client = ModelRouterAdapter(router, purpose=purpose)
-    except Exception as e:
-        logger.warning("ModelRouter not available, using mock: %s", e)
-        from unittest.mock import AsyncMock
-        api_client = AsyncMock()
 
-    # Load registries
+        router = ModelRouter()
+        api_client = ModelRouterAdapter(router, purpose=Purpose.GENERATE)
+    except Exception as e:
+        raise RuntimeError(
+            f"ModelRouter unavailable — agent cannot start. "
+            f"Check provider credentials and network. Underlying error: {e}"
+        ) from e
+
+    # Fail-fast: verify reviewer model is configured (§2.9.3.f)
+    try:
+        router.require_model_for(Purpose.REVIEW)
+    except Exception as e:
+        logger.warning("Reviewer model not configured (non-fatal): %s", e)
+
+    # Tool registry — all tools
     tool_registry = ToolRegistry()
+
+    # Context tools (6): profile queries + read_project_file HTTP
+    register_context_tools(
+        tool_registry,
+        profiles={},
+        project_id=req.project_id,
+    )
+
+    # File tools (6): read/write/edit/glob/grep/list_directory
+    register_file_tools(tool_registry, workspace_dir)
+
+    # Exec tools (2): bash + set_phase
+    register_exec_tools(tool_registry, workspace_dir)
+
+    # Interaction meta-tools (2): request_clarification + request_review
+    register_interaction_tools(
+        registry=tool_registry,
+        model_router=router,
+        workspace_dir=workspace_dir,
+    )
+
+    # Agent hooks (Round 2) — empty registry for now
+    agent_hook_registry = AgentHookRegistry()
+    session_id = req.session_id or str(uuid.uuid4())
+    agent_hook_context = AgentHookContext(
+        project_id=req.project_id,
+        session_id=session_id,
+        workspace_dir=workspace_dir,
+        system_prompt_buffer=[],
+    )
+
+    # Hooks and permissions
     hook_registry = HookRegistry()
     hook_executor = HookExecutor(hook_registry)
     permission_checker = PermissionChecker(mode=PermissionMode.FULL_AUTO)
 
+    # Model + system prompt
     model = req.model or os.getenv("FORGE_DEFAULT_MODEL", "claude-sonnet-4-20250514")
 
     if req.system_prompt is not None:
         system_prompt = req.system_prompt
-    elif purpose == _Purpose.REVIEW:
-        system_prompt = (
-            "You are a strict code reviewer. You MUST respond with exactly "
-            "one of these three forms:\n"
-            "- APPROVE (if the code is correct and production-ready)\n"
-            "- REVISE <specific changes needed>\n"
-            "- REJECT <reason why the approach is fundamentally wrong>\n"
-            "Be terse. Do not ramble."
-        )
     else:
-        system_prompt = "You are a helpful AI coding assistant."
+        from src.openharness.skills.project_language import (
+            detect_language,
+            load_all_language_profiles,
+        )
+
+        language_name: Optional[str] = None
+        try:
+            profiles = load_all_language_profiles("skills/languages")
+            profile = detect_language(workspace_dir, profiles)
+            if profile is not None:
+                language_name = profile.name
+        except Exception as e:
+            logger.warning(
+                "language detection failed: %s (proceeding without)", e,
+            )
+
+        # build_system_prompt is async, but _create_engine is sync.
+        # Use asyncio to run it synchronously since we're called
+        # from an async context that will await us.
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # We're inside an async context — create a new event loop
+            # for the sync call. This is safe because build_system_prompt
+            # only does string manipulation + optional async slot fillers.
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                system_prompt = pool.submit(
+                    asyncio.run,
+                    build_system_prompt(
+                        language=language_name,
+                        workspace_path=str(workspace_dir),
+                        slots=agent_hook_registry.system_prompt_slots or None,
+                        hook_context=agent_hook_context,
+                    ),
+                ).result()
+        else:
+            system_prompt = loop.run_until_complete(
+                build_system_prompt(
+                    language=language_name,
+                    workspace_path=str(workspace_dir),
+                    slots=agent_hook_registry.system_prompt_slots or None,
+                    hook_context=agent_hook_context,
+                )
+            )
 
     return QueryEngine(
         api_client=api_client,
@@ -181,6 +386,9 @@ def _create_engine(req: RunRequest, purpose: "Purpose | None" = None) -> Any:
         system_prompt=system_prompt,
         hook_executor=hook_executor,
         permission_checker=permission_checker,
+        cwd=workspace_dir,
+        agent_hook_registry=agent_hook_registry,
+        agent_hook_context=agent_hook_context,
     )
 
 
@@ -188,83 +396,47 @@ async def _route_and_stream(
     req: RunRequest,
     session_id: str,
     correlation_id: str,
-):
-    """Route a chat message to either pair_pipeline (when workspace_path
-    is set and the resolved directory exists) or the legacy QueryEngine
-    path. Async generator. Yields only StreamEvent instances.
+) -> AsyncIterator[Any]:
+    """Route a chat message to the agent loop and yield stream events.
 
-    Exceptions propagate to the caller (_run_and_publish in Task 2.3c)
-    which turns them into ErrorEvent.
-
-    Routing rule (relative-path protocol, see plan amendment):
-      - req.workspace_path is empty/None → QueryEngine path
-      - req.workspace_path is set → join with FORGE_WORKSPACE_ROOT env,
-        then os.path.isdir check; if dir exists → pair_pipeline branch
-        (stubbed in Task 2.3a), otherwise WARN + fall back to QueryEngine.
+    The pair_pipeline fork is deleted in A2 — all requests go through
+    a single QueryEngine path. workspace_path is required; missing
+    workspace is a 400.
     """
-    # Decide routing. workspace_path is a RELATIVE fragment per the
-    # protocol amendment; resolve it against the ai-worker side's
-    # FORGE_WORKSPACE_ROOT env var so forge-core (host) and ai-worker
-    # (container mount) can live in different filesystems.
-    use_pair_pipeline = False
-    resolved_workspace: Optional[str] = None
-    if req.workspace_path:
-        ws_root = os.environ.get("FORGE_WORKSPACE_ROOT", "/data/forge/workspaces")
-        resolved_workspace = os.path.join(ws_root, req.workspace_path)
-        if os.path.isdir(resolved_workspace):
-            use_pair_pipeline = True
-        else:
-            logger.warning(
-                "workspace_path %r resolved to %r but directory does not exist "
-                "— falling back to QueryEngine (check docker volume mount + "
-                "FORGE_WORKSPACE_ROOT env)",
-                req.workspace_path,
-                resolved_workspace,
-            )
-
-    if use_pair_pipeline and not _PAIR_PIPELINE_AVAILABLE:
-        logger.warning(
-            "workspace_path is set but pair_pipeline is not available "
-            "(import failed at startup) — falling back to QueryEngine"
+    if not req.workspace_path:
+        raise HTTPException(
+            status_code=400,
+            detail="workspace_path is required (Phase 5+ A2 architecture)",
         )
-        use_pair_pipeline = False
 
-    if not use_pair_pipeline:
-        # Legacy path: single-shot QueryEngine. Reuse session engine
-        # from _sessions when present (continuity across messages) or
-        # create a fresh one on first message.
-        engine = _sessions.get(session_id)
-        if engine is None:
-            engine = _create_engine(req)
-            _sessions[session_id] = engine
-        async for event in engine.submit_message(req.message):
-            yield event
-        return
+    ws_root = os.environ.get("FORGE_WORKSPACE_ROOT", "/data/forge/workspaces")
+    resolved_workspace = Path(os.path.join(ws_root, req.workspace_path))
 
-    # pair_pipeline path: two engines, coder + reviewer, differentiated
-    # by Purpose. PairPipelineConfig.project_dir is the resolved
-    # container-visible absolute path where BuildVerifyHook will run
-    # `go build` / `mvn` / etc.
-    logger.info(
-        "pair_pipeline route: session=%s correlation=%s workspace=%s",
-        session_id, correlation_id, resolved_workspace,
-    )
-    coder = _create_engine(req, purpose=Purpose.GENERATE)
-    reviewer = _create_engine(req, purpose=Purpose.REVIEW)
-    config = PairPipelineConfig(project_dir=Path(resolved_workspace))
+    if not resolved_workspace.is_dir():
+        logger.error(
+            "workspace_path %r resolved to %r but directory does not exist "
+            "— forge-core should have called EnsureReady first.",
+            req.workspace_path,
+            str(resolved_workspace),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"workspace not ready: {resolved_workspace}",
+        )
 
-    async for item in run_pair_pipeline(
-        config=config,
-        coder_engine=coder,
-        reviewer_engine=reviewer,
-        initial_prompt=req.message,
-        code_files=None,  # LLM reads files via Read/Glob/Grep tools; no pre-seeded context
-    ):
-        if isinstance(item, StreamEvent):
-            yield item
-        # Non-StreamEvent yields (CycleResult, PairPipelineResult) are
-        # informational for direct callers of run_pair_pipeline (like
-        # the e2e test). HTTP callers get the event stream only.
+    # Get or create the engine
+    engine = _sessions.get(session_id)
+    if engine is None:
+        try:
+            engine = _create_engine(req, workspace_dir=resolved_workspace)
+        except RuntimeError as e:
+            from src.openharness.engine.stream_events import ErrorEvent
+            yield ErrorEvent(message=str(e), recoverable=False)
+            return
+        _sessions.put(session_id, engine)
+
+    async for event in engine.submit_message(req.message):
+        yield event
 
 
 async def _run_and_publish(
@@ -272,25 +444,13 @@ async def _run_and_publish(
 ) -> None:
     """Route the chat message through _route_and_stream and dual-write
     events to Redis Streams + PostgreSQL.
-
-    Redis is the hot buffer for SSE (capped at settings.agent_stream_maxlen
-    via XADD MAXLEN ~). PostgreSQL is the durable history source that the
-    frontend hydrates from on page load. Failures in either path are
-    logged but don't abort the other — hot SSE keeps flowing even if the
-    PG pool is unavailable, and vice versa.
-
-    Engine creation/session caching is now lazy inside _route_and_stream,
-    so this function no longer takes an `engine` argument. The pair_pipeline
-    vs. legacy QueryEngine routing decision is also made there.
     """
     redis_client = await _get_redis()
     pg_pool = await _get_pg_pool()
     stream_key = f"agent:stream:{session_id}"
     from src.config import settings
 
-    # Persist the user message before engine runs so history hydration
-    # shows the full conversation. Redis gets it too so late-joining SSE
-    # clients can see what was asked.
+    # Persist the user message before engine runs
     user_event = {
         "type": "user_message",
         "text": req.message,
@@ -352,9 +512,7 @@ async def _persist_message(
     redis_id: Optional[str],
     event_data: Dict[str, str],
 ) -> None:
-    """Insert one agent_messages row. Silent-fails on any error so the
-    hot SSE path keeps flowing even when PG is down or the schema
-    hasn't been migrated yet."""
+    """Insert one agent_messages row. Silent-fails on any error."""
     if pg_pool is None:
         return
     event_type = event_data.get("type", "unknown")
@@ -362,8 +520,6 @@ async def _persist_message(
     content = event_data.get("text") or event_data.get("message") or None
     tool_name = event_data.get("tool_name")
     correlation_id = event_data.get("correlation_id")
-    # Canonical payload: the whole event dict (as JSON). This lets the
-    # frontend replay in exactly the same shape Redis delivered.
     data_json = json.dumps(event_data)
 
     try:
@@ -385,15 +541,11 @@ async def _persist_message(
                 correlation_id,
             )
     except Exception as e:
-        # Common harmless errors: session not yet committed in PG (race
-        # with CreateSession), foreign key failure, PG down. Log and move
-        # on — Redis is the source of truth for the live UI.
         logger.debug("agent_messages insert failed: %s", e)
 
 
 def _role_for_event_type(event_type: str) -> Optional[str]:
-    """Derive a message `role` from the stream event_type for
-    lookup-by-role queries in the durable store."""
+    """Derive a message `role` from the stream event_type."""
     if event_type in ("text_delta", "turn_complete"):
         return "assistant"
     if event_type == "user_message":
@@ -441,6 +593,9 @@ def _serialize_event(event: Any, correlation_id: str) -> Dict[str, str]:
         base["tool_name"] = event.tool_name
         base["output"] = event.output[:4000]  # Truncate for Redis
         base["is_error"] = str(event.is_error)
+    elif isinstance(event, PhaseChanged):
+        base["type"] = "phase_changed"
+        base["phase"] = event.phase
     elif isinstance(event, ErrorEvent):
         base["type"] = "error"
         base["message"] = event.message
@@ -450,9 +605,6 @@ def _serialize_event(event: Any, correlation_id: str) -> Dict[str, str]:
         base["label"] = event.label
     elif isinstance(event, ThinkingStopped):
         base["type"] = "thinking_stopped"
-    elif isinstance(event, PhaseChanged):
-        base["type"] = "phase_changed"
-        base["phase"] = event.phase
     elif isinstance(event, ClarificationRequested):
         base["type"] = "clarification_requested"
         base["question"] = event.question
@@ -492,10 +644,7 @@ async def _get_redis() -> Any:
 
 
 async def _get_pg_pool() -> Any:
-    """Lazy-initialize the asyncpg connection pool for durable
-    agent_messages writes. Returns None when PG is unavailable so the
-    caller's try/except in _persist_message can silently skip the
-    write — Redis remains the source of truth for the live UI."""
+    """Lazy-initialize the asyncpg connection pool."""
     global _pg_pool
     if _pg_pool is not None:
         return _pg_pool
