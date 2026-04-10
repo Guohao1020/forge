@@ -2,9 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback } from "react"
 import { cn } from "@/lib/utils"
-import { Send, Bot, User, Code2, Eye, WifiOff, AlertTriangle, RotateCw } from "lucide-react"
+import { Send, Bot, User, WifiOff, AlertTriangle, RotateCw } from "lucide-react"
 import { ToolExecution } from "./tool-execution"
-import { BuildCard } from "./build-card"
 import { ThinkingIndicator } from "./thinking-indicator"
 import { SummaryCard, type BuildSummaryStatus } from "./summary-card"
 import type { ConnStatus } from "./status-bar"
@@ -15,10 +14,10 @@ import {
   type AgentSuggestion,
 } from "@/lib/agent"
 
-// Agent avatar types for multi-agent pair pipeline visibility.
-// "system" is a backend-emitted notification (fix loop entry, build failure).
+// Agent avatar types for A2 single-agent architecture.
+// "system" is a frontend-injected notification (fix loop detection banner).
 // "summary" is a terminal SessionComplete card.
-type AgentRole = "user" | "assistant" | "coder" | "reviewer" | "system" | "summary"
+type AgentRole = "user" | "assistant" | "system" | "summary"
 
 interface ChatMessage {
   id: string
@@ -26,7 +25,6 @@ interface ChatMessage {
   content: string
   timestamp: number
   tools?: ToolCall[]
-  build?: BuildInfo
   isError?: boolean
   retryContent?: string
   summary?: SessionSummary
@@ -49,13 +47,6 @@ interface ToolCall {
   isLoading?: boolean
 }
 
-interface BuildInfo {
-  status: "building" | "passed" | "failed"
-  command: string
-  output?: string
-  durationMs?: number
-}
-
 interface AgentChatProps {
   projectId: string
   sessionId: string | null
@@ -74,8 +65,8 @@ interface AgentChatProps {
  * Replay the durable event log into ChatMessage state. Reverses the
  * SSE streaming logic: text_delta events get concatenated into a
  * single assistant message per turn, tool_started/completed become
- * tool attachments on the current message, session_complete becomes
- * a SummaryCard entry, and fix_loop_* become system messages.
+ * tool attachments on the current message, and session_complete
+ * becomes a SummaryCard entry.
  */
 function hydrateFromDurableLog(rows: AgentMessageRow[]): {
   messages: ChatMessage[]
@@ -114,7 +105,7 @@ function hydrateFromDurableLog(rows: AgentMessageRow[]): {
     if (type === "text_delta") {
       const text = typeof data.text === "string" ? data.text : ""
       const last = messages[messages.length - 1]
-      if (last && last.role === "assistant" && !last.build && !last.summary) {
+      if (last && last.role === "assistant" && !last.summary) {
         last.content = (last.content || "") + text
       } else {
         messages.push({
@@ -185,36 +176,6 @@ function hydrateFromDurableLog(rows: AgentMessageRow[]): {
       continue
     }
 
-    if (type === "fix_loop_started") {
-      const cycle = Number(data.cycle) || 1
-      const maxCycles = Number(data.max_cycles) || 3
-      const errors = Number(data.errors) || 0
-      messages.push({
-        id: String(row.id),
-        role: "system",
-        content:
-          errors > 0
-            ? `${errors} compilation error${errors === 1 ? "" : "s"} detected. Entering fix loop (attempt ${cycle}/${maxCycles}).`
-            : `Entering fix loop (attempt ${cycle}/${maxCycles}).`,
-        timestamp: new Date(row.created_at).getTime(),
-      })
-      continue
-    }
-
-    if (type === "fix_loop_completed") {
-      const success = String(data.success).toLowerCase() === "true"
-      const cycle = Number(data.cycle) || 1
-      messages.push({
-        id: String(row.id),
-        role: "system",
-        content: success
-          ? `Fix loop cycle ${cycle} succeeded — build is green.`
-          : `Fix loop cycle ${cycle} failed — trying again.`,
-        timestamp: new Date(row.created_at).getTime(),
-      })
-      continue
-    }
-
     if (type === "session_complete") {
       const rawStatus = String(data.build_status || "skipped").toLowerCase()
       const buildStatus: BuildSummaryStatus =
@@ -254,8 +215,6 @@ function hydrateFromDurableLog(rows: AgentMessageRow[]): {
 const roleConfig: Record<AgentRole, { icon: React.ReactNode; label: string; color: string }> = {
   user: { icon: <User className="h-3.5 w-3.5" />, label: "You", color: "text-[var(--text-primary)]" },
   assistant: { icon: <Bot className="h-3.5 w-3.5" />, label: "AI", color: "text-[var(--accent)]" },
-  coder: { icon: <Code2 className="h-3.5 w-3.5" />, label: "Coder", color: "text-[var(--accent)]" },
-  reviewer: { icon: <Eye className="h-3.5 w-3.5" />, label: "Reviewer", color: "text-[var(--accent-text)]" },
   system: { icon: <AlertTriangle className="h-3.5 w-3.5" />, label: "System", color: "text-[var(--text-warning)]" },
   summary: { icon: <Bot className="h-3.5 w-3.5" />, label: "AI", color: "text-[var(--accent)]" },
 }
@@ -442,7 +401,7 @@ export function AgentChat({
         setIsStreaming(true)
         setMessages(prev => {
           const last = prev[prev.length - 1]
-          if (last && last.role !== "user" && !last.build) {
+          if (last && last.role !== "user") {
             return [...prev.slice(0, -1), { ...last, content: last.content + data.text }]
           }
           return [...prev, {
@@ -513,36 +472,6 @@ export function AgentChat({
       case "thinking_stopped":
         setThinkingLabel(null)
         break
-
-      case "fix_loop_started": {
-        const cycle = parseInt(data.cycle) || 1
-        const maxCycles = parseInt(data.max_cycles) || 3
-        const errors = parseInt(data.errors) || 0
-        setMessages(prev => [...prev, {
-          id: crypto.randomUUID(),
-          role: "system",
-          content:
-            errors > 0
-              ? `${errors} compilation error${errors === 1 ? "" : "s"} detected. Entering fix loop (attempt ${cycle}/${maxCycles}).`
-              : `Entering fix loop (attempt ${cycle}/${maxCycles}).`,
-          timestamp: Date.now(),
-        }])
-        break
-      }
-
-      case "fix_loop_completed": {
-        const success = data.success === "True" || data.success === "true"
-        const cycle = parseInt(data.cycle) || 1
-        setMessages(prev => [...prev, {
-          id: crypto.randomUUID(),
-          role: "system",
-          content: success
-            ? `Fix loop cycle ${cycle} succeeded — build is green.`
-            : `Fix loop cycle ${cycle} failed — trying again.`,
-          timestamp: Date.now(),
-        }])
-        break
-      }
 
       case "session_complete": {
         setIsStreaming(false)
@@ -762,16 +691,6 @@ export function AgentChat({
                       />
                     </div>
                   ))}
-                  {msg.build && (
-                    <div className="mt-2">
-                      <BuildCard
-                        status={msg.build.status}
-                        command={msg.build.command}
-                        output={msg.build.output}
-                        durationMs={msg.build.durationMs}
-                      />
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
