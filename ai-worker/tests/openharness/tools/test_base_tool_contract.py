@@ -146,6 +146,25 @@ def _all_tool_specs() -> list[ToolSpec]:
         ),
     ]
 
+    # Exec tools (Phase 4)
+    from src.openharness.tools.bash_tool import BashInput, BashTool
+    from src.openharness.tools.phase_tool import SetPhaseInput, SetPhaseTool
+
+    specs.extend([
+        (
+            BashTool,
+            lambda ws: BashTool(ws),
+            # 'echo ok' is not on the denylist and succeeds both in
+            # bwrap and in the fallback-error path.
+            lambda: BashInput(command="echo ok", timeout=30),
+        ),
+        (
+            SetPhaseTool,
+            lambda _ws: SetPhaseTool(),
+            lambda: SetPhaseInput(phase="Analyze"),
+        ),
+    ])
+
     return specs
 
 
