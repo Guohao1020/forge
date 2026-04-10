@@ -66,6 +66,11 @@ services:
       - ${FORGE_WORKSPACE_ROOT_HOST:-./workspaces}:/data/forge/workspaces
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # bwrap needs user namespaces for sandboxed bash execution
+    security_opt:
+      - seccomp:unconfined
+    cap_add:
+      - SYS_ADMIN
     depends_on:
       - temporal
     restart: unless-stopped
