@@ -161,6 +161,11 @@ class ToolRegistry:
         self._tools: dict[str, BaseTool] = {}
 
     def register(self, tool: BaseTool) -> None:
+        if tool.name in self._tools:
+            raise ValueError(
+                f"Tool '{tool.name}' is already registered. "
+                f"Duplicate registration indicates a bug in the call site."
+            )
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> BaseTool | None:

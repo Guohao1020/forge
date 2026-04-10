@@ -69,6 +69,9 @@ class QueryContext:
     cwd: Path = field(default_factory=Path.cwd)
     clarification_coordinator: Any = None
     original_user_request: Optional[str] = None
+    # Round 2 additions (Phase 5 Task 5.9)
+    agent_hook_registry: Any = None  # AgentHookRegistry
+    agent_hook_context: Any = None  # AgentHookContext
 
 
 async def _execute_tool_call(
@@ -76,6 +79,7 @@ async def _execute_tool_call(
     tool_name: str,
     tool_use_id: str,
     tool_input: Dict[str, Any],
+    pre_parsed_arguments: Any = None,
 ) -> AsyncIterator[Any]:
     """Execute a single tool call with hooks and permission checks.
 
@@ -85,9 +89,12 @@ async def _execute_tool_call(
 
     Hook failures and permission denials short-circuit with a single
     ToolResultBlock(is_error=True) and no StreamEvents.
+
+    pre_parsed_arguments: if provided (from pre_tool_call hook
+    mutation), skip re-validation and use these directly.
     """
 
-    # 1. Pre-tool hook
+    # 1. Pre-tool hook (subprocess hooks — distinct from agent hooks)
     if context.hook_executor:
         payload = {"tool_name": tool_name, "tool_input": tool_input}
         hook_result = await context.hook_executor.execute(HookEvent.PRE_TOOL_USE, payload)
@@ -123,16 +130,19 @@ async def _execute_tool_call(
         )
         return
 
-    # 4. Input validation
-    try:
-        parsed = tool.input_model.model_validate(tool_input)
-    except Exception as e:
-        yield ToolResultBlock(
-            tool_use_id=tool_use_id,
-            content=f"Invalid input: {e}",
-            is_error=True,
-        )
-        return
+    # 4. Input validation (skip if pre_parsed from agent hook mutation)
+    if pre_parsed_arguments is not None:
+        parsed = pre_parsed_arguments
+    else:
+        try:
+            parsed = tool.input_model.model_validate(tool_input)
+        except Exception as e:
+            yield ToolResultBlock(
+                tool_use_id=tool_use_id,
+                content=f"Invalid input: {e}",
+                is_error=True,
+            )
+            return
 
     # 5. Tool execution — consume the async generator
     exec_ctx = ToolExecutionContext(
@@ -212,10 +222,30 @@ async def run_agent_loop(
 
     Yields StreamEvents as they occur. Modifies messages in-place.
     """
+    from .agent_hooks import AgentHookRegistry, PreToolCallBlock
+
+    registry = context.agent_hook_registry or AgentHookRegistry()
+    hook_ctx = context.agent_hook_context  # may be None for legacy callers
+
     turn = 0
 
     while turn < context.max_turns:
         turn += 1
+
+        # Round 2 (§2.9.1.c): pre_turn hooks run before the API call.
+        for hook in registry.pre_turn:
+            try:
+                messages = await hook(hook_ctx, messages)
+            except Exception as exc:
+                logger.exception("agent hook %s in pre_turn raised", hook)
+                yield ErrorEvent(
+                    message=(
+                        f"agent hook {getattr(hook, '__name__', repr(hook))} "
+                        f"raised in pre_turn: {exc}"
+                    ),
+                    recoverable=False,
+                )
+                return
 
         # Build API request
         request = ApiMessageRequest(
@@ -254,11 +284,74 @@ async def run_agent_loop(
         # Check if we need to execute tools
         tool_uses = assistant_message.tool_uses
         if not tool_uses or stop_reason == "end_turn":
+            # Round 2 (§2.9.1.c): post_turn hooks fire on end_turn.
+            for hook in registry.post_turn:
+                try:
+                    await hook(hook_ctx, assistant_message)
+                except Exception as exc:
+                    logger.exception("agent hook %s in post_turn raised", hook)
+                    yield ErrorEvent(
+                        message=(
+                            f"agent hook {getattr(hook, '__name__', repr(hook))} "
+                            f"raised in post_turn: {exc}"
+                        ),
+                        recoverable=False,
+                    )
+                    return
             return
 
         # Execute tool calls
         tool_results: List[ToolResultBlock] = []
         for tu in tool_uses:
+            # Round 2: pre_tool_call hooks run before tool execution.
+            tool = context.tool_registry.get(tu.name)
+            if tool is not None:
+                try:
+                    parsed = tool.input_model.model_validate(tu.input)
+                except Exception:
+                    parsed = None
+            else:
+                parsed = None
+
+            blocked = False
+            if parsed is not None:
+                for hook in registry.pre_tool_call:
+                    try:
+                        result = await hook(hook_ctx, tu.name, parsed)
+                    except Exception as exc:
+                        logger.exception("agent hook %s in pre_tool_call raised", hook)
+                        yield ErrorEvent(
+                            message=(
+                                f"agent hook {getattr(hook, '__name__', repr(hook))} "
+                                f"raised in pre_tool_call: {exc}"
+                            ),
+                            recoverable=False,
+                        )
+                        return
+
+                    if isinstance(result, PreToolCallBlock):
+                        # Short-circuit: emit Started + Completed with error
+                        yield ToolExecutionStarted(
+                            tool_use_id=tu.id, tool_name=tu.name, tool_input=tu.input
+                        )
+                        tool_results.append(ToolResultBlock(
+                            tool_use_id=tu.id,
+                            content=result.reason,
+                            is_error=True,
+                        ))
+                        yield ToolExecutionCompleted(
+                            tool_use_id=tu.id,
+                            tool_name=tu.name,
+                            output=result.reason,
+                            is_error=True,
+                        )
+                        blocked = True
+                        break
+                    parsed = result  # mutated args feed the next hook
+
+            if blocked:
+                continue
+
             yield ToolExecutionStarted(tool_use_id=tu.id, tool_name=tu.name, tool_input=tu.input)
 
             # _execute_tool_call is an async generator that yields
@@ -271,6 +364,7 @@ async def run_agent_loop(
                 tool_name=tu.name,
                 tool_use_id=tu.id,
                 tool_input=tu.input,
+                pre_parsed_arguments=parsed,
             ):
                 if isinstance(item, ToolResultBlock):
                     final_block = item

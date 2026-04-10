@@ -152,3 +152,109 @@ async def test_submit_message_with_tool_call():
     assert call_count == 2
     # Total usage across both API calls
     assert engine.total_usage.total_tokens == 45
+
+
+# ---------------------------------------------------------------------------
+# SessionComplete emission (added in Phase 5 Task 5.3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_query_engine_emits_session_complete_after_tool_calls(tmp_path):
+    """A turn that invokes a tool should yield SessionComplete at the end."""
+    from src.openharness.api.client import ApiMessageCompleteEvent
+    from src.openharness.engine.messages import ToolUseBlock
+    from src.openharness.engine.stream_events import SessionComplete
+    from src.openharness.tools.phase_tool import SetPhaseTool
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def stream_message(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                msg = ConversationMessage(
+                    role="assistant",
+                    content=[
+                        TextBlock(text="starting"),
+                        ToolUseBlock(
+                            id="toolu_1",
+                            name="set_phase",
+                            input={"phase": "Generate"},
+                        ),
+                    ],
+                )
+                yield ApiMessageCompleteEvent(
+                    message=msg,
+                    usage=UsageSnapshot(input_tokens=10, output_tokens=5),
+                    stop_reason="tool_use",
+                )
+            else:
+                msg = ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text="done")],
+                )
+                yield ApiMessageCompleteEvent(
+                    message=msg,
+                    usage=UsageSnapshot(input_tokens=15, output_tokens=8),
+                    stop_reason="end_turn",
+                )
+
+    registry = ToolRegistry()
+    registry.register(SetPhaseTool())
+
+    engine = QueryEngine(
+        api_client=FakeClient(),
+        tool_registry=registry,
+        model="test-model",
+        system_prompt="test",
+        cwd=tmp_path,
+    )
+
+    events = []
+    async for event in engine.submit_message("do something"):
+        events.append(event)
+
+    completions = [e for e in events if isinstance(e, SessionComplete)]
+    assert len(completions) == 1, f"expected 1 SessionComplete, got {len(completions)}"
+    sc = completions[0]
+    assert sc.files_created == 0
+    assert sc.files_modified == 0
+    assert sc.build_status == "skipped"
+    assert sc.duration_ms >= 0
+    assert sc.tokens_total == (10 + 5 + 15 + 8)
+
+
+@pytest.mark.asyncio
+async def test_query_engine_skips_session_complete_for_text_only_turn(tmp_path):
+    """A turn with zero tool calls should NOT emit SessionComplete."""
+    from src.openharness.api.client import ApiMessageCompleteEvent
+    from src.openharness.engine.stream_events import SessionComplete
+
+    class FakeClient:
+        async def stream_message(self, request):
+            msg = ConversationMessage(
+                role="assistant",
+                content=[TextBlock(text="hello")],
+            )
+            yield ApiMessageCompleteEvent(
+                message=msg,
+                usage=UsageSnapshot(input_tokens=5, output_tokens=2),
+                stop_reason="end_turn",
+            )
+
+    engine = QueryEngine(
+        api_client=FakeClient(),
+        tool_registry=ToolRegistry(),
+        model="test",
+        system_prompt="test",
+        cwd=tmp_path,
+    )
+
+    events = []
+    async for event in engine.submit_message("hi"):
+        events.append(event)
+
+    completions = [e for e in events if isinstance(e, SessionComplete)]
+    assert len(completions) == 0, "SessionComplete should not emit for text-only turns"
