@@ -70,4 +70,15 @@ describe("ToolExecution", () => {
       unmount()
     }
   })
+
+  it("does not render a card for set_phase (hideCard)", () => {
+    const { container } = render(
+      <ToolExecution
+        toolName="set_phase"
+        toolInput={{ phase: "Analyze" }}
+        output="Phase set to Analyze"
+      />,
+    )
+    expect(container.firstChild).toBeNull()
+  })
 })

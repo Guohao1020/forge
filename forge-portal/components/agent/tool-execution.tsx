@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 import { ChevronDown, ChevronRight } from "lucide-react"
-import { formatToolInput } from "./tool-formatters"
+import { formatToolInput, formatToolSummary } from "./tool-formatters"
 
 interface ToolExecutionProps {
   toolName: string
@@ -12,6 +12,9 @@ interface ToolExecutionProps {
   isError?: boolean
   isLoading?: boolean
 }
+
+// Name exported for tests
+export { type ToolExecutionProps }
 
 type ToolStatus = "ok" | "err" | "running"
 
@@ -62,6 +65,14 @@ export function ToolExecution({
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [expanded])
+
+  // Check if this tool opts out of card rendering (e.g. set_phase).
+  // The effect of the tool is shown elsewhere (step ribbon for phases).
+  // Must be after hooks to satisfy Rules of Hooks.
+  const toolSummary = formatToolSummary(toolName, toolInput, output)
+  if (toolSummary.hideCard) {
+    return null
+  }
 
   return (
     <div

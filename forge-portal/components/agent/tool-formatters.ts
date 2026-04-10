@@ -209,7 +209,8 @@ export const toolFormatters: Record<string, (input: ToolInput) => string> = {
   // T2 file tools
   read_file: (i) => {
     const path = str(i.path, "")
-    return path || "read file"
+    const lines = num(i.lines)
+    return path ? `${path} \u2022 ${lines} lines` : "read file"
   },
   write_file: (i) => {
     const path = str(i.path, "")
