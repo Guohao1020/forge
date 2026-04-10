@@ -50,6 +50,7 @@ def _make_context_profiles() -> dict[str, Any]:
 
 
 def _all_tool_specs() -> list[ToolSpec]:
+    # Context tools (Phase 2)
     from src.openharness.tools.context_tools import (
         QueryApiCatalogTool,
         QueryApiCatalogInput,
@@ -60,10 +61,34 @@ def _all_tool_specs() -> list[ToolSpec]:
         QueryModuleGraphTool,
         QueryModuleGraphInput,
     )
+    # File tools (Phase 3)
+    from src.openharness.tools.file_tools import (
+        EditFileInput,
+        EditFileTool,
+        GlobInput,
+        GlobTool,
+        GrepInput,
+        GrepTool,
+        ListDirectoryInput,
+        ListDirectoryTool,
+        ReadFileInput,
+        ReadFileTool,
+        WriteFileInput,
+        WriteFileTool,
+    )
 
     profiles = _make_context_profiles()
 
+    def _seed_workspace_for_read(ws: Path) -> "ReadFileTool":
+        (ws / "seed.txt").write_text("contract test seed\n")
+        return ReadFileTool(ws)
+
+    def _seed_workspace_for_edit(ws: Path) -> "EditFileTool":
+        (ws / "seed.txt").write_text("contract test seed\n")
+        return EditFileTool(ws)
+
     specs: list[ToolSpec] = [
+        # Context tools
         (
             QueryApiCatalogTool,
             lambda _ws: QueryApiCatalogTool(profiles),
@@ -83,6 +108,41 @@ def _all_tool_specs() -> list[ToolSpec]:
             QueryModuleGraphTool,
             lambda _ws: QueryModuleGraphTool(profiles),
             lambda: QueryModuleGraphInput(module_name="nothing"),
+        ),
+        # File tools
+        (
+            ReadFileTool,
+            _seed_workspace_for_read,
+            lambda: ReadFileInput(path="seed.txt"),
+        ),
+        (
+            WriteFileTool,
+            lambda ws: WriteFileTool(ws),
+            lambda: WriteFileInput(path="contract.txt", content="contract test"),
+        ),
+        (
+            EditFileTool,
+            _seed_workspace_for_edit,
+            lambda: EditFileInput(
+                path="seed.txt",
+                old_string="contract test seed",
+                new_string="edited",
+            ),
+        ),
+        (
+            GlobTool,
+            lambda ws: GlobTool(ws),
+            lambda: GlobInput(pattern="*"),
+        ),
+        (
+            GrepTool,
+            lambda ws: GrepTool(ws),
+            lambda: GrepInput(pattern="seed"),
+        ),
+        (
+            ListDirectoryTool,
+            lambda ws: ListDirectoryTool(ws),
+            lambda: ListDirectoryInput(path="."),
         ),
     ]
 
