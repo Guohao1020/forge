@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from src.openharness.tools.base import (
     BaseTool,
+    SimpleTool,
     ToolExecutionContext,
     ToolRegistry,
     ToolResult,
@@ -26,12 +27,12 @@ class EchoInput(BaseModel):
     text: str
 
 
-class EchoTool(BaseTool):
+class EchoTool(SimpleTool):
     name = "echo"
     description = "Echo input text"
     input_model = EchoInput
 
-    async def execute(
+    async def _execute_simple(
         self, arguments: EchoInput, context: ToolExecutionContext
     ) -> ToolResult:
         return ToolResult(output=arguments.text)
@@ -75,7 +76,11 @@ def test_registry_to_api_schema():
 async def test_tool_execution():
     tool = EchoTool()
     ctx = ToolExecutionContext(cwd=Path("."))
-    result = await tool.execute(EchoInput(text="hello"), ctx)
+    items = []
+    async for item in tool.execute(EchoInput(text="hello"), ctx):
+        items.append(item)
+    assert len(items) == 1
+    result = items[0]
     assert result.output == "hello"
     assert not result.is_error
 

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from src.config import settings
 from src.openharness.tools.base import (
-    BaseTool,
+    SimpleTool,
     ToolExecutionContext,
     ToolRegistry,
     ToolResult,
@@ -127,7 +127,7 @@ def _search_profile(
 # ---------------------------------------------------------------------------
 
 
-class QueryApiCatalogTool(BaseTool):
+class QueryApiCatalogTool(SimpleTool):
     name = "query_api_catalog"
     description = (
         "查询项目的 API 接口清单。当你需要了解现有 API 路径、HTTP 方法、请求参数、"
@@ -138,7 +138,7 @@ class QueryApiCatalogTool(BaseTool):
     def __init__(self, profiles: dict[str, Any]) -> None:
         self._profiles = profiles
 
-    async def execute(
+    async def _execute_simple(
         self, arguments: QueryApiCatalogInput, context: ToolExecutionContext
     ) -> ToolResult:
         output = _search_profile(
@@ -154,7 +154,7 @@ class QueryApiCatalogTool(BaseTool):
         return True
 
 
-class QueryDbSchemaTool(BaseTool):
+class QueryDbSchemaTool(SimpleTool):
     name = "query_db_schema"
     description = (
         "查询项目的数据库表结构（字段名、类型、索引、外键关系）。"
@@ -165,7 +165,7 @@ class QueryDbSchemaTool(BaseTool):
     def __init__(self, profiles: dict[str, Any]) -> None:
         self._profiles = profiles
 
-    async def execute(
+    async def _execute_simple(
         self, arguments: QueryDbSchemaInput, context: ToolExecutionContext
     ) -> ToolResult:
         output = _search_profile(
@@ -181,7 +181,7 @@ class QueryDbSchemaTool(BaseTool):
         return True
 
 
-class QueryBusinessRulesTool(BaseTool):
+class QueryBusinessRulesTool(SimpleTool):
     name = "query_business_rules"
     description = (
         "查询项目的业务规则约束。例如'积分不能为负'、'订单超时30分钟自动取消'。"
@@ -192,7 +192,7 @@ class QueryBusinessRulesTool(BaseTool):
     def __init__(self, profiles: dict[str, Any]) -> None:
         self._profiles = profiles
 
-    async def execute(
+    async def _execute_simple(
         self, arguments: QueryBusinessRulesInput, context: ToolExecutionContext
     ) -> ToolResult:
         output = _search_profile(
@@ -208,7 +208,7 @@ class QueryBusinessRulesTool(BaseTool):
         return True
 
 
-class QueryModuleGraphTool(BaseTool):
+class QueryModuleGraphTool(SimpleTool):
     name = "query_module_graph"
     description = (
         "查询项目的模块依赖关系图。了解代码组织结构、模块边界、import 路径。"
@@ -219,7 +219,7 @@ class QueryModuleGraphTool(BaseTool):
     def __init__(self, profiles: dict[str, Any]) -> None:
         self._profiles = profiles
 
-    async def execute(
+    async def _execute_simple(
         self, arguments: QueryModuleGraphInput, context: ToolExecutionContext
     ) -> ToolResult:
         output = _search_profile(
@@ -235,7 +235,7 @@ class QueryModuleGraphTool(BaseTool):
         return True
 
 
-class ReadProjectFileTool(BaseTool):
+class ReadProjectFileTool(SimpleTool):
     name = "read_project_file"
     description = (
         "读取项目仓库中的源代码文件。当你需要参考现有代码实现风格、"
@@ -246,7 +246,7 @@ class ReadProjectFileTool(BaseTool):
     def __init__(self, project_id: int) -> None:
         self._project_id = project_id
 
-    async def execute(
+    async def _execute_simple(
         self, arguments: ReadProjectFileInput, context: ToolExecutionContext
     ) -> ToolResult:
         path = arguments.path
