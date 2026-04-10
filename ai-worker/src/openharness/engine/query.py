@@ -36,6 +36,7 @@ from ..hooks.events import HookEvent
 from ..hooks.executor import HookExecutor
 from ..permissions.checker import PermissionChecker
 from ..tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
+from .agent_hooks import SessionHaltError
 from .messages import ConversationMessage, TextBlock, ToolResultBlock, ToolUseBlock
 from .stream_events import (
     AssistantTextDelta,
@@ -66,6 +67,8 @@ class QueryContext:
     hook_executor: Optional[HookExecutor] = None
     permission_checker: Optional[PermissionChecker] = None
     cwd: Path = field(default_factory=Path.cwd)
+    clarification_coordinator: Any = None
+    original_user_request: Optional[str] = None
 
 
 async def _execute_tool_call(
@@ -132,7 +135,12 @@ async def _execute_tool_call(
         return
 
     # 5. Tool execution — consume the async generator
-    exec_ctx = ToolExecutionContext(cwd=context.cwd)
+    exec_ctx = ToolExecutionContext(
+        cwd=context.cwd,
+        tool_use_id=tool_use_id,
+        clarification_coordinator=getattr(context, "clarification_coordinator", None),
+        original_user_request=getattr(context, "original_user_request", None),
+    )
     tool_result: ToolResult | None = None
     try:
         async for item in tool.execute(parsed, exec_ctx):
@@ -149,6 +157,19 @@ async def _execute_tool_call(
                 raise TypeError(
                     f"tool {tool_name} yielded unexpected type: {type(item).__name__}"
                 )
+    except SessionHaltError as halt:
+        logger.error(
+            "Session halted by %s during tool %s: %s",
+            type(halt).__name__,
+            tool_name,
+            halt,
+        )
+        yield ToolResultBlock(
+            tool_use_id=tool_use_id,
+            content=f"session halted: {type(halt).__name__}: {halt}",
+            is_error=True,
+        )
+        return
     except Exception as e:
         logger.exception("Tool execution failed: %s", tool_name)
         yield ToolResultBlock(
