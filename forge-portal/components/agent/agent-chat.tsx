@@ -5,11 +5,13 @@ import { cn } from "@/lib/utils"
 import { Send, Bot, User, WifiOff, AlertTriangle, RotateCw } from "lucide-react"
 import { ToolExecution } from "./tool-execution"
 import { ThinkingIndicator } from "./thinking-indicator"
+import { ClarificationInput } from "./clarification-input"
 import { SummaryCard, type BuildSummaryStatus } from "./summary-card"
 import type { ConnStatus } from "./status-bar"
 import {
   getAgentSuggestions,
   listSessionMessages,
+  postClarification,
   type AgentMessageRow,
   type AgentSuggestion,
 } from "@/lib/agent"
@@ -289,6 +291,20 @@ export function AgentChat({
   // so the first paint doesn't flash the hardcoded defaults; the
   // useEffect below fetches and populates on mount.
   const [suggestions, setSuggestions] = useState<AgentSuggestion[]>([])
+  // Round 2 — request_clarification state. Null means no pending
+  // clarification; the form is not shown and the main chat input
+  // is enabled. When a clarification_requested event arrives this
+  // becomes {question, toolUseId}, the form renders inline below
+  // the current assistant message, and the main input is disabled
+  // until a matching tool_execution_completed event clears it.
+  const [clarification, setClarification] = useState<{
+    question: string
+    toolUseId: string
+  } | null>(null)
+
+  // Round 2 — clarification timeout banner.
+  const [clarificationTimedOut, setClarificationTimedOut] = useState(false)
+
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -497,12 +513,14 @@ export function AgentChat({
         break
       }
 
-      case "tool_completed":
+      case "tool_completed": {
+        const completedTid = data.tool_use_id || ""
+        const completedName = data.tool_name || ""
         setMessages(prev => {
           const last = prev[prev.length - 1]
           if (last?.tools) {
             const tools = last.tools.map(t =>
-              t.name === data.tool_name && t.isLoading
+              t.name === completedName && t.isLoading
                 ? { ...t, output: data.output, isError: data.is_error === "true", isLoading: false }
                 : t,
             )
@@ -510,19 +528,49 @@ export function AgentChat({
           }
           return prev
         })
+        // Round 2: clear clarification if the completing tool matches
+        if (
+          clarification &&
+          clarification.toolUseId === completedTid &&
+          completedName === "request_clarification"
+        ) {
+          setClarification(null)
+        }
         break
+      }
 
-      case "error":
+      case "clarification_requested": {
+        // Round 2 — agent has paused on a request_clarification meta-tool.
+        // Render ClarificationInput inline; disable the main chat input.
+        const q = String(data.question ?? "")
+        const tid = String(data.tool_use_id ?? "")
+        if (q && tid) {
+          setClarification({ question: q, toolUseId: tid })
+        }
+        break
+      }
+
+      case "error": {
         setIsStreaming(false)
         setThinkingLabel(null)
+        const errorMsg = String(data.message ?? "")
+        const recoverable = data.recoverable
+        // Round 2 — clarification timeout detection
+        if (
+          !recoverable &&
+          errorMsg.toLowerCase().includes("clarification timeout")
+        ) {
+          setClarificationTimedOut(true)
+        }
         setMessages(prev => [...prev, {
           id: crypto.randomUUID(),
           role: "assistant",
-          content: `Error: ${data.message}`,
+          content: `Error: ${errorMsg}`,
           timestamp: Date.now(),
           isError: true,
         }])
         break
+      }
 
       case "thinking_started":
         setThinkingLabel(data.label || "Thinking")
@@ -617,6 +665,17 @@ export function AgentChat({
       }
     },
     [input, isStreaming, sessionId, projectId, onSessionCreated],
+  )
+
+  // Round 2: clarification form submit handler
+  const handleClarificationSubmit = useCallback(
+    async (toolUseId: string, response: string) => {
+      if (!sessionId) {
+        throw new Error("No active session")
+      }
+      await postClarification(sessionId, toolUseId, response)
+    },
+    [sessionId],
   )
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -779,6 +838,24 @@ export function AgentChat({
             <ThinkingIndicator label={thinkingLabel} />
           </div>
         )}
+
+        {/* Round 2: clarification input form */}
+        {clarification && (
+          <ClarificationInput
+            question={clarification.question}
+            toolUseId={clarification.toolUseId}
+            onSubmit={handleClarificationSubmit}
+            disabled={clarificationTimedOut}
+          />
+        )}
+        {clarificationTimedOut && (
+          <div
+            className="border border-[var(--text-error)] bg-[var(--bg-error)] rounded p-2.5 my-2 text-[12px] text-[var(--text-error)]"
+            role="alert"
+          >
+            Session ended: clarification timeout after 10 minutes.
+          </div>
+        )}
       </div>
 
       {/* Input — compact, IDE-style. Textarea auto-grows 1..8 rows.
@@ -791,11 +868,13 @@ export function AgentChat({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={
-              isStreaming
-                ? "AI is thinking..."
-                : "Describe what you want to build..."
+              clarification !== null
+                ? "Waiting for you to respond to the agent's question above..."
+                : isStreaming
+                  ? "AI is thinking..."
+                  : "Describe what you want to build..."
             }
-            disabled={isStreaming}
+            disabled={isStreaming || clarification !== null}
             rows={Math.min(8, Math.max(1, input.split("\n").length))}
             aria-label="Chat with Forge Agent"
             className="flex-1 resize-none rounded border border-[var(--border-primary)] bg-[var(--bg-input)] px-2 py-1.5 text-[12px] leading-[1.4] font-sans focus:border-[var(--border-focus)] focus:outline-none disabled:opacity-50 transition-colors duration-100"
@@ -806,6 +885,7 @@ export function AgentChat({
             disabled={
               !input.trim() ||
               isStreaming ||
+              clarification !== null ||
               // Block subsequent sends when the stream isn't live. First-send
               // (sessionId is null) is always allowed — the POST /chat
               // response carries the session id before SSE opens.

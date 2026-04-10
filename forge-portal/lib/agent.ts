@@ -116,3 +116,37 @@ export async function getAgentSuggestions(
     `/projects/${projectId}/agent/suggestions`,
   )
 }
+
+// ---- Clarification (Round 2, spec §2.9.2) -----------------------------------
+
+/**
+ * Submit a response to a pending `request_clarification` tool call.
+ *
+ * Spec §2.9.2.g: POST /api/sessions/{id}/clarify with JSON body
+ * {tool_use_id, response}. Resolves the pending Future server-side
+ * so the agent loop can continue.
+ *
+ * Returns on 204 No Content. Throws on 400 (bad input), 401
+ * (unauthenticated), 403 (not your session), 404 (session not
+ * found / no pending clarification matching tool_use_id), or 410
+ * (clarification already resolved or timed out).
+ */
+export async function postClarification(
+  sessionId: string,
+  toolUseId: string,
+  response: string,
+): Promise<void> {
+  const res = await fetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/clarify`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ tool_use_id: toolUseId, response }),
+    },
+  )
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    throw new Error(`HTTP ${res.status}${body ? `: ${body}` : ""}`)
+  }
+}
