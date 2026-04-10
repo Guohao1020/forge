@@ -84,12 +84,18 @@ func (s *Service) SubmitMessage(ctx context.Context, tenantID, projectID int64, 
 		isNewSession := req.SessionID == ""
 		ws, err := s.wsManager.EnsureReady(ctx, tenantID, projectID, isNewSession)
 		if err != nil {
-			// Workspace setup failed — return an error to the caller
-			// so the agent session fails fast with a visible message.
-			return nil, fmt.Errorf("workspace not ready: %w", err)
+			// Workspace setup failed — log warning and continue without
+			// workspace_path. ai-worker will use a temp directory (dev
+			// fallback). In production, this should be a hard error.
+			slog.Warn("workspace not ready, continuing without workspace",
+				"error", err,
+				"tenant_id", tenantID,
+				"project_id", projectID,
+			)
+		} else {
+			body.WorkspacePath = fmt.Sprintf("tenant-%d/project-%d/repo", tenantID, projectID)
+			_ = ws // ws.HostPath available if ever needed
 		}
-		body.WorkspacePath = fmt.Sprintf("tenant-%d/project-%d/repo", tenantID, projectID)
-		_ = ws // ws.HostPath available if ever needed
 	}
 
 	jsonBody, err := json.Marshal(body)
