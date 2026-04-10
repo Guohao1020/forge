@@ -32,6 +32,7 @@ class AssistantTurnComplete(StreamEvent):
 @dataclass(frozen=True)
 class ToolExecutionStarted(StreamEvent):
     """Emitted when a tool begins executing."""
+    tool_use_id: str
     tool_name: str
     tool_input: dict
 
@@ -39,6 +40,7 @@ class ToolExecutionStarted(StreamEvent):
 @dataclass(frozen=True)
 class ToolExecutionCompleted(StreamEvent):
     """Emitted when a tool finishes executing."""
+    tool_use_id: str
     tool_name: str
     output: str
     is_error: bool
@@ -69,23 +71,38 @@ class ThinkingStopped(StreamEvent):
 
 
 @dataclass(frozen=True)
-class FixLoopStarted(StreamEvent):
-    """Emitted when the pair pipeline enters a build-fix cycle.
+class PhaseChanged(StreamEvent):
+    """Emitted by SetPhaseTool to signal a phase transition in the
+    7-step workflow shown by the frontend ribbon.
 
-    `cycle` is 1-indexed, `max_cycles` is the configured limit, `errors`
-    is a best-effort count of compilation errors in the last build output.
+    Valid phases: "Analyze", "Plan", "Generate", "Build", "Test",
+    "Review", "Deploy". The agent calls set_phase with the new
+    phase name and this event is yielded verbatim to the frontend.
+
+    The literal set is NOT enforced at this dataclass level -- it's
+    a Pydantic Literal type on SetPhaseInput (phase_tool.py), which
+    catches invalid phases at tool-input-validation time before
+    the event is ever constructed.
     """
-    cycle: int
-    max_cycles: int
-    errors: int = 0
+    phase: str
 
 
 @dataclass(frozen=True)
-class FixLoopCompleted(StreamEvent):
-    """Emitted when a fix-loop cycle finishes (successful build or
-    reviewer decision)."""
-    cycle: int
-    success: bool
+class ClarificationRequested(StreamEvent):
+    """Agent paused mid-tool-execution to ask the user a clarifying question.
+
+    Emitted by RequestClarificationTool (Phase 5a) when the agent needs
+    more information from the user. The tool awaits a response on the
+    session's Redis return channel (agent:return:{session_id}) and
+    yields ToolResult(output=<user_response>) once the response arrives.
+
+    tool_use_id threads through from the surrounding ToolExecutionStarted
+    event so the frontend can correlate the input form with the right
+    tool card, and the backend can correlate the return-channel
+    ClarificationResponse with the right pending future.
+    """
+    question: str
+    tool_use_id: str
 
 
 @dataclass(frozen=True)

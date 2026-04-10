@@ -400,7 +400,7 @@ def _role_for_event_type(event_type: str) -> Optional[str]:
         return "user"
     if event_type in ("tool_started", "tool_completed"):
         return "tool"
-    if event_type in ("fix_loop_started", "fix_loop_completed", "session_complete", "error"):
+    if event_type in ("session_complete", "error", "phase_changed", "clarification_requested"):
         return "system"
     return None
 
@@ -410,14 +410,14 @@ def _serialize_event(event: Any, correlation_id: str) -> Dict[str, str]:
     from src.openharness.engine.stream_events import (
         AssistantTextDelta,
         AssistantTurnComplete,
-        ToolExecutionStarted,
-        ToolExecutionCompleted,
+        ClarificationRequested,
         ErrorEvent,
+        PhaseChanged,
+        SessionComplete,
         ThinkingStarted,
         ThinkingStopped,
-        FixLoopStarted,
-        FixLoopCompleted,
-        SessionComplete,
+        ToolExecutionCompleted,
+        ToolExecutionStarted,
     )
 
     base = {"correlation_id": correlation_id}
@@ -432,10 +432,12 @@ def _serialize_event(event: Any, correlation_id: str) -> Dict[str, str]:
         base["output_tokens"] = str(event.usage.output_tokens)
     elif isinstance(event, ToolExecutionStarted):
         base["type"] = "tool_started"
+        base["tool_use_id"] = event.tool_use_id
         base["tool_name"] = event.tool_name
         base["tool_input"] = json.dumps(event.tool_input, default=str)
     elif isinstance(event, ToolExecutionCompleted):
         base["type"] = "tool_completed"
+        base["tool_use_id"] = event.tool_use_id
         base["tool_name"] = event.tool_name
         base["output"] = event.output[:4000]  # Truncate for Redis
         base["is_error"] = str(event.is_error)
@@ -448,15 +450,13 @@ def _serialize_event(event: Any, correlation_id: str) -> Dict[str, str]:
         base["label"] = event.label
     elif isinstance(event, ThinkingStopped):
         base["type"] = "thinking_stopped"
-    elif isinstance(event, FixLoopStarted):
-        base["type"] = "fix_loop_started"
-        base["cycle"] = str(event.cycle)
-        base["max_cycles"] = str(event.max_cycles)
-        base["errors"] = str(event.errors)
-    elif isinstance(event, FixLoopCompleted):
-        base["type"] = "fix_loop_completed"
-        base["cycle"] = str(event.cycle)
-        base["success"] = str(event.success)
+    elif isinstance(event, PhaseChanged):
+        base["type"] = "phase_changed"
+        base["phase"] = event.phase
+    elif isinstance(event, ClarificationRequested):
+        base["type"] = "clarification_requested"
+        base["question"] = event.question
+        base["tool_use_id"] = event.tool_use_id
     elif isinstance(event, SessionComplete):
         base["type"] = "session_complete"
         base["files_created"] = str(event.files_created)

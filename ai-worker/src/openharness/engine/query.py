@@ -238,7 +238,7 @@ async def run_agent_loop(
         # Execute tool calls
         tool_results: List[ToolResultBlock] = []
         for tu in tool_uses:
-            yield ToolExecutionStarted(tool_name=tu.name, tool_input=tu.input)
+            yield ToolExecutionStarted(tool_use_id=tu.id, tool_name=tu.name, tool_input=tu.input)
 
             # _execute_tool_call is an async generator that yields
             # zero or more StreamEvents followed by exactly one
@@ -263,6 +263,7 @@ async def run_agent_loop(
             )
             tool_results.append(final_block)
             yield ToolExecutionCompleted(
+                tool_use_id=tu.id,
                 tool_name=tu.name,
                 output=final_block.content,
                 is_error=final_block.is_error,
