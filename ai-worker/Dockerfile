@@ -9,6 +9,8 @@ FROM python:3.12-slim
 # System deps for httpx and async
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    bubblewrap \
+    ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
