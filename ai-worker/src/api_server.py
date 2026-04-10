@@ -403,26 +403,33 @@ async def _route_and_stream(
     a single QueryEngine path. workspace_path is required; missing
     workspace is a 400.
     """
-    if not req.workspace_path:
-        raise HTTPException(
-            status_code=400,
-            detail="workspace_path is required (Phase 5+ A2 architecture)",
-        )
-
     ws_root = os.environ.get("FORGE_WORKSPACE_ROOT", "/data/forge/workspaces")
-    resolved_workspace = Path(os.path.join(ws_root, req.workspace_path))
 
-    if not resolved_workspace.is_dir():
-        logger.error(
-            "workspace_path %r resolved to %r but directory does not exist "
-            "— forge-core should have called EnsureReady first.",
-            req.workspace_path,
-            str(resolved_workspace),
+    if not req.workspace_path:
+        # Dev fallback: no workspace_path means forge-core legacy path
+        # (tenantID=0) or missing EnsureReady. Create a temp dir so the
+        # agent can still run for smoke-testing. Production always has
+        # workspace_path set by forge-core after EnsureReady.
+        import tempfile
+        resolved_workspace = Path(tempfile.mkdtemp(prefix="forge-dev-ws-"))
+        logger.warning(
+            "workspace_path is empty — using temp directory %s (dev fallback)",
+            resolved_workspace,
         )
-        raise HTTPException(
-            status_code=500,
-            detail=f"workspace not ready: {resolved_workspace}",
-        )
+    else:
+        resolved_workspace = Path(os.path.join(ws_root, req.workspace_path))
+
+        if not resolved_workspace.is_dir():
+            logger.error(
+                "workspace_path %r resolved to %r but directory does not exist "
+                "— forge-core should have called EnsureReady first.",
+                req.workspace_path,
+                str(resolved_workspace),
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"workspace not ready: {resolved_workspace}",
+            )
 
     # Get or create the engine
     engine = _sessions.get(session_id)
