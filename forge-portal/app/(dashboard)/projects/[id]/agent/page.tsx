@@ -60,8 +60,6 @@ export default function AgentTerminalPage() {
   const [codeFiles, setCodeFiles] = useState<
     Array<{ path: string; content: string }>
   >([])
-  const [diffContent] = useState<string | undefined>(undefined)
-
   // ---- Lifted from AgentChat (Stream 3) for StatusBar consumption ----
   const [connStatus, setConnStatus] = useState<ConnStatus>("connecting")
   const [stats, setStats] = useState({ tokens: 0, cost: 0 })
@@ -95,7 +93,7 @@ export default function AgentTerminalPage() {
   )
 
   const codePanelEl = (
-    <CodePanel files={codeFiles} diffContent={diffContent} />
+    <CodePanel files={codeFiles} />
   )
 
   return (

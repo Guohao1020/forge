@@ -50,25 +50,12 @@ describe("CodePanel", () => {
     expect(tabs[1]).toHaveAttribute("aria-selected", "false")
   })
 
-  it("shows a Diff tab when diffContent is provided", () => {
-    render(
-      <CodePanel
-        files={[{ path: "a.ts", content: "a" }]}
-        diffContent="- old\n+ new"
-      />,
-    )
-    expect(screen.getByRole("tab", { name: /diff/i })).toBeInTheDocument()
-  })
-
   it("renders breadcrumb for the active file", () => {
     render(
       <CodePanel
         files={[{ path: "src/main/java/com/app/User.java", content: "class User {}" }]}
       />,
     )
-    // Breadcrumb renders each path segment; verify the leaf AND a middle
-    // segment both exist. Using getAllByText because the filename also
-    // appears in the tab label, so strict getByText is ambiguous.
     expect(screen.getAllByText("User.java").length).toBeGreaterThan(0)
     expect(screen.getByText("com")).toBeInTheDocument()
   })
@@ -83,7 +70,6 @@ describe("CodePanel", () => {
     const { container } = render(
       <CodePanel
         files={[{ path: "a.ts", content: "const x = 1" }]}
-        diffContent="diff --git"
       />,
     )
     const results = await axe(container)

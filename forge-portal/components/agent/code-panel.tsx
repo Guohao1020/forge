@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
-import { FileCode, GitCompare, X } from "lucide-react"
+import { FileCode, X } from "lucide-react"
 import type { BundledLanguage, BundledTheme, Highlighter } from "shiki"
 
 interface CodeFile {
@@ -13,8 +13,6 @@ interface CodeFile {
 
 interface CodePanelProps {
   files: CodeFile[]
-  diffContent?: string
-  errorLines?: number[]
   onClose?: (index: number) => void
   className?: string
 }
@@ -262,42 +260,12 @@ function CodeView({
   )
 }
 
-function DiffView({ diff }: { diff: string }) {
-  const lines = diff.split("\n")
-  return (
-    <div className="flex-1 overflow-auto bg-[var(--bg-primary)]">
-      <pre className="font-mono text-[11px] py-1.5">
-        {lines.map((line, i) => {
-          const isAdd = line.startsWith("+") && !line.startsWith("+++")
-          const isRem = line.startsWith("-") && !line.startsWith("---")
-          return (
-            <div
-              key={i}
-              style={{ height: "16.5px", lineHeight: "16.5px" }}
-              className={cn(
-                "whitespace-pre px-3",
-                isAdd && "bg-[rgba(46,160,67,0.1)] text-[var(--text-success)]",
-                isRem && "bg-[rgba(248,81,73,0.1)] text-[var(--text-error)]",
-              )}
-            >
-              {line || "\u00A0"}
-            </div>
-          )
-        })}
-      </pre>
-    </div>
-  )
-}
-
 export function CodePanel({
   files,
-  diffContent,
-  errorLines = [],
   onClose,
   className,
 }: CodePanelProps) {
   const [activeTab, setActiveTab] = useState(0)
-  const [showDiff, setShowDiff] = useState(false)
   const dark = useDarkMode()
 
   // Clamp during render — React 19 prefers derived state over effect-based
@@ -306,7 +274,7 @@ export function CodePanel({
   const clampedTab =
     files.length === 0 ? 0 : Math.min(activeTab, files.length - 1)
 
-  if (files.length === 0 && !diffContent) {
+  if (files.length === 0) {
     return (
       <div
         className={cn(
@@ -338,7 +306,7 @@ export function CodePanel({
         {files.map((file, i) => {
           const ext = extOf(file.path)
           const filename = file.path.split("/").pop() ?? file.path
-          const isActive = i === clampedTab && !showDiff
+          const isActive = i === clampedTab
           return (
             <button
               key={file.path + i}
@@ -347,7 +315,6 @@ export function CodePanel({
               aria-controls="code-tabpanel"
               onClick={() => {
                 setActiveTab(i)
-                setShowDiff(false)
               }}
               className={cn(
                 "group/tab flex items-center gap-1.5 h-full px-2.5 whitespace-nowrap border-r border-[var(--border-secondary)] font-mono text-[11px] transition-colors duration-100",
@@ -388,37 +355,18 @@ export function CodePanel({
             </button>
           )
         })}
-        {diffContent && (
-          <button
-            role="tab"
-            aria-selected={showDiff}
-            aria-controls="code-tabpanel"
-            onClick={() => setShowDiff(true)}
-            className={cn(
-              "flex items-center gap-1 h-full px-2.5 whitespace-nowrap border-l border-[var(--border-secondary)] font-mono text-[11px] transition-colors duration-100",
-              showDiff
-                ? "bg-[var(--bg-primary)] text-[var(--text-primary)]"
-                : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
-            )}
-          >
-            <GitCompare className="h-3 w-3" />
-            Diff
-          </button>
-        )}
       </div>
 
       {/* Breadcrumb */}
-      {activeFile && !showDiff && <Breadcrumb path={activeFile.path} />}
+      {activeFile && <Breadcrumb path={activeFile.path} />}
 
       {/* Content */}
       <div id="code-tabpanel" role="tabpanel" className="flex-1 flex min-h-0">
-        {showDiff && diffContent ? (
-          <DiffView diff={diffContent} />
-        ) : activeFile ? (
+        {activeFile ? (
           <CodeView
             key={activeFile.path}
             file={activeFile}
-            errorLines={errorLines}
+            errorLines={[]}
             dark={dark}
           />
         ) : (
