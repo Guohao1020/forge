@@ -21,7 +21,8 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, List, Optional
+from collections.abc import AsyncIterator
+from typing import Any, Dict, List, Optional
 
 from ..api.client import (
     ApiMessageCompleteEvent,
@@ -72,8 +73,16 @@ async def _execute_tool_call(
     tool_name: str,
     tool_use_id: str,
     tool_input: Dict[str, Any],
-) -> ToolResultBlock:
-    """Execute a single tool call with hooks and permission checks."""
+) -> AsyncIterator[Any]:
+    """Execute a single tool call with hooks and permission checks.
+
+    Consumes the tool's async-generator execute() and yields:
+      - zero or more StreamEvents (forwarded as-is to the caller)
+      - exactly one ToolResultBlock as the final item
+
+    Hook failures and permission denials short-circuit with a single
+    ToolResultBlock(is_error=True) and no StreamEvents.
+    """
 
     # 1. Pre-tool hook
     if context.hook_executor:
@@ -81,11 +90,12 @@ async def _execute_tool_call(
         hook_result = await context.hook_executor.execute(HookEvent.PRE_TOOL_USE, payload)
         if hook_result.blocked:
             reasons = hook_result.all_reasons
-            return ToolResultBlock(
+            yield ToolResultBlock(
                 tool_use_id=tool_use_id,
                 content=f"BLOCKED by hook: {'; '.join(reasons)}",
                 is_error=True,
             )
+            return
 
     # 2. Permission check
     if context.permission_checker:
@@ -93,57 +103,83 @@ async def _execute_tool_call(
         is_ro = tool_obj.is_read_only(tool_input) if tool_obj else False
         decision = context.permission_checker.evaluate(tool_name, is_read_only=is_ro)
         if not decision.allowed:
-            return ToolResultBlock(
+            yield ToolResultBlock(
                 tool_use_id=tool_use_id,
                 content=f"Permission denied: {decision.reason}",
                 is_error=True,
             )
+            return
 
     # 3. Tool lookup
     tool = context.tool_registry.get(tool_name)
     if not tool:
-        return ToolResultBlock(
+        yield ToolResultBlock(
             tool_use_id=tool_use_id,
             content=f"Unknown tool: {tool_name}",
             is_error=True,
         )
+        return
 
     # 4. Input validation
     try:
         parsed = tool.input_model.model_validate(tool_input)
     except Exception as e:
-        return ToolResultBlock(
+        yield ToolResultBlock(
             tool_use_id=tool_use_id,
             content=f"Invalid input: {e}",
             is_error=True,
         )
+        return
 
-    # 5. Tool execution
+    # 5. Tool execution — consume the async generator
+    exec_ctx = ToolExecutionContext(cwd=context.cwd)
+    tool_result: ToolResult | None = None
     try:
-        exec_ctx = ToolExecutionContext(cwd=context.cwd)
-        result = await tool.execute(parsed, exec_ctx)
+        async for item in tool.execute(parsed, exec_ctx):
+            if isinstance(item, ToolResult):
+                if tool_result is not None:
+                    raise RuntimeError(
+                        f"tool {tool_name} yielded multiple ToolResults"
+                    )
+                tool_result = item
+            elif isinstance(item, StreamEvent):
+                # Forward mid-execution events up to run_agent_loop
+                yield item
+            else:
+                raise TypeError(
+                    f"tool {tool_name} yielded unexpected type: {type(item).__name__}"
+                )
     except Exception as e:
         logger.exception("Tool execution failed: %s", tool_name)
-        return ToolResultBlock(
+        yield ToolResultBlock(
             tool_use_id=tool_use_id,
             content=f"Tool execution error: {e}",
             is_error=True,
         )
+        return
+
+    if tool_result is None:
+        yield ToolResultBlock(
+            tool_use_id=tool_use_id,
+            content=f"Tool {tool_name} did not yield a ToolResult",
+            is_error=True,
+        )
+        return
 
     # 6. Post-tool hook
     if context.hook_executor:
         payload = {
             "tool_name": tool_name,
             "tool_input": tool_input,
-            "tool_output": result.output,
-            "is_error": result.is_error,
+            "tool_output": tool_result.output,
+            "is_error": tool_result.is_error,
         }
         await context.hook_executor.execute(HookEvent.POST_TOOL_USE, payload)
 
-    return ToolResultBlock(
+    yield ToolResultBlock(
         tool_use_id=tool_use_id,
-        content=result.output,
-        is_error=result.is_error,
+        content=tool_result.output,
+        is_error=tool_result.is_error,
     )
 
 
@@ -203,17 +239,33 @@ async def run_agent_loop(
         tool_results: List[ToolResultBlock] = []
         for tu in tool_uses:
             yield ToolExecutionStarted(tool_name=tu.name, tool_input=tu.input)
-            result = await _execute_tool_call(
+
+            # _execute_tool_call is an async generator that yields
+            # zero or more StreamEvents followed by exactly one
+            # ToolResultBlock. Forward StreamEvents upstream; capture
+            # the ToolResultBlock as the tool's final result.
+            final_block: ToolResultBlock | None = None
+            async for item in _execute_tool_call(
                 context=context,
                 tool_name=tu.name,
                 tool_use_id=tu.id,
                 tool_input=tu.input,
+            ):
+                if isinstance(item, ToolResultBlock):
+                    final_block = item
+                else:
+                    # Mid-execution StreamEvent (e.g., ThinkingStarted
+                    # from BashTool in Phase 4). Pass through.
+                    yield item
+
+            assert final_block is not None, (
+                f"_execute_tool_call yielded no ToolResultBlock for {tu.name}"
             )
-            tool_results.append(result)
+            tool_results.append(final_block)
             yield ToolExecutionCompleted(
                 tool_name=tu.name,
-                output=result.content,
-                is_error=result.is_error,
+                output=final_block.content,
+                is_error=final_block.is_error,
             )
 
         # Append tool results as user message

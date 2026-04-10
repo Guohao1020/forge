@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 from src.openharness.engine.query_engine import QueryEngine
 from src.openharness.engine.messages import ConversationMessage, TextBlock
 from src.openharness.engine.stream_events import AssistantTextDelta, AssistantTurnComplete
-from src.openharness.tools.base import ToolRegistry
+from src.openharness.tools.base import SimpleTool, ToolRegistry, ToolResult
 from src.openharness.api.usage import UsageSnapshot
 
 
@@ -79,14 +79,14 @@ async def test_submit_message_with_tool_call():
         ApiTextDeltaEvent, ApiMessageCompleteEvent,
     )
     from src.openharness.engine.messages import ToolUseBlock, ToolResultBlock
-    from src.openharness.tools.base import BaseTool, ToolResult, ToolExecutionContext
+    from src.openharness.tools.base import SimpleTool, ToolResult, ToolExecutionContext
     from pydantic import BaseModel
     from pathlib import Path
 
     class EchoInput(BaseModel):
         text: str
 
-    class EchoTool(BaseTool):
+    class EchoTool(SimpleTool):
         name = "echo"
         description = "Echoes text"
         input_model = EchoInput
@@ -94,7 +94,7 @@ async def test_submit_message_with_tool_call():
         def is_read_only(self, arguments):
             return True
 
-        async def execute(self, arguments, context):
+        async def _execute_simple(self, arguments, context):
             return ToolResult(output=f"Echo: {arguments.text}")
 
     registry = ToolRegistry()

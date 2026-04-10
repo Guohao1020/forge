@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 from pydantic import BaseModel
 from pathlib import Path
 
-from src.openharness.tools.base import BaseTool, ToolRegistry, ToolResult, ToolExecutionContext
+from src.openharness.tools.base import SimpleTool, ToolRegistry, ToolResult, ToolExecutionContext
 from src.openharness.hooks.events import HookEvent
 from src.openharness.hooks.loader import HookRegistry
 from src.openharness.hooks.executor import HookExecutor, HookResult, AggregatedHookResult
@@ -20,7 +20,7 @@ class UpperInput(BaseModel):
     text: str
 
 
-class UpperTool(BaseTool):
+class UpperTool(SimpleTool):
     name = "upper"
     description = "Uppercase text"
     input_model = UpperInput
@@ -28,24 +28,43 @@ class UpperTool(BaseTool):
     def is_read_only(self, arguments):
         return True
 
-    async def execute(self, arguments, context):
+    async def _execute_simple(self, arguments, context):
         return ToolResult(output=arguments.text.upper())
 
 
-class FailingTool(BaseTool):
+class FailingInput(BaseModel):
+    text: str
+
+
+class FailingTool(SimpleTool):
     name = "fail"
     description = "Always fails"
-    input_model = UpperInput
+    input_model = FailingInput
 
-    async def execute(self, arguments, context):
+    async def _execute_simple(self, arguments, context):
         raise RuntimeError("Intentional failure")
+
+
+async def _collect_final_block(context, tool_name, tool_use_id, tool_input):
+    """Helper: consume the _execute_tool_call async generator and return the ToolResultBlock."""
+    final = None
+    async for item in _execute_tool_call(
+        context=context,
+        tool_name=tool_name,
+        tool_use_id=tool_use_id,
+        tool_input=tool_input,
+    ):
+        if isinstance(item, ToolResultBlock):
+            final = item
+    assert final is not None, "_execute_tool_call yielded no ToolResultBlock"
+    return final
 
 
 @pytest.mark.asyncio
 async def test_tool_to_engine_pipeline():
     registry = ToolRegistry()
     registry.register(UpperTool())
-    result = await _execute_tool_call(
+    result = await _collect_final_block(
         context=QueryContext(
             api_client=AsyncMock(), tool_registry=registry,
             model="test", system_prompt="test",
@@ -77,7 +96,7 @@ async def test_hook_blocks_tool():
         return AggregatedHookResult(results=[])
     executor.execute = blocking
 
-    result = await _execute_tool_call(
+    result = await _collect_final_block(
         context=QueryContext(
             api_client=AsyncMock(), tool_registry=registry,
             model="test", system_prompt="test",
@@ -91,7 +110,7 @@ async def test_hook_blocks_tool():
 
 @pytest.mark.asyncio
 async def test_unknown_tool_error():
-    result = await _execute_tool_call(
+    result = await _collect_final_block(
         context=QueryContext(
             api_client=AsyncMock(), tool_registry=ToolRegistry(),
             model="test", system_prompt="test",
@@ -106,7 +125,7 @@ async def test_unknown_tool_error():
 async def test_tool_execution_error():
     registry = ToolRegistry()
     registry.register(FailingTool())
-    result = await _execute_tool_call(
+    result = await _collect_final_block(
         context=QueryContext(
             api_client=AsyncMock(), tool_registry=registry,
             model="test", system_prompt="test",
@@ -125,7 +144,7 @@ async def test_permission_denies_tool():
         mode=PermissionMode.FULL_AUTO,
         denied_tools=["upper"],
     )
-    result = await _execute_tool_call(
+    result = await _collect_final_block(
         context=QueryContext(
             api_client=AsyncMock(), tool_registry=registry,
             model="test", system_prompt="test",
