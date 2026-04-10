@@ -20,8 +20,8 @@
 // disable the corresponding capability (e.g., a Manager with nil
 // stateRepo cannot call EnsureReady but can still use ProjectDir).
 //
-// PHASE 1A: auth is HTTPS+token via RealGitRunner's internal gitInjectToken.
-// Phase 1b rewrites this to SSH deploy keys; see docs/specs/... §2.9.4.
+// PHASE 1B: auth is SSH deploy keys via GIT_SSH_COMMAND + tempfile.
+// The HTTPS+token path from Phase 1a is fully deleted.
 package workspace
 
 import (
@@ -34,29 +34,33 @@ import (
 )
 
 // Config bundles Manager dependencies. Passing a struct avoids a
-// 5-parameter NewManager call and makes it clear what's optional
-// (nil stateRepo/gitRunner/prepClient/projectLookup all degrade
-// gracefully — EnsureReady returns a descriptive error).
+// many-parameter NewManager call and makes it clear what's optional.
 type Config struct {
-	Root          string        // FORGE_WORKSPACE_ROOT; defaults to /data/forge/workspaces
-	StateRepo     *StateRepo    // engine.workspaces DAO; nil disables EnsureReady
-	GitRunner     gitRunner     // HTTPS+token git wrapper; typically *RealGitRunner
-	PrepClient    prepRunner    // ai-worker /api/workspace/prep client; typically *PrepRunnerAdapter
-	ProjectLookup ProjectLookup // project metadata + HTTPS URL + token
+	Root          string             // FORGE_WORKSPACE_ROOT; defaults to /data/forge/workspaces
+	StateRepo     *StateRepo         // engine.workspaces DAO; nil disables EnsureReady
+	DeployKeys    *DeployKeyRepo     // engine.project_deploy_keys DAO; required for SSH path
+	Crypto        *RealCryptoService // AES-GCM for deploy key encrypt/decrypt
+	GitRunner     GitRunner          // SSH git wrapper; typically *RealGitRunner
+	PrepClient    prepRunner         // ai-worker /api/workspace/prep client
+	GHUploader    githubUploader     // deploy key upload to GitHub API
+	ProjectLookup ProjectLookup      // project metadata + SSHURL
 }
 
 // Manager handles local git clones and per-task worktrees.
 type Manager struct {
 	root          string
 	stateRepo     *StateRepo
-	gitRunner     gitRunner
+	deployKeys    *DeployKeyRepo
+	crypto        *RealCryptoService
+	gitRunner     GitRunner
 	prepClient    prepRunner
+	ghUploader    githubUploader
 	projectLookup ProjectLookup
 }
 
 // NewManager creates a workspace manager from a Config. If cfg.Root is
 // empty, defaults to "/data/forge/workspaces". Nil dependency fields
-// are allowed — EnsureReady will return a descriptive error if called
+// are allowed -- EnsureReady will return a descriptive error if called
 // on a Manager missing any of them.
 func NewManager(cfg Config) *Manager {
 	root := cfg.Root
@@ -66,8 +70,11 @@ func NewManager(cfg Config) *Manager {
 	return &Manager{
 		root:          root,
 		stateRepo:     cfg.StateRepo,
+		deployKeys:    cfg.DeployKeys,
+		crypto:        cfg.Crypto,
 		gitRunner:     cfg.GitRunner,
 		prepClient:    cfg.PrepClient,
+		ghUploader:    cfg.GHUploader,
 		projectLookup: cfg.ProjectLookup,
 	}
 }
@@ -93,10 +100,6 @@ func (m *Manager) TaskDir(tenantID, projectID, taskID int64) string {
 
 // CreateWorktree creates a git worktree for a task on a new branch.
 // If a worktree already exists at that path, it is removed first.
-//
-// Unchanged from the pre-A2 Manager — the temporal worker still uses
-// worktrees for task-level isolation, and that flow is untouched by
-// the Variant B refactor.
 func (m *Manager) CreateWorktree(ctx context.Context, tenantID, projectID, taskID int64, branchName string) (string, error) {
 	repoDir := m.ProjectDir(tenantID, projectID)
 	taskDir := m.TaskDir(tenantID, projectID, taskID)
@@ -153,7 +156,7 @@ func (m *Manager) CleanupTask(ctx context.Context, tenantID, projectID, taskID i
 
 // SetLookup wires in the ProjectLookup after Manager construction.
 // Needed because projectService depends on Manager.ProjectDir while
-// Manager.EnsureReady depends on ProjectLookup — classic chicken-
+// Manager.EnsureReady depends on ProjectLookup -- classic chicken-
 // and-egg. main.go constructs Manager first (without Lookup), then
 // projectService, then SetLookup.
 func (m *Manager) SetLookup(lookup ProjectLookup) {

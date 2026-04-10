@@ -99,6 +99,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.PATCH("/projects/:id/agent/sessions/:sid", h.RenameSession)
 	rg.GET("/projects/:id/agent/sessions/:sid/messages", h.ListSessionMessages)
 	rg.GET("/projects/:id/agent/suggestions", h.Suggestions)
+	rg.POST("/projects/:id/agent/sessions/:sid/clarify", h.Clarify)
 }
 
 // Suggestions handles GET /projects/:id/agent/suggestions.

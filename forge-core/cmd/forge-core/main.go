@@ -120,13 +120,10 @@ func main() {
 		slog.Warn("failed to generate service token", "error", err)
 	}
 
-	// Workspace manager — chronos Phase 1a (HTTPS+token auth)
+	// Workspace manager — chronos Phase 1b (SSH deploy key auth)
 	//
-	// Phase 1a uses gitInjectToken inside RealGitRunner for git auth.
-	// Phase 1b will add a DeployKeyRepo, ed25519 generation, GitHub
-	// deploy-key upload, and SSH auth — at which point this block
-	// adds a secrets service and several more dependencies. Until
-	// then, the wiring is deliberately minimal.
+	// Phase 1b uses SSH deploy keys via GIT_SSH_COMMAND + tempfile.
+	// The HTTPS+token path from Phase 1a is fully deleted.
 	//
 	// StateRepo and DBProjectLookup need database/sql (*sql.DB), not
 	// pgxpool.Pool. We open a second connection using the pgx stdlib
@@ -141,11 +138,29 @@ func main() {
 	sqlDB.SetMaxOpenConns(5)
 	sqlDB.SetMaxIdleConns(2)
 
+	// CryptoService for deploy key encryption at rest. Master key from env.
+	masterKey := os.Getenv("FORGE_SECRETS_MASTER_KEY")
+	var wsCrypto *workspace.RealCryptoService
+	var deployKeyRepo *workspace.DeployKeyRepo
+	if masterKey != "" {
+		wsCrypto, err = workspace.NewCryptoService(masterKey)
+		if err != nil {
+			slog.Error("workspace crypto init failed", "error", err)
+			os.Exit(1)
+		}
+		deployKeyRepo = workspace.NewDeployKeyRepo(sqlDB, wsCrypto)
+	} else {
+		slog.Warn("FORGE_SECRETS_MASTER_KEY not set; deploy key operations will fail at runtime")
+	}
+
 	workspaceMgr := workspace.NewManager(workspace.Config{
 		Root:          cfg.WorkspaceRoot,
 		StateRepo:     workspace.NewStateRepo(sqlDB),
-		GitRunner:     workspace.NewRealGitRunner(),
+		DeployKeys:    deployKeyRepo,
+		Crypto:        wsCrypto,
+		GitRunner:     workspace.NewRealGitRunner(""),
 		PrepClient:    workspace.NewPrepRunnerAdapter(workspace.NewPrepClient(cfg.AIWorkerURL)),
+		GHUploader:    workspace.NewGitHubDeployKeyUploader("https://api.github.com"),
 		ProjectLookup: workspace.NewDBProjectLookup(sqlDB),
 	})
 

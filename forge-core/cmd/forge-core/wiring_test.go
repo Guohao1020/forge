@@ -7,16 +7,19 @@ import (
 	"github.com/shulex/forge/forge-core/internal/workspace"
 )
 
-// TestWorkspaceWiring_Phase1a verifies that the Phase 1a Manager can be
+// TestWorkspaceWiring_Phase1b verifies that the Phase 1b Manager can be
 // constructed with all production dependencies (modulo DB -- that's an
 // integration concern). Catches future regressions in the Config shape
 // and dependency types without needing a live database.
-func TestWorkspaceWiring_Phase1a(t *testing.T) {
+func TestWorkspaceWiring_Phase1b(t *testing.T) {
 	mgr := workspace.NewManager(workspace.Config{
 		Root:       "/tmp/test-ws",
 		StateRepo:  nil, // nil is allowed; EnsureReady returns an error
-		GitRunner:  workspace.NewRealGitRunner(),
+		DeployKeys: nil, // nil is allowed; EnsureReady will error at runtime
+		Crypto:     nil,
+		GitRunner:  workspace.NewRealGitRunner(""),
 		PrepClient: workspace.NewPrepRunnerAdapter(workspace.NewPrepClient("http://127.0.0.1:0")),
+		GHUploader: workspace.NewGitHubDeployKeyUploader("https://api.github.com"),
 	})
 	if mgr == nil {
 		t.Fatal("NewManager returned nil")

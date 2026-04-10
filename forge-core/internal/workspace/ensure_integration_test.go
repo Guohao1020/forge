@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -56,8 +55,7 @@ func seedBareRepo(t *testing.T, bareDir string) string {
 }
 
 // addSecondCommit adds a second commit to the bare repo so resync tests
-// can verify fetch + reset picks up new history. The working directory
-// for this commit is fresh -- we clone the bare repo, add a file, push.
+// can verify fetch + reset picks up new history.
 func addSecondCommit(t *testing.T, bareDir string) {
 	t.Helper()
 	workDir := t.TempDir()
@@ -85,10 +83,40 @@ func addSecondCommit(t *testing.T, bareDir string) {
 	run(workDir, "git", "push", "-q", "origin", "main")
 }
 
-// integrationFixture wires a real Manager with real StateRepo, real
-// RealGitRunner, no prep client (nil), and a memoryLookup pointing at
-// a file:// URL. Uses a dummy token -- the file:// URL doesn't exercise
-// HTTPS auth, so gitInjectToken's output is benign.
+// fileGitRunner is a test GitRunner that uses file:// URLs without SSH.
+// It shells out to git without GIT_SSH_COMMAND because file:// protocol
+// doesn't need SSH auth. This lets the integration test exercise the
+// full state machine without requiring an SSH server.
+type fileGitRunner struct{}
+
+func (f *fileGitRunner) Clone(ctx context.Context, sshURL, dir string, key *DeployKey, branch string) error {
+	_ = os.MkdirAll(filepath.Dir(dir), 0o755)
+	_ = os.RemoveAll(dir)
+	cmd := exec.CommandContext(ctx, "git", "clone", "--depth=50", "--branch", branch, sshURL, dir)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return classifyGitError(err, string(out))
+	}
+	return nil
+}
+
+func (f *fileGitRunner) FetchAndResetHard(ctx context.Context, dir, branch string, key *DeployKey) error {
+	fetch := exec.CommandContext(ctx, "git", "-C", dir, "fetch", "origin", branch)
+	fetch.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if out, err := fetch.CombinedOutput(); err != nil {
+		return classifyGitError(err, string(out))
+	}
+	reset := exec.CommandContext(ctx, "git", "-C", dir, "reset", "--hard", "origin/"+branch)
+	if out, err := reset.CombinedOutput(); err != nil {
+		return classifyGitError(err, string(out))
+	}
+	return nil
+}
+
+// integrationFixture wires a real Manager with real StateRepo, a
+// fileGitRunner (no SSH), no prep client, and a memoryLookup pointing
+// at a file:// URL.
 type integrationFixture struct {
 	manager *Manager
 	bareDir string
@@ -105,28 +133,47 @@ func newIntegrationFixture(t *testing.T, projectID int64) *integrationFixture {
 	fileURL := seedBareRepo(t, bareDir)
 	rootDir := t.TempDir()
 
+	crypto, err := NewCryptoService(testMasterKey())
+	if err != nil {
+		t.Fatalf("NewCryptoService: %v", err)
+	}
+
 	lookup := &memoryLookup{
-		projects: map[int64]ProjectInfo{
+		projects: map[int64]*ProjectInfo{
 			projectID: {
-				RepoURL:     fileURL,
-				AccessToken: "dummy-token",
-				Branch:      "main",
+				ProjectID:     projectID,
+				TenantID:      1,
+				SSHURL:        fileURL, // file:// URL for local testing
+				DefaultBranch: "main",
+				CreatedBy:     1,
 			},
+		},
+		tokens: map[int64]string{
+			projectID: "ghp_integration_token",
 		},
 	}
 
-	// Stub prep client -- nil. EnsureReady treats nil prepClient as
-	// "skip prep, mark ready".
+	// For file:// integration tests, pre-seed a deploy key row so
+	// ensureDeployKey finds it and doesn't try to do a real GitHub upload.
+	deployKeyRepo := NewDeployKeyRepo(db, crypto)
+	if err := deployKeyRepo.UpsertKey(context.Background(), 1, projectID, "ssh-ed25519 AAAA integration-test", []byte("fake-key-for-file-protocol"), 12345); err != nil {
+		t.Fatalf("seed deploy key: %v", err)
+	}
+
 	mgr := &Manager{
 		root:          rootDir,
 		stateRepo:     NewStateRepo(db),
-		gitRunner:     NewRealGitRunner(),
-		prepClient:    nil,
+		deployKeys:    deployKeyRepo,
+		crypto:        crypto,
+		gitRunner:     &fileGitRunner{},
+		prepClient:    nil, // skip prep
+		ghUploader:    &fakeUploader{},
 		projectLookup: lookup,
 	}
 
 	t.Cleanup(func() {
 		_, _ = db.Exec(`DELETE FROM engine.workspaces WHERE project_id = $1`, projectID)
+		_, _ = db.Exec(`DELETE FROM engine.project_deploy_keys WHERE project_id = $1`, projectID)
 	})
 
 	return &integrationFixture{
@@ -138,12 +185,12 @@ func newIntegrationFixture(t *testing.T, projectID int64) *integrationFixture {
 }
 
 func TestEnsureReady_Integration_FirstClone(t *testing.T) {
-	f := newIntegrationFixture(t, 301)
+	f := newIntegrationFixture(t, 501)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ws, err := f.manager.EnsureReady(ctx, 1, 301, false)
+	ws, err := f.manager.EnsureReady(ctx, 1, 501, false)
 	if err != nil {
 		t.Fatalf("EnsureReady: %v", err)
 	}
@@ -163,13 +210,13 @@ func TestEnsureReady_Integration_FirstClone(t *testing.T) {
 }
 
 func TestEnsureReady_Integration_Resync(t *testing.T) {
-	f := newIntegrationFixture(t, 302)
+	f := newIntegrationFixture(t, 502)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	// First call: clone
-	ws, err := f.manager.EnsureReady(ctx, 1, 302, false)
+	ws, err := f.manager.EnsureReady(ctx, 1, 502, false)
 	if err != nil {
 		t.Fatalf("first EnsureReady: %v", err)
 	}
@@ -184,10 +231,8 @@ func TestEnsureReady_Integration_Resync(t *testing.T) {
 	// Add a second commit to the bare repo so the fetch has something to pull
 	addSecondCommit(t, f.bareDir)
 
-	// Second call with forceSync=true: should fetch + reset, landing
-	// on "initial" content (not "local modification") AND introducing
-	// the new CHANGES.md file from the bare repo.
-	_, err = f.manager.EnsureReady(ctx, 1, 302, true)
+	// Second call with forceSync=true: should fetch + reset
+	_, err = f.manager.EnsureReady(ctx, 1, 502, true)
 	if err != nil {
 		t.Fatalf("resync EnsureReady: %v", err)
 	}
@@ -209,45 +254,55 @@ func TestEnsureReady_Integration_Resync(t *testing.T) {
 }
 
 func TestEnsureReady_Integration_ErrorRecovery(t *testing.T) {
-	f := newIntegrationFixture(t, 303)
+	f := newIntegrationFixture(t, 503)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Force an initial error by pointing lookup at a nonexistent path
 	f.manager.projectLookup = &memoryLookup{
-		projects: map[int64]ProjectInfo{
-			303: {
-				RepoURL:     "file:///nonexistent/bare/repo/path",
-				AccessToken: "dummy-token",
-				Branch:      "main",
+		projects: map[int64]*ProjectInfo{
+			503: {
+				ProjectID:     503,
+				TenantID:      1,
+				SSHURL:        "file:///nonexistent/bare/repo/path",
+				DefaultBranch: "main",
+				CreatedBy:     1,
 			},
+		},
+		tokens: map[int64]string{
+			503: "ghp_integration_token",
 		},
 	}
 
-	_, err := f.manager.EnsureReady(ctx, 1, 303, false)
+	_, err := f.manager.EnsureReady(ctx, 1, 503, false)
 	if err == nil {
 		t.Fatal("expected error from nonexistent bare repo")
 	}
 
 	// Verify the row is in error state
-	row, _ := f.manager.stateRepo.GetByProject(ctx, 1, 303)
+	row, _ := f.manager.stateRepo.GetByProject(ctx, 1, 503)
 	if row == nil || row.Status != StatusError {
 		t.Fatalf("expected error row, got %+v", row)
 	}
 
 	// Now fix the lookup and retry -- should recover
 	f.manager.projectLookup = &memoryLookup{
-		projects: map[int64]ProjectInfo{
-			303: {
-				RepoURL:     f.fileURL,
-				AccessToken: "dummy-token",
-				Branch:      "main",
+		projects: map[int64]*ProjectInfo{
+			503: {
+				ProjectID:     503,
+				TenantID:      1,
+				SSHURL:        f.fileURL,
+				DefaultBranch: "main",
+				CreatedBy:     1,
 			},
+		},
+		tokens: map[int64]string{
+			503: "ghp_integration_token",
 		},
 	}
 
-	ws, err := f.manager.EnsureReady(ctx, 1, 303, false)
+	ws, err := f.manager.EnsureReady(ctx, 1, 503, false)
 	if err != nil {
 		t.Fatalf("recovery EnsureReady: %v", err)
 	}
@@ -259,37 +314,5 @@ func TestEnsureReady_Integration_ErrorRecovery(t *testing.T) {
 	readme := filepath.Join(ws.HostPath, "README.md")
 	if _, err := os.Stat(readme); err != nil {
 		t.Errorf("README missing after recovery: %v", err)
-	}
-}
-
-// Phase 1a-specific: unsupported repo URL surfaces as repo_url_unsupported.
-func TestEnsureReady_Integration_UnsupportedURL(t *testing.T) {
-	f := newIntegrationFixture(t, 304)
-
-	// Swap the lookup with a non-HTTPS, non-file:// URL
-	f.manager.projectLookup = &memoryLookup{
-		projects: map[int64]ProjectInfo{
-			304: {
-				RepoURL:     "gopher://example.com/repo",
-				AccessToken: "dummy-token",
-				Branch:      "main",
-			},
-		},
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	_, err := f.manager.EnsureReady(ctx, 1, 304, false)
-	if err == nil {
-		t.Fatal("expected error for unsupported URL scheme")
-	}
-
-	row, _ := f.manager.stateRepo.GetByProject(ctx, 1, 304)
-	if row == nil || row.Status != StatusError {
-		t.Fatalf("expected error row, got %+v", row)
-	}
-	if row.LastError == nil || !strings.Contains(*row.LastError, "repo_url_unsupported") {
-		t.Errorf("last_error should contain 'repo_url_unsupported'; got %v", row.LastError)
 	}
 }

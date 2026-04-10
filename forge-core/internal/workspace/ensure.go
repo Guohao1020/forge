@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // EnsureReady drives the workspace state machine for (tenantID, projectID).
@@ -18,7 +19,7 @@ import (
 //
 // Behavior by starting state:
 //
-//	no row          -> create row('pending'), clone, prep, mark ready
+//	no row          -> create row('pending'), ensure deploy key, clone, prep, mark ready
 //	row='pending'   -> wait on advisory lock, observe final state
 //	row='ready' + forceSync=false -> no-op
 //	row='ready' + forceSync=true  -> fetch + reset --hard
@@ -29,11 +30,12 @@ import (
 // the first one left the row in.
 //
 // forceSync=true is driven by the agent service at the start of a
-// new session (spec §2.7). It MUST NOT fire mid-session.
+// new session (spec). It MUST NOT fire mid-session.
 //
-// PHASE 1A: git operations go through gitRunner using HTTPS+token auth.
-// The state machine itself is auth-independent; Phase 1b swaps the
-// gitRunner constructor without touching this file.
+// PHASE 1B: git operations go through GitRunner using SSH deploy keys.
+// Deploy key lifecycle: on first call per project, generate ed25519
+// keypair, encrypt+store in DB, upload public key to GitHub, then
+// clone. On subsequent calls, reuse the stored key.
 func (m *Manager) EnsureReady(
 	ctx context.Context,
 	tenantID, projectID int64,
@@ -64,7 +66,7 @@ func (m *Manager) EnsureReady(
 			return nil
 
 		case existing.Status == StatusReady && !forceSync:
-			// Already ready, caller didn't ask for sync — no-op
+			// Already ready, caller didn't ask for sync -- no-op
 			finalWS = existing
 			return nil
 
@@ -78,7 +80,7 @@ func (m *Manager) EnsureReady(
 			return nil
 
 		case existing.Status == StatusError:
-			// Previous attempt failed — wipe and retry from scratch.
+			// Previous attempt failed -- wipe and retry from scratch.
 			if err := m.stateRepo.ResetToPending(ctx, tenantID, projectID); err != nil {
 				return fmt.Errorf("ensure: reset to pending: %w", err)
 			}
@@ -86,7 +88,6 @@ func (m *Manager) EnsureReady(
 			dir := m.ProjectDir(tenantID, projectID)
 			if err := os.RemoveAll(dir); err != nil {
 				slog.Warn("workspace: failed to wipe error dir", "dir", dir, "error", err)
-				// Not fatal — freshInstall's git clone will wipe again via its own RemoveAll
 			}
 			ws, err := m.freshInstall(ctx, tenantID, projectID)
 			if err != nil {
@@ -97,7 +98,7 @@ func (m *Manager) EnsureReady(
 
 		case existing.Status == StatusPending:
 			// A different caller is currently in the middle of an EnsureReady.
-			// Under advisory lock this shouldn't be observable — if we hold
+			// Under advisory lock this shouldn't be observable -- if we hold
 			// the lock and see pending, it means a previous run crashed after
 			// INSERT but before any state transition. Treat as crashed.
 			slog.Warn("workspace: observed pending row under lock; treating as crashed run",
@@ -125,16 +126,13 @@ func (m *Manager) EnsureReady(
 }
 
 // freshInstall performs the full "never been here before" flow:
-//  1. Look up project metadata via ProjectLookup (HTTPS URL + PAT + branch)
-//  2. Insert pending row
-//  3. MkdirAll the parent dir
-//  4. Clone the repo via RealGitRunner (HTTPS+token)
-//  5. Call ai-worker prep (non-blocking)
-//  6. Mark ready
-//
-// PHASE 1A: no deploy-key lifecycle. The entire "generate keypair +
-// upload to GitHub" dance from Round 1's Task 1.7 is absent because
-// HTTPS+token auth doesn't need it.
+//  1. Look up project metadata via ProjectLookup (SSHURL + branch)
+//  2. Ensure deploy key exists (generate + upload if needed)
+//  3. Insert pending row
+//  4. MkdirAll the parent dir
+//  5. Clone the repo via RealGitRunner (SSH deploy key)
+//  6. Call ai-worker prep (non-blocking)
+//  7. Mark ready
 func (m *Manager) freshInstall(
 	ctx context.Context,
 	tenantID, projectID int64,
@@ -145,13 +143,13 @@ func (m *Manager) freshInstall(
 		return nil, fmt.Errorf("ensure: project lookup: %w", err)
 	}
 
-	// Sanity-check the URL — Phase 1a only supports https:// or file://
-	// (the latter for local integration tests). Non-recognizable URLs
-	// surface as repo_url_unsupported so operators can see the failure
-	// mode without digging through git stderr.
-	if !isSupportedRepoURL(proj.RepoURL) {
-		m.markErrorOrLog(ctx, tenantID, projectID, fmt.Sprintf("repo_url_unsupported: %s", proj.RepoURL))
-		return nil, fmt.Errorf("ensure: unsupported repo URL: %s", proj.RepoURL)
+	// Ensure deploy key exists: on first call per project, generate +
+	// upload + store. On subsequent calls (including error recovery),
+	// reuse the stored key.
+	dk, err := m.ensureDeployKey(ctx, proj)
+	if err != nil {
+		m.markErrorOrLog(ctx, tenantID, projectID, fmt.Sprintf("deploy key: %v", err))
+		return nil, fmt.Errorf("ensure: deploy key: %w", err)
 	}
 
 	hostPath := m.ProjectDir(tenantID, projectID)
@@ -163,22 +161,20 @@ func (m *Manager) freshInstall(
 		return nil, fmt.Errorf("ensure: insert pending: %w", err)
 	}
 
-	// Make sure the parent directory exists before clone (clone does
-	// not MkdirAll its parent).
+	// Make sure the parent directory exists before clone
 	if err := os.MkdirAll(filepath.Dir(hostPath), 0755); err != nil {
 		m.markErrorOrLog(ctx, tenantID, projectID, fmt.Sprintf("mkdir parent: %v", err))
 		return nil, fmt.Errorf("ensure: mkdir parent: %w", err)
 	}
 
-	// Clone via HTTPS+token. Error classification handles auth/network
-	// failures so the state machine can produce a meaningful last_error.
-	if err := m.gitRunner.Clone(ctx, hostPath, proj.RepoURL, proj.AccessToken, proj.Branch); err != nil {
+	// Clone via SSH deploy key
+	if err := m.gitRunner.Clone(ctx, proj.SSHURL, hostPath, dk, proj.DefaultBranch); err != nil {
 		reason := formatCloneError(err)
 		m.markErrorOrLog(ctx, tenantID, projectID, reason)
 		return nil, fmt.Errorf("ensure: clone: %w", err)
 	}
 
-	// Dep prep — non-blocking
+	// Dep prep -- non-blocking
 	wsRelPath := m.relPath(tenantID, projectID)
 	if m.prepClient != nil {
 		prepRes, prepErr := m.prepClient.Prep(ctx, tenantID, projectID, wsRelPath)
@@ -199,10 +195,71 @@ func (m *Manager) freshInstall(
 	return m.stateRepo.GetByProject(ctx, tenantID, projectID)
 }
 
+// ensureDeployKey checks the DB for an existing deploy key for the project.
+// If none exists, generates a new ed25519 keypair, uploads the public key
+// to GitHub, and stores the encrypted private key in the DB.
+func (m *Manager) ensureDeployKey(
+	ctx context.Context,
+	proj *ProjectInfo,
+) (*DeployKey, error) {
+	// Check for existing key
+	if m.deployKeys != nil {
+		existing, err := m.deployKeys.GetByProject(ctx, proj.TenantID, proj.ProjectID)
+		if err != nil {
+			return nil, fmt.Errorf("lookup existing deploy key: %w", err)
+		}
+		if existing != nil {
+			return existing, nil
+		}
+	}
+
+	// No existing key -- generate, upload, and store
+	return m.generateAndUploadDeployKey(ctx, proj)
+}
+
+// generateAndUploadDeployKey creates a new ed25519 keypair, uploads the
+// public key to GitHub, and stores the encrypted private key in the DB.
+func (m *Manager) generateAndUploadDeployKey(
+	ctx context.Context,
+	proj *ProjectInfo,
+) (*DeployKey, error) {
+	if m.deployKeys == nil || m.ghUploader == nil {
+		return nil, errors.New("deploy key generation requires deployKeys DAO and ghUploader")
+	}
+
+	comment := fmt.Sprintf("forge-deploy-%d-%d-%d", proj.TenantID, proj.ProjectID, time.Now().Unix())
+	pub, priv, err := GenerateKeyPair(comment)
+	if err != nil {
+		return nil, fmt.Errorf("generate keypair: %w", err)
+	}
+
+	token, err := m.projectLookup.GetOwnerGitHubToken(ctx, proj.ProjectID)
+	if err != nil {
+		return nil, fmt.Errorf("get owner GitHub token: %w", err)
+	}
+
+	owner, repo, err := parseRepoFromSSHURL(proj.SSHURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse ssh url: %w", err)
+	}
+
+	title := fmt.Sprintf("Forge: tenant %d project %d", proj.TenantID, proj.ProjectID)
+	ghID, err := m.ghUploader.Upload(ctx, token, owner, repo, title, pub, false)
+	if err != nil {
+		return nil, fmt.Errorf("github deploy key upload: %w", err)
+	}
+
+	// Upsert into the DAO -- replaces any stale row.
+	if err := m.deployKeys.UpsertKey(ctx, proj.TenantID, proj.ProjectID, pub, priv, ghID); err != nil {
+		return nil, fmt.Errorf("deploy key upsert: %w", err)
+	}
+
+	// Re-read to return a populated struct with CreatedAt etc.
+	return m.deployKeys.GetByProject(ctx, proj.TenantID, proj.ProjectID)
+}
+
 // resync performs a fetch + reset --hard on an already-ready workspace.
 // If either step fails, falls back to wipe + re-clone via freshInstall.
-//
-// PHASE 1A: uses HTTPS+token via gitRunner.Fetch + gitRunner.ResetHard.
 func (m *Manager) resync(
 	ctx context.Context,
 	existing *Workspace,
@@ -213,14 +270,14 @@ func (m *Manager) resync(
 		return nil, fmt.Errorf("resync: project lookup: %w", err)
 	}
 
-	if err := m.gitRunner.Fetch(ctx, existing.HostPath, proj.RepoURL, proj.AccessToken); err != nil {
-		slog.Warn("workspace: fetch failed; falling back to fresh clone",
-			"tenant", tenantID, "project", projectID, "error", err)
-		return m.wipeAndReclone(ctx, tenantID, projectID, existing.HostPath)
+	// Resolve the deploy key for fetch
+	dk, err := m.ensureDeployKey(ctx, proj)
+	if err != nil {
+		return nil, fmt.Errorf("resync: deploy key: %w", err)
 	}
 
-	if err := m.gitRunner.ResetHard(ctx, existing.HostPath, proj.Branch); err != nil {
-		slog.Warn("workspace: reset failed; falling back to fresh clone",
+	if err := m.gitRunner.FetchAndResetHard(ctx, existing.HostPath, proj.DefaultBranch, dk); err != nil {
+		slog.Warn("workspace: fetch+reset failed; falling back to fresh clone",
 			"tenant", tenantID, "project", projectID, "error", err)
 		return m.wipeAndReclone(ctx, tenantID, projectID, existing.HostPath)
 	}
@@ -234,7 +291,7 @@ func (m *Manager) resync(
 
 // wipeAndReclone is the fall-back used when resync's fetch or reset
 // fails: state goes back to pending, directory is wiped, freshInstall
-// runs. Keeps the transparent-recovery semantics from spec §3.12.
+// runs.
 func (m *Manager) wipeAndReclone(
 	ctx context.Context,
 	tenantID, projectID int64,
@@ -248,8 +305,7 @@ func (m *Manager) wipeAndReclone(
 }
 
 // markErrorOrLog updates the row to 'error' with reason. Logs if the
-// UPDATE itself fails — at that point there's nothing else we can do,
-// the caller will surface the original error regardless.
+// UPDATE itself fails.
 func (m *Manager) markErrorOrLog(ctx context.Context, tenantID, projectID int64, reason string) {
 	if err := m.stateRepo.MarkError(ctx, tenantID, projectID, reason); err != nil {
 		slog.Error("workspace: failed to mark row as error",
@@ -257,20 +313,14 @@ func (m *Manager) markErrorOrLog(ctx context.Context, tenantID, projectID int64,
 	}
 }
 
-// formatCloneError turns a gitRunner error into the persisted
-// last_error string. Phase 1a's §3.12 failure-mode matrix requires:
-//   - AuthError  -> "github_auth_failed: <stderr-line>"
-//   - NetworkError -> "clone failed: network: <stderr-line>"
-//   - otherwise  -> "clone failed: <err.Error()>"
-//
-// Phase 1b removes the github_auth_failed branch (PAT usage ends with
-// the SSH migration).
+// formatCloneError turns a GitRunner error into the persisted
+// last_error string.
 func formatCloneError(err error) string {
 	var authErr *AuthError
 	var netErr *NetworkError
 	switch {
 	case errors.As(err, &authErr):
-		return "github_auth_failed: " + firstLine(authErr.stderr)
+		return "deploy_key_auth_failed: " + firstLine(authErr.stderr)
 	case errors.As(err, &netErr):
 		return "clone failed: network: " + firstLine(netErr.stderr)
 	default:
@@ -278,24 +328,23 @@ func formatCloneError(err error) string {
 	}
 }
 
-// isSupportedRepoURL returns true for URLs Phase 1a can clone.
-// Accepts https:// (production) and file:// (integration tests).
-// Phase 1b extends this to ssh:// and git@ forms.
+// isSupportedRepoURL returns true for URLs that can be cloned.
+// Accepts git@ SSH (production), https:// GitHub (converted by
+// HTTPSToSSHURL), and file:// (integration tests).
 func isSupportedRepoURL(url string) bool {
-	return strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "file://")
+	return strings.HasPrefix(url, "git@") ||
+		strings.HasPrefix(url, "https://github.com/") ||
+		strings.HasPrefix(url, "file://")
 }
 
 // relPath returns the relative workspace path fragment sent to ai-worker
-// via the RunRequest.workspace_path field. This is the "Stream 4c
-// protocol" format from spec §3.4: "tenant-{N}/project-{N}/repo".
+// via the RunRequest.workspace_path field.
 func (m *Manager) relPath(tenantID, projectID int64) string {
 	return fmt.Sprintf("tenant-%d/project-%d/repo", tenantID, projectID)
 }
 
 // containerProjectDir returns the absolute path as seen inside the
-// ai-worker container. For now this is the same structure with a
-// hardcoded container root; when forge-core moves into the compose
-// network, this becomes more sophisticated.
+// ai-worker container.
 func (m *Manager) containerProjectDir(tenantID, projectID int64) string {
 	return filepath.Join("/data/forge/workspaces",
 		fmt.Sprintf("tenant-%d", tenantID),
