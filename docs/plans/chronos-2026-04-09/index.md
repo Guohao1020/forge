@@ -3,7 +3,7 @@
 > **Code name:** chronos (Greek personification of time). This refactor "folds time" — collapsing the pair_pipeline-era workaround into the A2-era real agent architecture in one single branch.
 
 **Started:** 2026-04-09
-**Status:** ✅ **Round 2 plan delivered** — 9 phases, ~76 tasks, ~21k lines. Round 1 was reviewed by autoplan CEO subagent on 2026-04-09 and received 5 accepted strategic findings (see `~/.claude/projects/D--shulex-work-forge/memory/chronos-ceo-review-2026-04-09.md`). Round 2 applies all 5 findings and passed a second spec review iteration with only minor call-site fixes that have been applied.
+**Status:** ✅ **DELIVERED 2026-04-10** — all 7 phases written, deploy runbook in place, retro complete. Round 1 was reviewed by autoplan CEO subagent on 2026-04-09 and received 5 accepted strategic findings (see `~/.claude/projects/D--shulex-work-forge/memory/chronos-ceo-review-2026-04-09.md`). Round 2 applies all 5 findings and passed a second spec review iteration with only minor call-site fixes that have been applied.
 **Branch:** `feat/agent-variant-b-single-agent` (off `main`)
 
 ---
@@ -84,7 +84,7 @@ Go 1.22 (forge-core workspace module + secrets service + clarify handler), Pytho
 | 5a | Bidirectional RPC (Redis Pub/Sub Return Channel) | 9 | 0, 4 | 5 | ✅ written (Round 2 NEW) | [phase-5a-bidirectional-rpc.md](phase-5a-bidirectional-rpc.md) |
 | 5 | Agent Loop + api_server + Prompts + Interaction Tools | 15 | 1a, 3, 4, 5a | 6 | ✅ written (Round 1 Tasks 5.1–5.7 + Round 2 Tasks 5.8–5.15 for hooks, clarification tool, review tool) | [phase-5-agent-loop.md](phase-5-agent-loop.md) |
 | 6 | Frontend Changes + Clarification UI | 11 | 5 | 7 | ✅ written (Round 1 Tasks 6.1–6.9 + Round 2 Tasks 6.10–6.11 for clarification input component) | [phase-6-frontend.md](phase-6-frontend.md) |
-| 7 | E2E Smoke (with clarification round-trip) + Deploy | 4 | 6, 5a | production deployment | ✅ written (Round 1 + Round 2 smoke test rewrite) | [phase-7-deploy.md](phase-7-deploy.md) |
+| 7 | E2E Smoke (with clarification round-trip) + Deploy | 4 | 6, 5a | production deployment | ✅ executed (Phase 7 delivered 2026-04-10) | [phase-7-deploy.md](phase-7-deploy.md) |
 
 **Total:** ~76 tasks across 9 phases (6 + 8 + 6 + 6 + 8 + 9 + 9 + 15 + 11 + 4 = 82 if you count the 1a/1b split as two phases; ~76 if you count the 6-tasks-added-in-Round-2 delta from the Round 1 baseline of 58).
 
