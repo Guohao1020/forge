@@ -3,40 +3,30 @@
 import { cn } from "@/lib/utils"
 
 interface ThinkingIndicatorProps {
-  label?: string
+  label: string
   className?: string
 }
 
 /**
- * Three-dot pulsing indicator rendered under the current AI message
- * while the agent is thinking or running a tool. The Python backend
- * emits ThinkingStarted with an optional label (e.g. "Running read_file",
- * "Analyzing project", "Fixing code"); the frontend shows it until the
- * matching ThinkingStopped event arrives.
- *
- * Uses --accent-text for label color so it reads as secondary motion
- * rather than a primary state change.
+ * A small pulsing indicator shown below a running bash tool card.
+ * Phase 6 Task 6.8 repositioned this from chat-bottom to attached
+ * to the specific tool card that's executing.
  */
-export function ThinkingIndicator({
-  label = "Thinking",
-  className,
-}: ThinkingIndicatorProps) {
+export function ThinkingIndicator({ label, className }: ThinkingIndicatorProps) {
   return (
     <div
-      role="status"
-      aria-live="polite"
-      aria-label={`${label}…`}
       className={cn(
-        "flex items-center gap-2 py-1 px-0.5 font-mono text-[11px] italic text-[var(--accent-text)]",
+        "flex items-center gap-1.5 mt-1 text-[11px] text-[var(--text-tertiary)]",
         className,
       )}
+      role="status"
+      aria-live="polite"
     >
-      <span className="flex items-center gap-0.5" aria-hidden>
-        <span className="w-1 h-1 rounded-full bg-current animate-thinking-dot-1" />
-        <span className="w-1 h-1 rounded-full bg-current animate-thinking-dot-2" />
-        <span className="w-1 h-1 rounded-full bg-current animate-thinking-dot-3" />
+      <span className="relative flex h-1.5 w-1.5">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--accent)] opacity-75" />
+        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[var(--accent)]" />
       </span>
-      <span>{label}…</span>
+      <span className="font-mono">{label}</span>
     </div>
   )
 }

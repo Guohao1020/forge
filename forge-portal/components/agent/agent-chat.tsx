@@ -41,6 +41,7 @@ interface SessionSummary {
 
 interface ToolCall {
   name: string
+  toolUseId?: string
   input: Record<string, unknown>
   output?: string
   isError?: boolean
@@ -210,6 +211,43 @@ function hydrateFromDurableLog(rows: AgentMessageRow[]): {
   return { messages, tokens, cost }
 }
 
+/**
+ * Visual fix-loop detection heuristic.
+ *
+ * Spec §2.6 Q5.5 replaced the fix_loop_* events with a frontend-only
+ * heuristic: when the agent runs bash -> it errors -> then edit_file
+ * (or write_file) -> then another bash, we detect the pattern and
+ * insert a subtle "Fixing previous error..." system message.
+ *
+ * Returns "insert_banner" if the current assistant message's tool
+ * history matches bash-error-then-edit-then-new-bash, else null.
+ */
+export function detectFixLoopStart(
+  messages: ChatMessage[],
+  newToolName: string,
+): "insert_banner" | null {
+  if (newToolName !== "bash") return null
+
+  const last = messages[messages.length - 1]
+  if (!last || last.role !== "assistant") return null
+
+  const tools = last.tools ?? []
+  let sawWrite = false
+  // Walk backwards; find the most recent bash, remembering whether
+  // we crossed any write/edit on the way.
+  for (let i = tools.length - 1; i >= 0; i--) {
+    const t = tools[i]
+    if (t.name === "write_file" || t.name === "edit_file") {
+      sawWrite = true
+      continue
+    }
+    if (t.name === "bash") {
+      return t.isError && sawWrite ? "insert_banner" : null
+    }
+  }
+  return null
+}
+
 const roleConfig: Record<AgentRole, { icon: React.ReactNode; label: string; color: string }> = {
   user: { icon: <User className="h-3.5 w-3.5" />, label: "You", color: "text-[var(--text-primary)]" },
   assistant: { icon: <Bot className="h-3.5 w-3.5" />, label: "AI", color: "text-[var(--accent)]" },
@@ -239,8 +277,13 @@ export function AgentChat({
   const retryCountRef = useRef(0)
   const [tokenCount, setTokenCount] = useState(0)
   const [costEstimate, setCostEstimate] = useState(0)
-  // Stream 4: backend-driven thinking indicator. Null means idle, a string
-  // is the current label ("Running read_file", "Fixing code", etc.)
+  // Task 6.8: thinking indicator attaches to the running bash tool card.
+  // currentBashToolUseId is the tool_use_id of the most recent bash tool_started.
+  // currentThinkingLabel is the label from thinking_started events.
+  const [currentBashToolUseId, setCurrentBashToolUseId] = useState<string | null>(null)
+  const [currentThinkingLabel, setCurrentThinkingLabel] = useState<string>("")
+  // Legacy thinkingLabel kept for backward compat in case thinking events
+  // arrive without a preceding bash tool_started
   const [thinkingLabel, setThinkingLabel] = useState<string | null>(null)
   // Stream 4c: empty-state suggestions from the backend. Starts empty
   // so the first paint doesn't flash the hardcoded defaults; the
@@ -420,20 +463,39 @@ export function AgentChat({
         }
         break
 
-      case "tool_started":
+      case "tool_started": {
+        const tname = data.tool_name
+        const tid = data.tool_use_id || ""
+        // Task 6.9: detect fix-loop pattern (bash-error -> edit -> new bash)
+        // Must read current messages synchronously before the state update.
         setMessages(prev => {
-          const last = prev[prev.length - 1]
+          let next = prev
+          if (detectFixLoopStart(prev, tname) === "insert_banner") {
+            next = [...prev, {
+              id: `sys-fix-${Date.now()}`,
+              role: "system" as const,
+              content: "Fixing previous error...",
+              timestamp: Date.now(),
+            }]
+          }
+          const last = next[next.length - 1]
           if (last && last.role !== "user") {
             const tools = [...(last.tools || []), {
-              name: data.tool_name,
+              name: tname,
+              toolUseId: tid,
               input: JSON.parse(data.tool_input || "{}"),
               isLoading: true,
             }]
-            return [...prev.slice(0, -1), { ...last, tools }]
+            return [...next.slice(0, -1), { ...last, tools }]
           }
-          return prev
+          return next
         })
+        // Task 6.8: track bash tool_use_id for thinking indicator attachment
+        if (tname === "bash" && tid) {
+          setCurrentBashToolUseId(tid)
+        }
         break
+      }
 
       case "tool_completed":
         setMessages(prev => {
@@ -464,10 +526,19 @@ export function AgentChat({
 
       case "thinking_started":
         setThinkingLabel(data.label || "Thinking")
+        setCurrentThinkingLabel(data.label || "Working...")
         break
 
       case "thinking_stopped":
         setThinkingLabel(null)
+        setCurrentThinkingLabel("")
+        setCurrentBashToolUseId(null)
+        break
+
+      case "phase_changed":
+        if (data.phase) {
+          onPhaseChange?.(data.phase)
+        }
         break
 
       case "session_complete": {
@@ -686,6 +757,12 @@ export function AgentChat({
                         isError={tool.isError}
                         isLoading={tool.isLoading}
                       />
+                      {/* Task 6.8: thinking indicator attaches to the running bash card */}
+                      {tool.name === "bash" &&
+                        tool.toolUseId === currentBashToolUseId &&
+                        currentThinkingLabel && (
+                          <ThinkingIndicator label={currentThinkingLabel} />
+                        )}
                     </div>
                   ))}
                 </div>
@@ -694,9 +771,10 @@ export function AgentChat({
           )
         })}
 
-        {/* Backend-driven thinking indicator — renders under the last AI
-            message while the pair pipeline is in a tool/build/review phase. */}
-        {thinkingLabel && (
+        {/* Fallback thinking indicator — only renders when no bash tool card
+            is targeted (i.e., thinking events arrive without a preceding bash
+            tool_started). Primary indicator is attached to the bash card above. */}
+        {thinkingLabel && !currentBashToolUseId && (
           <div className="pl-8 -mt-1">
             <ThinkingIndicator label={thinkingLabel} />
           </div>
