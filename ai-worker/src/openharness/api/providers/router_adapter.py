@@ -76,13 +76,17 @@ class ModelRouterAdapter:
             content_blocks.append(TextBlock(text=text))
             yield ApiTextDeltaEvent(text=text)
 
-        # Tool calls
+        # Tool calls — LLMResponse.tool_calls is a list of dicts
+        # with keys: id, name, input
         tool_calls = getattr(response, "tool_calls", []) or []
         for tc in tool_calls:
+            tc_id = tc["id"] if isinstance(tc, dict) else getattr(tc, "id", f"toolu_{id(tc)}")
+            tc_name = tc["name"] if isinstance(tc, dict) else tc.name
+            tc_input = tc["input"] if isinstance(tc, dict) else getattr(tc, "input", {})
             content_blocks.append(ToolUseBlock(
-                id=getattr(tc, "id", f"toolu_{id(tc)}"),
-                name=tc.name,
-                input=tc.input if isinstance(tc.input, dict) else {},
+                id=tc_id,
+                name=tc_name,
+                input=tc_input if isinstance(tc_input, dict) else {},
             ))
 
         # Build assistant message
