@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib" // pgx stdlib driver for database/sql
 	"github.com/joho/godotenv"
 	"github.com/shulex/forge/forge-core/internal/config"
 	"github.com/shulex/forge/forge-core/internal/k8s"
@@ -118,8 +120,34 @@ func main() {
 		slog.Warn("failed to generate service token", "error", err)
 	}
 
-	// Workspace manager (local git clones + per-task worktrees)
-	workspaceMgr := workspace.NewManager(workspace.Config{Root: cfg.WorkspaceRoot})
+	// Workspace manager — chronos Phase 1a (HTTPS+token auth)
+	//
+	// Phase 1a uses gitInjectToken inside RealGitRunner for git auth.
+	// Phase 1b will add a DeployKeyRepo, ed25519 generation, GitHub
+	// deploy-key upload, and SSH auth — at which point this block
+	// adds a secrets service and several more dependencies. Until
+	// then, the wiring is deliberately minimal.
+	//
+	// StateRepo and DBProjectLookup need database/sql (*sql.DB), not
+	// pgxpool.Pool. We open a second connection using the pgx stdlib
+	// driver. The pool is small (max 5) because workspace operations
+	// are infrequent.
+	sqlDB, err := sql.Open("pgx", cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("failed to open sql.DB for workspace", "error", err)
+		os.Exit(1)
+	}
+	defer sqlDB.Close()
+	sqlDB.SetMaxOpenConns(5)
+	sqlDB.SetMaxIdleConns(2)
+
+	workspaceMgr := workspace.NewManager(workspace.Config{
+		Root:          cfg.WorkspaceRoot,
+		StateRepo:     workspace.NewStateRepo(sqlDB),
+		GitRunner:     workspace.NewRealGitRunner(),
+		PrepClient:    workspace.NewPrepRunnerAdapter(workspace.NewPrepClient(cfg.AIWorkerURL)),
+		ProjectLookup: workspace.NewDBProjectLookup(sqlDB),
+	})
 
 	// Project module
 	projectRepo := project.NewRepository(db)
