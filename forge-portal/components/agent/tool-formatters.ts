@@ -1,14 +1,174 @@
-// Tool input summarizers for Agent Terminal collapsed view.
-//
-// Mockup variant-B-dense.html uses one-line labels like
-// `read_file  ProductService.java • 142 lines` — far more readable than a
-// generic `JSON.stringify(toolInput).slice(0, 60)` fallback.
-//
-// Each formatter takes the tool's input dict and returns a single-line human
-// string. Anything that doesn't have a formatter falls back to JSON.stringify
-// truncation in tool-execution.tsx. Add new formatters here as tools are added
-// to ai-worker/src/openharness/tools/.
+/**
+ * Tool card formatters for the Variant B agent UI.
+ *
+ * Maps a tool invocation (name + input + output) to the visual
+ * fields the tool card renders. Each formatter is pure — given
+ * the same inputs, returns the same ToolSummary.
+ *
+ * `hideCard: true` signals that the tool should NOT render a
+ * tool card at all. Currently only set_phase uses this — the
+ * phase change is shown in the step ribbon, so a redundant tool
+ * card for every set_phase call would be visual noise.
+ */
 
+export interface ToolSummary {
+  icon: string
+  label: string
+  status: string
+  hideCard?: boolean
+}
+
+function truncate(s: string, maxLen: number): string {
+  if (s.length <= maxLen) return s
+  return s.slice(0, maxLen - 3) + "..."
+}
+
+// Parse line count from read_file output.
+// read_file output contains numbered lines like "    1\tpackage main\n..."
+function parseLineCount(output?: string): string {
+  if (!output) return ""
+  const lines = output.split("\n").length
+  return `${lines - 1} lines`
+}
+
+function parseEditDelta(output?: string): string {
+  if (!output) return ""
+  // Match "+X -Y line(s)" from EditFileTool output
+  const m = output.match(/\+(\d+)\s+-(\d+)/)
+  if (!m) return "edited"
+  return `+${m[1]} -${m[2]}`
+}
+
+function parseMatchCount(output?: string): string {
+  if (!output) return ""
+  if (output.startsWith("No matches")) return "0 matches"
+  const lines = output.split("\n").filter((l) => l.trim() && !l.startsWith("..."))
+  return `${lines.length} matches`
+}
+
+function parseResultCount(output?: string): string {
+  if (!output) return ""
+  if (output.startsWith("No matches")) return "0 results"
+  const lines = output.split("\n").filter((l) => l.trim() && !l.startsWith("..."))
+  return `${lines.length} results`
+}
+
+function parseItemCount(output?: string): string {
+  if (!output) return ""
+  if (output.includes("(empty directory)")) return "0 items"
+  const lines = output.split("\n").filter((l) => l.trim() && !l.startsWith("..."))
+  return `${lines.length} items`
+}
+
+function parseBashExitCode(output?: string): string {
+  if (!output) return ""
+  const m = output.match(/^exit code:\s*(-?\d+)/m)
+  if (!m) return ""
+  const code = m[1]
+  return code === "0" ? "ok" : `exit ${code}`
+}
+
+/**
+ * Format a single tool invocation into its card summary.
+ *
+ * Unknown tool names fall through to a generic formatter so the
+ * card still renders with sensible defaults.
+ */
+export function formatToolSummary(
+  name: string,
+  input: Record<string, unknown>,
+  output?: string,
+): ToolSummary {
+  switch (name) {
+    // --- T2 file tools ---
+    case "read_file":
+      return {
+        icon: "\u{1F50D}",
+        label: String(input.path ?? ""),
+        status: parseLineCount(output),
+      }
+
+    case "write_file":
+      return {
+        icon: "\u{270F}\u{FE0F}",
+        label: String(input.path ?? ""),
+        status: "created",
+      }
+
+    case "edit_file":
+      return {
+        icon: "\u{270F}\u{FE0F}",
+        label: String(input.path ?? ""),
+        status: parseEditDelta(output),
+      }
+
+    case "glob":
+      return {
+        icon: "\u{1F4C1}",
+        label: String(input.pattern ?? ""),
+        status: parseMatchCount(output),
+      }
+
+    case "grep":
+      return {
+        icon: "\u{1F50E}",
+        label: String(input.pattern ?? ""),
+        status: parseResultCount(output),
+      }
+
+    case "list_directory":
+      return {
+        icon: "\u{1F4C2}",
+        label: String(input.path ?? "."),
+        status: parseItemCount(output),
+      }
+
+    // --- T2 exec tools ---
+    case "bash":
+      return {
+        icon: "\u{25B6}",
+        label: truncate(String(input.command ?? ""), 60),
+        status: parseBashExitCode(output),
+      }
+
+    case "set_phase":
+      return {
+        icon: "\u{2192}",
+        label: `Phase: ${String(input.phase ?? "")}`,
+        status: "",
+        hideCard: true,
+      }
+
+    // --- Legacy context tools (kept; Phase 3 already registered them) ---
+    case "query_api_catalog":
+    case "query_db_schema":
+    case "query_business_rules":
+    case "query_module_graph":
+      return {
+        icon: "\u{1F4DA}",
+        label: String(input.keyword ?? input.table_name ?? input.domain ?? input.module_name ?? name),
+        status: output ? `${output.length} chars` : "",
+      }
+
+    case "read_project_file":
+      return {
+        icon: "\u{1F4D6}",
+        label: String(input.path ?? ""),
+        status: output ? `${output.length} chars` : "",
+      }
+
+    // --- Fallback ---
+    default:
+      return {
+        icon: "\u{1F6E0}",
+        label: name,
+        status: "",
+      }
+  }
+}
+
+// --- Legacy formatToolInput for backward compatibility ---
+// tool-execution.tsx still calls this for collapsed summary text.
 type ToolInput = Record<string, unknown>
 
 function str(v: unknown, fallback = "?"): string {
@@ -24,7 +184,7 @@ function num(v: unknown): string {
 }
 
 export const toolFormatters: Record<string, (input: ToolInput) => string> = {
-  // ---- Context tools (ai-worker/src/openharness/tools/context_tools.py) ----
+  // Context tools
   query_api_catalog: (i) => {
     const q = str(i.query, "")
     return q ? `query: ${q}` : "api catalog lookup"
@@ -44,26 +204,41 @@ export const toolFormatters: Record<string, (input: ToolInput) => string> = {
   read_project_file: (i) => {
     const path = str(i.path, "")
     const lines = num(i.lines)
-    return path ? `${path} • ${lines} lines` : "read file"
+    return path ? `${path} \u2022 ${lines} lines` : "read file"
   },
-
-  // ---- Expected pair-pipeline tools (will match Stream 4 additions) ----
+  // T2 file tools
   read_file: (i) => {
     const path = str(i.path, "")
-    const lines = num(i.lines)
-    return path ? `${path} • ${lines} lines` : "read file"
+    return path || "read file"
   },
   write_file: (i) => {
     const path = str(i.path, "")
-    const lines = num(i.lines)
-    return path ? `${path} • +${lines} lines` : "write file"
+    return path || "write file"
   },
   edit_file: (i) => {
     const path = str(i.path, "")
-    const added = num(i.added)
-    const removed = num(i.removed)
-    return path ? `${path} • +${added}/-${removed}` : "edit file"
+    return path || "edit file"
   },
+  glob: (i) => {
+    const pattern = str(i.pattern, "")
+    return pattern || "glob"
+  },
+  grep: (i) => {
+    const pattern = str(i.pattern, "")
+    return pattern ? `"${pattern}"` : "search code"
+  },
+  list_directory: (i) => {
+    const path = str(i.path, ".")
+    return path
+  },
+  bash: (i) => {
+    const cmd = str(i.command, "")
+    return cmd ? truncate(cmd, 60) : "run command"
+  },
+  set_phase: (i) => {
+    return `Phase: ${str(i.phase, "?")}`
+  },
+  // Legacy
   execute_command: (i) => {
     const cmd = str(i.command, "")
     return cmd || "run command"
@@ -71,7 +246,7 @@ export const toolFormatters: Record<string, (input: ToolInput) => string> = {
   list_files: (i) => {
     const path = str(i.path, "")
     const count = num(i.count)
-    return path ? `${path} • ${count} items` : "list files"
+    return path ? `${path} \u2022 ${count} items` : "list files"
   },
   search_code: (i) => {
     const q = str(i.query, "")
@@ -97,5 +272,5 @@ export function formatToolInput(
     }
   }
   const raw = JSON.stringify(toolInput)
-  return raw.length > 60 ? raw.slice(0, 60) + "…" : raw
+  return raw.length > 60 ? raw.slice(0, 60) + "\u2026" : raw
 }
