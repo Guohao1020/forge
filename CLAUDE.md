@@ -51,9 +51,52 @@ cd ai-worker && pytest
 
 ## Local Dev Environment
 
+### One-Command Deploy
+
 ```bash
-docker compose -f docker-compose.dev.yml up -d    # Start PostgreSQL, Redis, Temporal
-docker compose -f docker-compose.dev.yml down      # Stop all
+bash scripts/dev-deploy.sh     # Start everything + health check
+cd forge-portal && npm run dev  # Start frontend separately (:3000)
+```
+
+The script handles: start infra (PG/Redis/Temporal) → apply migrations → rebuild ai-worker image → restart container → build forge-core → start forge-core → health checks → smoke test.
+
+### Manual Steps (if script fails)
+
+```bash
+# 1. Start infrastructure
+docker compose -f docker-compose.dev.yml up -d postgres redis temporal
+
+# 2. Apply migrations (idempotent)
+docker compose -f docker-compose.dev.yml exec -T postgres psql -U forge -d forge_main < forge-core/migrations/025_workspaces.sql
+docker compose -f docker-compose.dev.yml exec -T postgres psql -U forge -d forge_main < forge-core/migrations/026_project_deploy_keys.sql
+
+# 3. Rebuild + restart ai-worker
+docker compose -f docker-compose.dev.yml build --no-cache ai-worker
+docker compose -f docker-compose.dev.yml up -d --force-recreate ai-worker
+
+# 4. Build + start forge-core
+cd forge-core && go build ./cmd/forge-core
+FORGE_SECRETS_MASTER_KEY=$(python -c "import base64,os; print(base64.b64encode(os.urandom(32)).decode())") ./forge-core &
+
+# 5. Start frontend
+cd forge-portal && npm run dev
+```
+
+### Gotchas
+
+- **FORGE_SECRETS_MASTER_KEY** 每次重新生成会导致旧的 deploy key 记录解密失败。如果看到 `cipher: message authentication failed`，清掉旧记录：
+  ```bash
+  docker compose -f docker-compose.dev.yml exec -T postgres psql -U forge -d forge_main -c "DELETE FROM engine.project_deploy_keys; DELETE FROM engine.workspaces;"
+  ```
+- **ai-worker 代码在容器里**，不是 volume mount。改了代码必须 `docker compose build --no-cache ai-worker && docker compose up -d --force-recreate ai-worker`
+- **LLM API Key** 在 `ai-worker/.env`，当前配了 DashScope (通义千问 qwen)。Anthropic/OpenAI key 为空不影响运行
+- **workspace 降级**：本地 dev 没有真实 Git 仓库 clone，EnsureReady 会失败但降级为 warning，agent 用临时目录
+
+### Stop Everything
+
+```bash
+docker compose -f docker-compose.dev.yml down      # Stop containers
+taskkill //F //IM forge-core.exe                    # Stop forge-core (Windows)
 ```
 
 ### Service Ports
