@@ -131,8 +131,8 @@ func (a *DevOpsActivities) PushToGitHub(ctx context.Context, input PushToGitHubI
 
 	// Sync to local workspace (optional — graceful if git CLI unavailable)
 	if a.ws != nil {
-		if _, err := a.ws.EnsureClone(ctx, input.TenantID, input.ProjectID, proj.CodeRepoURL, token, proj.DefaultBranch); err != nil {
-			slog.Warn("workspace: clone failed, skipping local copy", "task_id", input.TaskID, "error", err)
+		if _, err := a.ws.EnsureReady(ctx, input.TenantID, input.ProjectID, false); err != nil {
+			slog.Warn("workspace: ensure ready failed, skipping local copy", "task_id", input.TaskID, "error", err)
 		} else {
 			taskDir, wtErr := a.ws.CreateWorktree(ctx, input.TenantID, input.ProjectID, input.TaskID, branchName)
 			if wtErr != nil {

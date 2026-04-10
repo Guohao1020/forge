@@ -91,13 +91,14 @@ func (a *BuildActivities) BuildDockerImage(ctx context.Context, input BuildImage
 	if a.ws != nil && input.RepoURL != "" {
 		slog.Info("building image with Docker", "image", imagePub, "branch", input.Branch)
 
-		// Step 1: Clone/pull repo to workspace
-		defaultBranch := "main"
-		repoDir, err := a.ws.EnsureClone(ctx, input.TenantID, input.ProjectID,
-			input.RepoURL, input.GitHubToken, defaultBranch)
+		// Step 1: Ensure workspace is ready. Don't force a sync — we
+		// want to use whatever's already cloned, or clone fresh if
+		// nothing is there. Agent sessions drive forceSync explicitly.
+		ws, err := a.ws.EnsureReady(ctx, input.TenantID, input.ProjectID, false)
 		if err != nil {
-			slog.Warn("workspace clone failed", "error", err)
+			slog.Warn("workspace ensure ready failed", "error", err)
 		} else {
+			repoDir := ws.HostPath
 			// Checkout the correct branch
 			checkout := exec.CommandContext(ctx, "git", "checkout", input.Branch)
 			checkout.Dir = repoDir

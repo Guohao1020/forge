@@ -31,7 +31,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 )
 
 // Config bundles Manager dependencies. Passing a struct avoids a
@@ -90,57 +89,6 @@ func (m *Manager) TaskDir(tenantID, projectID, taskID int64) string {
 		"tasks",
 		fmt.Sprintf("task-%d", taskID),
 	)
-}
-
-// EnsureClone is the legacy entry point retained ONLY for the duration
-// of Task 1a.6 (caller migration). The body delegates to a small local
-// helper that uses git with HTTPS+token via the manager's direct
-// exec.Command — NOT through RealGitRunner. This is a stepping stone:
-// after Task 1a.6 migrates both callers, this method is deleted and
-// only EnsureReady remains.
-//
-// DEPRECATED: migrate to EnsureReady. Will be removed at the end of Task 1a.6.
-func (m *Manager) EnsureClone(
-	ctx context.Context,
-	tenantID, projectID int64,
-	repoURL, token, defaultBranch string,
-) (string, error) {
-	dir := m.ProjectDir(tenantID, projectID)
-
-	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-		// Already cloned — pull latest on default branch
-		slog.Info("workspace: pulling latest", "project_id", projectID, "dir", dir)
-		cmd := exec.CommandContext(ctx, "git", "-C", dir, "pull", "--ff-only")
-		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			slog.Warn("workspace: git pull failed, continuing with existing clone",
-				"project_id", projectID, "error", err, "output", string(out))
-			// Non-fatal: continue with existing clone
-		}
-		return dir, nil
-	}
-
-	// Clone fresh
-	if err := os.MkdirAll(filepath.Dir(dir), 0755); err != nil {
-		return "", fmt.Errorf("create parent dir: %w", err)
-	}
-
-	// Token injection is done inline here (not via the git.go helper)
-	// because this code path is going away. The git.go helper lives in
-	// RealGitRunner's methods and is the long-lived Phase 1a path.
-	authURL := repoURL
-	if token != "" && strings.HasPrefix(repoURL, "https://") {
-		authURL = strings.Replace(repoURL, "https://", fmt.Sprintf("https://x-access-token:%s@", token), 1)
-	}
-
-	slog.Info("workspace: cloning repo (legacy EnsureClone)", "project_id", projectID, "dir", dir)
-	cmd := exec.CommandContext(ctx, "git", "clone", "--depth=50", "--branch", defaultBranch, authURL, dir)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git clone failed: %s: %w", string(out), err)
-	}
-
-	return dir, nil
 }
 
 // CreateWorktree creates a git worktree for a task on a new branch.

@@ -6,8 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/shulex/forge/forge-core/internal/workspace"
@@ -38,63 +36,26 @@ func captureAIWorker(t *testing.T) (*httptest.Server, *aiRunRequest) {
 	return srv, captured
 }
 
-// TestSubmitMessage_PassesRelativeWorkspacePath_WhenRepoExists asserts
-// that when wsManager is non-nil, tenantID is positive, and the resolved
-// ProjectDir contains a .git directory, SubmitMessage sends the
-// workspace_path as a RELATIVE fragment (per the protocol amendment
-// so forge-core on the host and ai-worker in its container can join
-// the same fragment against their own FORGE_WORKSPACE_ROOT env var).
-func TestSubmitMessage_PassesRelativeWorkspacePath_WhenRepoExists(t *testing.T) {
-	// Create a fake workspace root with a .git marker
+// TestSubmitMessage_WorkspaceNotReady_ReturnsError asserts that when
+// wsManager is non-nil but partially wired (no stateRepo/gitRunner/
+// projectLookup), EnsureReady fails and SubmitMessage propagates the
+// error instead of silently sending an empty workspace_path.
+//
+// This is the new behavior after migrating from os.Stat(.git) to
+// EnsureReady — failure is fast and visible, not silent.
+func TestSubmitMessage_WorkspaceNotReady_ReturnsError(t *testing.T) {
 	root := t.TempDir()
-	projectDir := filepath.Join(root, "tenant-1", "project-42", "repo")
-	if err := os.MkdirAll(filepath.Join(projectDir, ".git"), 0o755); err != nil {
-		t.Fatalf("mkdir .git: %v", err)
-	}
 
+	// Manager with no deps — EnsureReady will return a descriptive error
 	wsManager := workspace.NewManager(workspace.Config{Root: root})
-	srv, captured := captureAIWorker(t)
-
-	svc := NewService(srv.URL, wsManager)
-	req := ChatRequest{Message: "hello"}
-
-	resp, err := svc.SubmitMessage(context.Background(), 1, 42, req)
-	if err != nil {
-		t.Fatalf("SubmitMessage: %v", err)
-	}
-	if resp == nil {
-		t.Fatalf("nil resp")
-	}
-
-	// The key assertion: workspace_path must be the RELATIVE fragment,
-	// not the absolute host path. If this ever becomes absolute,
-	// the ai-worker side (which joins with /data/forge/workspaces)
-	// will produce a path that doesn't exist inside the container.
-	want := "tenant-1/project-42/repo"
-	if captured.WorkspacePath != want {
-		t.Errorf("WorkspacePath = %q, want %q", captured.WorkspacePath, want)
-	}
-}
-
-// TestSubmitMessage_EmptyWorkspacePath_WhenRepoMissing asserts the
-// fallback: when the project has not been cloned (no .git), we send
-// an empty workspace_path so the ai-worker falls back to QueryEngine.
-func TestSubmitMessage_EmptyWorkspacePath_WhenRepoMissing(t *testing.T) {
-	root := t.TempDir() // empty — no tenant-1/project-42/repo at all
-
-	wsManager := workspace.NewManager(workspace.Config{Root: root})
-	srv, captured := captureAIWorker(t)
+	srv, _ := captureAIWorker(t)
 
 	svc := NewService(srv.URL, wsManager)
 	req := ChatRequest{Message: "hello"}
 
 	_, err := svc.SubmitMessage(context.Background(), 1, 42, req)
-	if err != nil {
-		t.Fatalf("SubmitMessage: %v", err)
-	}
-
-	if captured.WorkspacePath != "" {
-		t.Errorf("WorkspacePath = %q, want empty string (project not cloned)", captured.WorkspacePath)
+	if err == nil {
+		t.Fatal("expected error from SubmitMessage when workspace deps are nil")
 	}
 }
 
@@ -122,15 +83,10 @@ func TestSubmitMessage_EmptyWorkspacePath_WhenWsManagerNil(t *testing.T) {
 // path in handler.go), tenantID=0 produces an empty workspace_path.
 // We must NOT synthesize a tenant-0 directory lookup.
 func TestSubmitMessage_EmptyWorkspacePath_WhenTenantZero(t *testing.T) {
-	root := t.TempDir()
-	// Even if some directory happens to exist at tenant-0/..., we
-	// must NOT use it — tenantID=0 is a sentinel meaning "unknown".
-	projectDir := filepath.Join(root, "tenant-0", "project-42", "repo")
-	_ = os.MkdirAll(filepath.Join(projectDir, ".git"), 0o755)
-
-	wsManager := workspace.NewManager(workspace.Config{Root: root})
 	srv, captured := captureAIWorker(t)
 
+	// Even with a partially wired manager, tenantID=0 skips EnsureReady
+	wsManager := workspace.NewManager(workspace.Config{Root: t.TempDir()})
 	svc := NewService(srv.URL, wsManager)
 	req := ChatRequest{Message: "hello"}
 

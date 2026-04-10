@@ -8,8 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/shulex/forge/forge-core/internal/workspace"
@@ -71,24 +69,20 @@ func (s *Service) SubmitMessage(ctx context.Context, tenantID, projectID int64, 
 		CorrelationID: req.CorrelationID,
 	}
 
-	// Populate workspace_path as a RELATIVE fragment (per the protocol
-	// amendment in docs/plans/2026-04-09-pair-pipeline-production-wire.md).
-	// forge-core runs on the host and checks the absolute path, but
-	// sends a relative fragment over HTTP so ai-worker can join with
-	// its own FORGE_WORKSPACE_ROOT env inside the Linux container.
+	// Ensure the workspace is ready before we dispatch to ai-worker.
+	// A new session (empty SessionID) triggers a fetch+reset so the
+	// agent starts from clean main; otherwise we reuse the existing
+	// state so multi-turn edits persist across messages. Per spec §2.7.
 	if s.wsManager != nil && tenantID > 0 {
-		absDir := s.wsManager.ProjectDir(tenantID, projectID)
-		gitDir := filepath.Join(absDir, ".git")
-		if _, err := os.Stat(gitDir); err == nil {
-			body.WorkspacePath = fmt.Sprintf("tenant-%d/project-%d/repo", tenantID, projectID)
-		} else if !os.IsNotExist(err) {
-			slog.Warn("agent service: unexpected stat error on .git dir, treating as missing",
-				"tenant_id", tenantID,
-				"project_id", projectID,
-				"path", gitDir,
-				"error", err,
-			)
+		isNewSession := req.SessionID == ""
+		ws, err := s.wsManager.EnsureReady(ctx, tenantID, projectID, isNewSession)
+		if err != nil {
+			// Workspace setup failed — return an error to the caller
+			// so the agent session fails fast with a visible message.
+			return nil, fmt.Errorf("workspace not ready: %w", err)
 		}
+		body.WorkspacePath = fmt.Sprintf("tenant-%d/project-%d/repo", tenantID, projectID)
+		_ = ws // ws.HostPath available if ever needed
 	}
 
 	jsonBody, err := json.Marshal(body)
