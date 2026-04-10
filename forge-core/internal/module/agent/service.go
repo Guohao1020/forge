@@ -60,6 +60,13 @@ type aiRunResponse struct {
 // know the tenant" (legacy fallback path) — workspace_path stays empty
 // and ai-worker uses the legacy QueryEngine chat path.
 func (s *Service) SubmitMessage(ctx context.Context, tenantID, projectID int64, req ChatRequest) (*ChatResponse, error) {
+	slog.Info("agent.session_start",
+		"event", "agent.session_start",
+		"session_id", req.SessionID,
+		"tenant_id", tenantID,
+		"project_id", projectID,
+	)
+
 	body := aiRunRequest{
 		SessionID:     req.SessionID,
 		ProjectID:     projectID,

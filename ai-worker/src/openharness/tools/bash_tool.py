@@ -23,6 +23,7 @@ passed verbatim through the agent loop to the frontend.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import shutil
@@ -34,6 +35,8 @@ from pydantic import BaseModel, Field
 
 from ..engine.stream_events import ThinkingStarted, ThinkingStopped
 from .base import BaseTool, ToolExecutionContext, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +316,16 @@ class BashTool(BaseTool):
         # Layer 2: denylist front filter (not security -- UX)
         reason = _intent_denylist_check(arguments.command)
         if reason:
+            # Observability -- how often does the agent hit the denylist
+            # with which commands? Helps tune the denylist over time.
+            logger.info(
+                "agent.bash_denylist_hit",
+                extra={
+                    "event": "agent.bash_denylist_hit",
+                    "reason": reason,
+                    "command_prefix": arguments.command[:60],
+                },
+            )
             yield ToolResult(
                 is_error=True,
                 output=(

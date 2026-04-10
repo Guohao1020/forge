@@ -45,6 +45,7 @@ func (m *Manager) EnsureReady(
 		return nil, errors.New("workspace: EnsureReady called on partially-wired Manager (nil stateRepo/gitRunner/projectLookup)")
 	}
 
+	startTime := time.Now()
 	var finalWS *Workspace
 
 	err := m.stateRepo.WithAdvisoryLock(ctx, tenantID, projectID, func(tx *sql.Tx) error {
@@ -120,8 +121,30 @@ func (m *Manager) EnsureReady(
 	})
 
 	if err != nil {
+		slog.Error("workspace.ensure_ready",
+			"event", "workspace.ensure_ready",
+			"tenant_id", tenantID,
+			"project_id", projectID,
+			"result", "error",
+			"duration_ms", time.Since(startTime).Milliseconds(),
+			"error", err.Error(),
+		)
 		return nil, err
 	}
+
+	// Determine result label based on whether this was a no-op, fresh
+	// clone, or resync. A non-nil finalWS always means success.
+	result := "ready"
+	if forceSync {
+		result = "resynced"
+	}
+	slog.Info("workspace.ensure_ready",
+		"event", "workspace.ensure_ready",
+		"tenant_id", tenantID,
+		"project_id", projectID,
+		"result", result,
+		"duration_ms", time.Since(startTime).Milliseconds(),
+	)
 	return finalWS, nil
 }
 

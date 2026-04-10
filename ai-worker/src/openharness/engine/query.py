@@ -207,6 +207,21 @@ async def _execute_tool_call(
         }
         await context.hook_executor.execute(HookEvent.POST_TOOL_USE, payload)
 
+    # Structured observability -- emitted after every tool call, success
+    # or error. Post-deploy debugging can query Loki for specific
+    # tool_names / tool_use_ids.
+    logger.info(
+        "agent.tool_call",
+        extra={
+            "event": "agent.tool_call",
+            "tool_name": tool_name,
+            "tool_use_id": tool_use_id,
+            "is_error": tool_result.is_error,
+            "input_size_bytes": len(str(tool_input).encode("utf-8")),
+            "output_size_bytes": len(tool_result.output.encode("utf-8")),
+        },
+    )
+
     yield ToolResultBlock(
         tool_use_id=tool_use_id,
         content=tool_result.output,
@@ -284,6 +299,14 @@ async def run_agent_loop(
         # Check if we need to execute tools
         tool_uses = assistant_message.tool_uses
         if not tool_uses or stop_reason == "end_turn":
+            logger.info(
+                "agent.turn_complete",
+                extra={
+                    "event": "agent.turn_complete",
+                    "turn_count": turn,
+                    "stop_reason": stop_reason,
+                },
+            )
             # Round 2 (§2.9.1.c): post_turn hooks fire on end_turn.
             for hook in registry.post_turn:
                 try:
