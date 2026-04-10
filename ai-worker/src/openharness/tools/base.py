@@ -39,6 +39,11 @@ class ToolExecutionContext:
 
     cwd: Path
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Added in Phase 5a — populated by _execute_tool_call
+    tool_use_id: str | None = None
+    clarification_coordinator: Any | None = None  # ClarificationCoordinator
+    # Added in Phase 5a — used by RequestReviewTool (Phase 5 Task 5.13)
+    original_user_request: str | None = None
 
 
 @dataclass(frozen=True)
