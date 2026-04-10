@@ -52,9 +52,7 @@ interface AgentChatProps {
   sessionId: string | null
   onSessionCreated?: (id: string) => void
   onCodeFiles?: (files: Array<{ path: string; content: string }>) => void
-  onStepsUpdate?: (
-    steps: Array<{ id: string; label: string; status: string }>,
-  ) => void
+  onPhaseChange?: (phase: string) => void
   // Stream 3: state lift — page.tsx owns these for StatusBar to consume.
   onConnStatusChange?: (status: ConnStatus) => void
   onStatsUpdate?: (stats: { tokens: number; cost: number }) => void
@@ -224,14 +222,13 @@ export function AgentChat({
   sessionId,
   onSessionCreated,
   onCodeFiles,
-  onStepsUpdate,
+  onPhaseChange,
   onConnStatusChange,
   onStatsUpdate,
   className,
 }: AgentChatProps) {
   // Placeholder callbacks for Stream 4 backend integration.
   void onCodeFiles
-  void onStepsUpdate
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)

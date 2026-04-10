@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "react"
 import { useParams } from "next/navigation"
 import { PanelLeftClose, PanelLeftOpen, Settings, Terminal } from "lucide-react"
 import { AgentChat } from "@/components/agent/agent-chat"
-import { StepRibbon, type Step } from "@/components/agent/step-ribbon"
+import {
+  StepRibbon,
+  initialSteps,
+  updateStepsForPhase,
+  type Step,
+} from "@/components/agent/step-ribbon"
 import { CodePanel } from "@/components/agent/code-panel"
 import {
   StatusBar,
@@ -20,14 +25,14 @@ import { TaskSwitcher } from "@/components/agent/task-switcher"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 // Derive build state from the step list for the status bar.
+// In A2 there's no "failed" status on steps — build failures show
+// as error bash cards in chat, and the Build step stays "active"
+// while the agent retries.
 function buildStateFromSteps(steps: Step[]): BuildState {
-  const buildStep = steps.find((s) => s.id.toLowerCase().includes("build"))
+  const buildStep = steps.find((s) => s.id === "Build")
   if (!buildStep) return "idle"
   if (buildStep.status === "done") return "passed"
-  if (buildStep.status === "failed") return "failed"
-  if (buildStep.status === "active") {
-    return buildStep.cycle && buildStep.cycle > 1 ? "fixing" : "building"
-  }
+  if (buildStep.status === "active") return "building"
   return "idle"
 }
 
@@ -51,7 +56,7 @@ export default function AgentTerminalPage() {
 
   // ---- Session + agent state ----
   const [sessionId, setSessionId] = useState<string | null>(null)
-  const [steps, setSteps] = useState<Step[]>([])
+  const [steps, setSteps] = useState<Step[]>(initialSteps())
   const [codeFiles, setCodeFiles] = useState<
     Array<{ path: string; content: string }>
   >([])
@@ -81,7 +86,9 @@ export default function AgentTerminalPage() {
       sessionId={sessionId}
       onSessionCreated={setSessionId}
       onCodeFiles={setCodeFiles}
-      onStepsUpdate={(s) => setSteps(s as Step[])}
+      onPhaseChange={(phase) =>
+        setSteps((prev) => updateStepsForPhase(prev, phase))
+      }
       onConnStatusChange={setConnStatus}
       onStatsUpdate={setStats}
     />
