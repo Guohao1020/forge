@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -55,6 +56,10 @@ func (l *DBProjectLookup) Lookup(ctx context.Context, tenantID, projectID int64)
 	return &info, nil
 }
 
+// ErrProjectNotFound is returned by ProjectLookup implementations when
+// the (tenantID, projectID) pair does not match any known project.
+var ErrProjectNotFound = errors.New("workspace: project not found")
+
 // StaticProjectLookup is a test fixture that returns a fixed ProjectInfo.
 type StaticProjectLookup struct {
 	Info *ProjectInfo
@@ -64,4 +69,24 @@ type StaticProjectLookup struct {
 // Lookup returns the preconfigured ProjectInfo or error.
 func (s *StaticProjectLookup) Lookup(_ context.Context, _, _ int64) (*ProjectInfo, error) {
 	return s.Info, s.Err
+}
+
+// memoryLookup is an in-memory ProjectLookup keyed by projectID. Used
+// by ensure_test.go to wire up test fixtures without a database.
+type memoryLookup struct {
+	projects  map[int64]ProjectInfo
+	lookupErr error // if set, all lookups return this error
+}
+
+// Lookup returns the ProjectInfo for projectID, or ErrProjectNotFound
+// if no entry exists (and lookupErr is nil).
+func (m *memoryLookup) Lookup(_ context.Context, _, projectID int64) (*ProjectInfo, error) {
+	if m.lookupErr != nil {
+		return nil, m.lookupErr
+	}
+	info, ok := m.projects[projectID]
+	if !ok {
+		return nil, ErrProjectNotFound
+	}
+	return &info, nil
 }

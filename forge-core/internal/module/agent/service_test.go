@@ -52,7 +52,7 @@ func TestSubmitMessage_PassesRelativeWorkspacePath_WhenRepoExists(t *testing.T) 
 		t.Fatalf("mkdir .git: %v", err)
 	}
 
-	wsManager := workspace.NewManager(root)
+	wsManager := workspace.NewManager(workspace.Config{Root: root})
 	srv, captured := captureAIWorker(t)
 
 	svc := NewService(srv.URL, wsManager)
@@ -82,7 +82,7 @@ func TestSubmitMessage_PassesRelativeWorkspacePath_WhenRepoExists(t *testing.T) 
 func TestSubmitMessage_EmptyWorkspacePath_WhenRepoMissing(t *testing.T) {
 	root := t.TempDir() // empty — no tenant-1/project-42/repo at all
 
-	wsManager := workspace.NewManager(root)
+	wsManager := workspace.NewManager(workspace.Config{Root: root})
 	srv, captured := captureAIWorker(t)
 
 	svc := NewService(srv.URL, wsManager)
@@ -128,7 +128,7 @@ func TestSubmitMessage_EmptyWorkspacePath_WhenTenantZero(t *testing.T) {
 	projectDir := filepath.Join(root, "tenant-0", "project-42", "repo")
 	_ = os.MkdirAll(filepath.Join(projectDir, ".git"), 0o755)
 
-	wsManager := workspace.NewManager(root)
+	wsManager := workspace.NewManager(workspace.Config{Root: root})
 	srv, captured := captureAIWorker(t)
 
 	svc := NewService(srv.URL, wsManager)

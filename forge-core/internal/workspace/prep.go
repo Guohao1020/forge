@@ -39,6 +39,50 @@ type PrepResponse struct {
 	Error    string `json:"error,omitempty"`
 }
 
+// prepRunner is the interface the EnsureReady state machine uses for
+// dependency pre-installation. Having it as an interface lets tests
+// swap in a fake without an HTTP server.
+type prepRunner interface {
+	Prep(ctx context.Context, tenantID, projectID int64, wsPath string) (*PrepResult, error)
+}
+
+// PrepResult is the state-machine-facing result type for dep prep.
+// Mirrors PrepResponse but is decoupled from the HTTP transport.
+type PrepResult struct {
+	Status   string // "ok" | "skipped" | "error"
+	Language string
+	Command  string
+	Error    string
+}
+
+// PrepRunnerAdapter adapts PrepClient to the prepRunner interface.
+type PrepRunnerAdapter struct {
+	client *PrepClient
+}
+
+// NewPrepRunnerAdapter wraps a PrepClient as a prepRunner.
+func NewPrepRunnerAdapter(client *PrepClient) *PrepRunnerAdapter {
+	return &PrepRunnerAdapter{client: client}
+}
+
+// Prep calls the underlying PrepClient and converts the response to PrepResult.
+func (a *PrepRunnerAdapter) Prep(ctx context.Context, tenantID, projectID int64, wsPath string) (*PrepResult, error) {
+	resp, err := a.client.Prep(ctx, PrepRequest{
+		TenantID:      tenantID,
+		ProjectID:     projectID,
+		WorkspacePath: wsPath,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &PrepResult{
+		Status:   resp.Status,
+		Language: resp.Language,
+		Command:  resp.Command,
+		Error:    resp.Error,
+	}, nil
+}
+
 func (c *PrepClient) Prep(ctx context.Context, req PrepRequest) (*PrepResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {

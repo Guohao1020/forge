@@ -119,7 +119,7 @@ func main() {
 	}
 
 	// Workspace manager (local git clones + per-task worktrees)
-	workspaceMgr := workspace.NewManager(cfg.WorkspaceRoot)
+	workspaceMgr := workspace.NewManager(workspace.Config{Root: cfg.WorkspaceRoot})
 
 	// Project module
 	projectRepo := project.NewRepository(db)
