@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/forge"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -1137,6 +1138,17 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			Model:         agent.Model.String,
 			ThinkingLevel: agent.ThinkingLevel.String,
 		}
+	}
+
+	// Forge: inject resolved coding standards into the agent payload —
+	// Core → instructions (mandatory), Detail → forge-standards skill.
+	// Best-effort; never blocks claim.
+	if resp.Agent != nil {
+		forge.InjectStandards(
+			r.Context(), h.Queries,
+			&resp.Agent.Instructions, &resp.Agent.Skills,
+			runtime.WorkspaceID, h.taskProjectID(r.Context(), task.IssueID),
+		)
 	}
 
 	// Resolve the runtime owner's profile description so the daemon can
