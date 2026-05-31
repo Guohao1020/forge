@@ -1,0 +1,10 @@
+Forge
+Copyright 2026 Forge contributors
+
+This product is a derivative work of Multica (https://github.com/multica-ai/multica),
+licensed under Multica's modified Apache License 2.0 (see LICENSE). All Multica
+copyright and license notices are retained.
+
+Forge adds a Harness Engineering layer (specs / constraints / verification /
+entropy management) on top of Multica's managed-agents platform. The legacy
+pre-Multica Forge architecture is archived on the `archive/forge-legacy` branch.

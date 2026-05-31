@@ -1,3 +1,25 @@
+# Forge on Multica
+
+本仓库是 **Forge** —— 以开源平台 [Multica](https://github.com/multica-ai/multica) 为底座
+（fork/rebase，2026-05-30），在其上叠加 **Harness 工程层**（规范 / 约束 / 验证 / 熵管理）。
+
+- 旧 forge 架构（Go forge-core + Python ai-worker + Temporal + forge-portal）已归档到
+  `archive/forge-legacy`，见 [ARCHIVE.md](ARCHIVE.md)。
+- Forge 的设计 spec / 计划 / 规范在 [`docs/forge/`](docs/forge/README.md)；当前方向见
+  `docs/forge/specs/2026-05-30-forge-on-multica-f0-foundation-design.md`。
+- 计划目录约定：`docs/forge/plans/{greek-name}-{YYYY-MM-DD}/`（一 phase 一文件）；
+  spec：`docs/forge/specs/{YYYY-MM-DD}-{topic}.md`。
+- 跟进上游：`git fetch upstream && git merge upstream/main`（upstream = multica-ai/multica）。
+- 语言约定：用户对话 / 协作 prose（PR/Issue body、设计文档、代码注释）用**中文**；
+  标识符 / commit subject / PR title / 工具参数等机器面用**英文**。
+- Harness 概念映射到 Multica 原语：规范中心→Skills、熵管理→Autopilot、验证门禁→任务完成 hook、
+  AI Review→Squad（详见 F0 spec §0.2）。
+
+下方为 Multica 上游的 CLAUDE.md —— 工程约定（monorepo / sqlc / store 位置 / 包边界等）
+**仍然适用**，技术栈以此为准。
+
+---
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.

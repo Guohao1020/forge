@@ -1,3 +1,16 @@
+> **Forge — Harness Engineering on Multica.**
+> Forge 让不懂代码的产品/运营用自然语言描述需求，AI 在 Harness 环境（规范约束 +
+> 机械化验证 + 可观测反馈）中生成生产级代码。**核心理念：规范即灵魂。**
+>
+> Forge 以开源平台 [Multica](https://github.com/multica-ai/multica) 为底座（fork/rebase，2026-05-30），
+> 在其上叠加工程纪律层（规范中心 / 约束门禁 / AI Review / 熵管理）。
+> Forge 自己的设计 / 规范 / 计划见 [`docs/forge/`](docs/forge/README.md)；旧架构归档在
+> `archive/forge-legacy`（见 [ARCHIVE.md](ARCHIVE.md)）。
+>
+> 下方为 Multica 上游 README（保留归属与 LOGO）。
+>
+> ---
+
 <p align="center">
   <img src="docs/assets/banner.jpg" alt="Multica — humans and agents, side by side" width="100%">
 </p>
