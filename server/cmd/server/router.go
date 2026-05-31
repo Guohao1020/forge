@@ -627,6 +627,21 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			// Forge F1: spec-center Standards CRUD + per-project profile.
+			r.Route("/api/forge/standards", func(r chi.Router) {
+				r.Get("/", h.ListForgeStandards)
+				r.Post("/", h.CreateForgeStandard)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetForgeStandard)
+					r.Put("/", h.UpdateForgeStandard)
+					r.Delete("/", h.DeleteForgeStandard)
+				})
+			})
+			r.Route("/api/forge/projects/{id}/profile", func(r chi.Router) {
+				r.Get("/", h.GetForgeProjectProfile)
+				r.Put("/", h.PutForgeProjectProfile)
+			})
+
 			// Dashboard — workspace-wide token + run-time rollups for the
 			// "/{slug}/dashboard" page. Optional ?project_id filter scopes
 			// the rollup to a single project.
