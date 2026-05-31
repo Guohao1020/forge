@@ -266,6 +266,27 @@ type Feedback struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type ForgeProjectProfile struct {
+	ProjectID pgtype.UUID        `json:"project_id"`
+	Tags      []string           `json:"tags"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ForgeStandard struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	Name          string             `json:"name"`
+	Category      string             `json:"category"`
+	ProfileTags   []string           `json:"profile_tags"`
+	CoreContent   string             `json:"core_content"`
+	DetailContent string             `json:"detail_content"`
+	Enabled       bool               `json:"enabled"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type GithubInstallation struct {
 	ID               pgtype.UUID        `json:"id"`
 	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
