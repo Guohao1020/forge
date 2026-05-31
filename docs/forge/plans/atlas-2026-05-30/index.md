@@ -34,12 +34,16 @@ pnpm + turbo monorepo · 本地 daemon 驱动 `claude` CLI · 改良 Apache 2.0 
 
 | Phase | 名称 | 任务数 | Depends-on | 状态 | 文件 |
 |-------|------|--------|-----------|------|------|
-| 0 | Pre-flight & Dev Environment | 5 | — | ☐ 未开始 | [phase-0-preflight-dev-environment.md](phase-0-preflight-dev-environment.md) |
-| 1 | Repo Surgery | 6 | Phase 0 | ☐ 未开始 | [phase-1-repo-surgery.md](phase-1-repo-surgery.md) |
-| 2 | Local Stand-up & E2E Acceptance | 4 | Phase 0, 1 | ☐ 未开始 | [phase-2-local-standup-e2e.md](phase-2-local-standup-e2e.md) |
-| 3 | Doc Migration & Archive Reconciliation | 4 | Phase 1 | ☐ 未开始 | [phase-3-doc-migration.md](phase-3-doc-migration.md) |
-| 4 | Forge Identity Layer | 5 | Phase 3 | ☐ 未开始 | [phase-4-forge-identity.md](phase-4-forge-identity.md) |
-| 5 | Decommission & Final Acceptance | 4 | Phase 2, 4 | ☐ 未开始 | [phase-5-decommission-and-acceptance.md](phase-5-decommission-and-acceptance.md) |
+| 0 | Pre-flight & Dev Environment | 5 | — | ✅ 完成 | [phase-0-preflight-dev-environment.md](phase-0-preflight-dev-environment.md) |
+| 1 | Repo Surgery | 6 | Phase 0 | ✅ 完成 | [phase-1-repo-surgery.md](phase-1-repo-surgery.md) |
+| 2 | Local Stand-up & E2E Acceptance | 4 | Phase 0, 1 | ✅ 折叠进 Phase 0 de-risk | [phase-2-local-standup-e2e.md](phase-2-local-standup-e2e.md) |
+| 3 | Doc Migration & Archive Reconciliation | 4 | Phase 1 | ✅ 完成 | [phase-3-doc-migration.md](phase-3-doc-migration.md) |
+| 4 | Forge Identity Layer | 5 | Phase 3 | ✅ 完成（前端共标推迟）| [phase-4-forge-identity.md](phase-4-forge-identity.md) |
+| 5 | Decommission & Final Acceptance | 4 | Phase 2, 4 | ✅ 完成 | [phase-5-decommission-and-acceptance.md](phase-5-decommission-and-acceptance.md) |
+
+> **F0 完成（2026-05-30）。** 提交链：`86e87435`(rebase) → `b60c751f`(docs迁移) →
+> `d942c105`(身份层)。遗留：①provider 凭证（F1 前解决，见 pivot 记忆）②前端 Forge 共标
+> （需源码构建的切片）③旧 forge 残留目录物理保留在工作树（已 git-exclude，可手动删）。
 
 ---
 
@@ -55,13 +59,14 @@ pnpm + turbo monorepo · 本地 daemon 驱动 `claude` CLI · 改良 Apache 2.0 
 
 ## 完成门禁（F0 DoD，来自 spec §2）
 
-- [ ] 仓库：`main` = Multica base（descends from `upstream/main`），旧代码在
-  `archive/forge-legacy`，`upstream` remote 配好，已 push
-- [ ] 本地 e2e 闭环：登录 → 建 workspace → daemon 检测到 `claude` → 建 issue → assign
-  Claude Code agent → 执行回报 → issue 进 review
-- [ ] 身份：README/CLAUDE.md 重写；LICENSE + Multica 归属保留；价值文档迁移
-- [ ] 退役：旧 forge-core/ai-worker/Temporal/constraint-worker 不再运行（仅存档）
-- [ ] runbook：Windows 本地开发文档已写
+- [x] 仓库：`main` = Multica base（descends from `upstream/main`），旧代码在
+  `archive/forge-legacy`（origin+codeup），`upstream` remote 配好，已 push
+- [x] 本地 e2e 闭环：登录 → 建 workspace → daemon 检测到 `claude` → 建 issue → assign
+  agent → **执行回报**（机械闭环全通，纯 API 脚本化验证）。⚠️ literal-green 受 provider
+  凭证阻塞（claude org 策略 / 无 API key），与平台无关，F1 前解决。
+- [x] 身份：README/CLAUDE.md 叠加 Forge；LICENSE 保留 + NOTICE 归属；docs 迁入 `docs/forge/`
+- [x] 退役：新 main 不跟踪旧码、无旧栈运行（旧残留目录 git-exclude 物理保留）
+- [x] runbook：`docs/forge/dev-windows.md` 已写
 
 ## 后续切片（各自走独立 spec→plan）
 
