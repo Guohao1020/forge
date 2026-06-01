@@ -877,3 +877,43 @@ export const CreateBillingPortalSessionResponseSchema = z.object({
 export const EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE: CreateBillingPortalSessionResponse = {
   url: "",
 };
+
+// Forge F5: Harness health
+export const ForgeHealthSchema = z.object({
+  standards: z.array(z.object({ category: z.string(), count: z.number() })),
+  standards_total: z.number(),
+  checks: z.number(),
+  review_configs: z.number(),
+  scans: z.number(),
+  gate: z.object({ passed: z.number(), failed: z.number() }),
+  review: z.object({ total: z.number(), completed: z.number(), avg_turnaround_sec: z.number() }),
+  open_findings: z.number(),
+  scan_runs: z.number(),
+  fix_prs: z.object({ opened: z.number(), merged: z.number(), matched: z.number() }),
+});
+export const EMPTY_FORGE_HEALTH = {
+  standards: [], standards_total: 0, checks: 0, review_configs: 0, scans: 0,
+  gate: { passed: 0, failed: 0 },
+  review: { total: 0, completed: 0, avg_turnaround_sec: 0 },
+  open_findings: 0, scan_runs: 0, fix_prs: { opened: 0, merged: 0, matched: 0 },
+};
+
+const ForgeTrendPointSchema = z.object({
+  date: z.string(),
+  passed: z.number().optional(),
+  failed: z.number().optional(),
+  count: z.number().optional(),
+});
+export const ForgeHealthTrendsSchema = z.object({
+  findings: z.array(ForgeTrendPointSchema),
+  gate: z.array(ForgeTrendPointSchema),
+  fix_prs: z.array(ForgeTrendPointSchema),
+});
+export const EMPTY_FORGE_TRENDS = { findings: [], gate: [], fix_prs: [] };
+
+export const ForgeIssueRefListSchema = z.array(
+  z.object({ issue_id: z.string(), number: z.number(), title: z.string() }),
+);
+export const ForgeFixPRRefListSchema = z.array(
+  z.object({ issue_id: z.string(), number: z.number(), title: z.string(), pr_url: z.string() }),
+);
