@@ -84,3 +84,129 @@ func (h *Handler) GetForgeHealth(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, out)
 }
+
+type ForgeTrendPoint struct {
+	Date   string `json:"date"`
+	Passed int32  `json:"passed,omitempty"`
+	Failed int32  `json:"failed,omitempty"`
+	Count  int32  `json:"count,omitempty"`
+}
+
+type ForgeHealthTrendsResponse struct {
+	Findings []ForgeTrendPoint `json:"findings"`
+	Gate     []ForgeTrendPoint `json:"gate"`
+	FixPRs   []ForgeTrendPoint `json:"fix_prs"`
+}
+
+func (h *Handler) GetForgeHealthTrends(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+	projectID, ok := parseProjectIDParam(w, r)
+	if !ok {
+		return
+	}
+	tz := h.resolveViewingTZ(r)
+	since := parseSinceParamInTZ(r, 30, tz)
+	ws := parseUUID(workspaceID)
+	ctx := r.Context()
+
+	out := ForgeHealthTrendsResponse{Findings: []ForgeTrendPoint{}, Gate: []ForgeTrendPoint{}, FixPRs: []ForgeTrendPoint{}}
+	if rows, err := h.Queries.TrendEntropyFindings(ctx, db.TrendEntropyFindingsParams{WorkspaceID: ws, ProjectID: projectID, Tz: tz, Since: since}); err == nil {
+		for _, row := range rows {
+			out.Findings = append(out.Findings, ForgeTrendPoint{Date: row.Date, Count: row.Count})
+		}
+	}
+	if rows, err := h.Queries.TrendGatePassRate(ctx, db.TrendGatePassRateParams{WorkspaceID: ws, ProjectID: projectID, Tz: tz, Since: since}); err == nil {
+		for _, row := range rows {
+			out.Gate = append(out.Gate, ForgeTrendPoint{Date: row.Date, Passed: row.Passed, Failed: row.Failed})
+		}
+	}
+	if rows, err := h.Queries.TrendFixPRs(ctx, db.TrendFixPRsParams{WorkspaceID: ws, ProjectID: projectID, Tz: tz, Since: since}); err == nil {
+		for _, row := range rows {
+			out.FixPRs = append(out.FixPRs, ForgeTrendPoint{Date: row.Date, Count: row.Count})
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type ForgeIssueRef struct {
+	IssueID string `json:"issue_id"`
+	Number  int32  `json:"number"`
+	Title   string `json:"title"`
+}
+
+func (h *Handler) GetForgeHealthFindings(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+	projectID, ok := parseProjectIDParam(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.Queries.ListOpenEntropyFindings(r.Context(), db.ListOpenEntropyFindingsParams{WorkspaceID: parseUUID(workspaceID), ProjectID: projectID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list findings")
+		return
+	}
+	out := make([]ForgeIssueRef, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ForgeIssueRef{IssueID: uuidToString(row.ID), Number: row.Number, Title: row.Title})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) GetForgeHealthGateFailures(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+	projectID, ok := parseProjectIDParam(w, r)
+	if !ok {
+		return
+	}
+	tz := h.resolveViewingTZ(r)
+	since := parseSinceParamInTZ(r, 30, tz)
+	rows, err := h.Queries.ListRecentGateFailures(r.Context(), db.ListRecentGateFailuresParams{WorkspaceID: parseUUID(workspaceID), ProjectID: projectID, Since: since})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list gate failures")
+		return
+	}
+	out := make([]ForgeIssueRef, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ForgeIssueRef{IssueID: uuidToString(row.IssueID), Number: row.Number, Title: row.Title})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type ForgeFixPRRef struct {
+	IssueID string `json:"issue_id"`
+	Number  int32  `json:"number"`
+	Title   string `json:"title"`
+	PrURL   string `json:"pr_url"`
+}
+
+func (h *Handler) GetForgeHealthFixPRs(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+	projectID, ok := parseProjectIDParam(w, r)
+	if !ok {
+		return
+	}
+	tz := h.resolveViewingTZ(r)
+	since := parseSinceParamInTZ(r, 30, tz)
+	rows, err := h.Queries.ListRecentFixPRs(r.Context(), db.ListRecentFixPRsParams{WorkspaceID: parseUUID(workspaceID), ProjectID: projectID, Since: since})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list fix PRs")
+		return
+	}
+	out := make([]ForgeFixPRRef, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ForgeFixPRRef{IssueID: uuidToString(row.IssueID), Number: row.Number, Title: row.Title, PrURL: row.PrUrl})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
