@@ -314,6 +314,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/autopilot-runs/{runId}/gc-check", h.GetAutopilotRunGCCheck)
 		r.Get("/tasks/{taskId}/gc-check", h.GetTaskGCCheck)
 
+		// Forge F2: resolved verification checks for a task (daemon runs them post-session).
+		r.Get("/tasks/{taskId}/forge-checks", h.GetTaskForgeChecks)
+
 		r.Post("/runtimes/{runtimeId}/recover-orphans", h.RecoverOrphanedTasks)
 		r.Post("/tasks/{taskId}/session", h.PinTaskSession)
 	})
