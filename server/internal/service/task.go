@@ -1090,6 +1090,10 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	// configured reviewer (best-effort; skips review tasks / no reviewer / no workdir).
 	s.MaybeEnqueueReview(ctx, task)
 
+	// Forge F4b: record any PR the agent opened (e.g. an entropy-scan fix) and
+	// comment it on the issue. Best-effort; never blocks completion.
+	s.MaybeRecordFixPR(ctx, task, result)
+
 	// Invariant: every completed issue task must have at least one agent
 	// comment on the issue, so the user always sees something when a run
 	// ends. If the agent posted a comment during execution (result, progress
