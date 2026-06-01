@@ -128,9 +128,12 @@ if result.Status == "completed" && task.IssueID != "" {
 
 - **Go 单测**：`ResolveChecks`（workspace+project 加法合并）；`forgeVerify`（mock 一过一挂的命令，
   断言返回 blocked + 失败详情 + 命令尾部输出）。
-- **端到端（绕开 provider 凭证）**：配一个 `bash -c "exit 1"` 的 workspace check → 建 issue →
-  daemon 跑完 agent（即便 agent 因凭证失败也行——验证在其后）→ 断言 task blocked +
-  failure_reason=verification_failed + issue 上有评论。**与 F1 一样可绕凭证验证**。
+- **门禁逻辑（绕凭证）**：`runChecks` 单测（一过一挂的命令，断言失败详情）+ `ResolveChecks`
+  单测 + checks CRUD API 往返——均不依赖 agent。
+- **活体门禁 e2e（需 provider 凭证）**：⚠️ **不同于 F1**——F2 门禁只在 agent **成功完成**
+  （`result.Status=="completed"`）后触发，凭证阻塞下 agent 失败 → 门禁不触发。所以活体门禁
+  （配 `exit 1` check → agent 完成 → 拦截 → task failed/verification_failed + 评论）**需要一个
+  能跑到 completed 的 provider**，延后到凭证就绪。
 
 ## 9. 边界（F2 v1 不做）
 
@@ -145,6 +148,6 @@ profile 过滤 checks（复用 F1 profile，后续）· 每-check 自定义 cwd 
 | R1 | daemon 跑任意命令的安全 | 与 agent 同 workdir / 同信任域（用户机器上用户自己的项目命令）；超时 + 输出截断 |
 | R2 | daemon 侧新代码致 upstream 合并冲突 | 隔离在 forge_verify.go + handleTask 一处调用 |
 | R3 | 验证拖慢完成 | 命令带超时；无 checks 则跳过（no-op）；只 gate 成功完成的 issue-bound 任务 |
-| R4 | 无真 agent 端到端（凭证遗留） | 验证在 agent 会话后由 daemon 跑，**可绕凭证**用 `exit 1` check 证明 |
+| R4 | 活体门禁 e2e 受凭证阻塞 | ⚠️ **门禁只在 agent completed 后触发，不可绕凭证**（不同于 F1 的 claim 注入）。门禁逻辑由 `runChecks`/`ResolveChecks` 单测 + CRUD 往返全覆盖；活体 e2e 待 provider 凭证 |
 
 > F2 完成后，下一切片 **F3 AI Review**（Reviewer agent / Squad 评审生成代码）。
