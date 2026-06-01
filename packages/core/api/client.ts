@@ -38,6 +38,8 @@ import type {
   CreateSkillRequest,
   UpdateSkillRequest,
   SetAgentSkillsRequest,
+  ForgeStandard,
+  ForgeStandardInput,
   PersonalAccessToken,
   CreatePersonalAccessTokenRequest,
   CreatePersonalAccessTokenResponse,
@@ -1485,6 +1487,32 @@ export class ApiClient {
 
   async deleteSkill(id: string): Promise<void> {
     await this.fetch(`/api/skills/${id}`, { method: "DELETE" });
+  }
+
+  // Forge F1: spec-center Standards
+  async listForgeStandards(): Promise<ForgeStandard[]> {
+    return this.fetch("/api/forge/standards");
+  }
+
+  async createForgeStandard(data: ForgeStandardInput): Promise<ForgeStandard> {
+    return this.fetch("/api/forge/standards", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateForgeStandard(
+    id: string,
+    data: ForgeStandardInput,
+  ): Promise<ForgeStandard> {
+    return this.fetch(`/api/forge/standards/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteForgeStandard(id: string): Promise<void> {
+    await this.fetch(`/api/forge/standards/${id}`, { method: "DELETE" });
   }
 
   async importSkill(data: { url: string }): Promise<Skill> {
