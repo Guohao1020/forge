@@ -34,18 +34,18 @@ F2/F3 已对 issue-bound+有 workdir 的修复任务自动触发,不写一行 F2
 
 | Phase | 名称 | Depends-on | 状态 | 文件 |
 |-------|------|-----------|------|------|
-| 0 | 数据层（迁移 115：auto_fix 列 + forge_fix_pr 表 + sqlc） | — | ☐ | [phase-0-data-layer.md](phase-0-data-layer.md) |
-| 1 | brief auto_fix 分支（forgeentropy，TDD） | Phase 0 | ☐ | [phase-1-brief.md](phase-1-brief.md) |
-| 2 | PR 桥（forge_fix_pr.go + CompleteTask 钩子，TDD） | Phase 0 | ☐ | [phase-2-pr-bridge.md](phase-2-pr-bridge.md) |
-| 3 | API + UI（auto_fix 开关透传） | Phase 0 | ☐ | [phase-3-api-ui.md](phase-3-api-ui.md) |
-| 4 | 验收 + 文档 | Phase 1, 2, 3 | ☐ | [phase-4-verify.md](phase-4-verify.md) |
+| 0 | 数据层（迁移 115：auto_fix 列 + forge_fix_pr 表 + sqlc） | — | ✅ | [phase-0-data-layer.md](phase-0-data-layer.md) |
+| 1 | brief auto_fix 分支（forgeentropy，TDD） | Phase 0 | ✅ | [phase-1-brief.md](phase-1-brief.md) |
+| 2 | PR 桥（forge_fix_pr.go + CompleteTask 钩子，TDD） | Phase 0 | ✅ | [phase-2-pr-bridge.md](phase-2-pr-bridge.md) |
+| 3 | API + UI（auto_fix 开关透传） | Phase 0 | ✅ | [phase-3-api-ui.md](phase-3-api-ui.md) |
+| 4 | 验收 + 文档 | Phase 1, 2, 3 | ✅ | [phase-4-verify.md](phase-4-verify.md) |
 
 ## 完成门禁（F4b DoD）
-- [ ] 迁移 115：`forge_entropy_scan.auto_fix` 列 + `forge_fix_pr` 表 + sqlc（CreateFixPR 幂等 + auto_fix 并入 entropy CRUD）
-- [ ] `ComposeBrief` `AutoFix` 分支单测(开启含修复段 / 关闭逐字等于 F4)
-- [ ] `MaybeRecordFixPR`(service)解析 pr_url → 插 forge_fix_pr + 系统评论,CompleteTask 一处钩子,`go build`+vet 通过
-- [ ] `auto_fix` 透传 API(handler Create/Update)+ UI checkbox(三包 typecheck 绿)
-- [ ] **绕凭证集成**:建 auto_fix scan 往返;给 CompleteTask 喂带 `pr_url` 的完成请求 → 断言 forge_fix_pr 行 + issue 系统评论;幂等(重复完成不重复)
+- [x] 迁移 115：`forge_entropy_scan.auto_fix` 列 + `forge_fix_pr` 表 + sqlc（CreateFixPR 幂等 + auto_fix 并入 entropy CRUD）
+- [x] `ComposeBrief` `AutoFix` 分支单测(开启含修复段 + 断言 `report the PR URL` / 关闭逐字等于 F4)
+- [x] `MaybeRecordFixPR`(service)解析 pr_url → 插 forge_fix_pr + 系统评论,CompleteTask 一处钩子,`go build`+vet 通过;`parseFixPRURL` 单测绿
+- [x] `auto_fix` 透传 API(handler Create/Update,response 从 db 行回读)+ UI checkbox(三包 typecheck 绿)
+- [x] **绕凭证集成(源码构建栈实测)**:建 auto_fix scan → `auto_fix=true` 往返;手动触发 → issue+task → 以 PAT 调 daemon complete 端点喂 `pr_url` → 断言 forge_fix_pr 行(pr_url=.../999)+ issue `🔧 Fix PR opened` 系统评论;**二次完成 → 仍 1 行 1 评论(幂等)**
 
 ## 已知约束
 - **⚠️ 活体修复双重凭证门**:scanner agent 真修 + 真开 PR 需 ① provider 凭证(agent 跑)② execenv GitHub push auth(开 PR)。
