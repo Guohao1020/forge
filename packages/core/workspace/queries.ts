@@ -18,6 +18,8 @@ export const workspaceKeys = {
   skills: (wsId: string) => ["workspaces", wsId, "skills"] as const,
   forgeStandards: (wsId: string) => ["workspaces", wsId, "forge-standards"] as const,
   forgeChecks: (wsId: string) => ["workspaces", wsId, "forge-checks"] as const,
+  forgeReviewConfig: (wsId: string) =>
+    ["workspaces", wsId, "forge-review-config"] as const,
   assigneeFrequency: (wsId: string) => ["workspaces", wsId, "assignee-frequency"] as const,
 };
 
@@ -99,6 +101,13 @@ export function forgeCheckListOptions(wsId: string) {
   return queryOptions({
     queryKey: workspaceKeys.forgeChecks(wsId),
     queryFn: () => api.listForgeChecks(),
+  });
+}
+
+export function forgeReviewConfigOptions(wsId: string) {
+  return queryOptions({
+    queryKey: workspaceKeys.forgeReviewConfig(wsId),
+    queryFn: () => api.getForgeReviewConfig(),
   });
 }
 

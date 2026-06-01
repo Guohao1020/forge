@@ -42,6 +42,7 @@ import type {
   ForgeStandardInput,
   ForgeCheck,
   ForgeCheckInput,
+  ForgeReviewConfig,
   PersonalAccessToken,
   CreatePersonalAccessTokenRequest,
   CreatePersonalAccessTokenResponse,
@@ -1538,6 +1539,23 @@ export class ApiClient {
 
   async deleteForgeCheck(id: string): Promise<void> {
     await this.fetch(`/api/forge/checks/${id}`, { method: "DELETE" });
+  }
+
+  // Forge F3: AI review config (which agent reviews for a scope)
+  async getForgeReviewConfig(projectId?: string): Promise<ForgeReviewConfig> {
+    const q = projectId
+      ? `?project_id=${encodeURIComponent(projectId)}`
+      : "";
+    return this.fetch(`/api/forge/review-config${q}`);
+  }
+
+  async putForgeReviewConfig(
+    data: ForgeReviewConfig,
+  ): Promise<ForgeReviewConfig> {
+    return this.fetch("/api/forge/review-config", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
   }
 
   async importSkill(data: { url: string }): Promise<Skill> {

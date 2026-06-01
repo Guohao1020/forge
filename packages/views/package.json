@@ -26,6 +26,7 @@
     "./skills": "./skills/index.ts",
     "./forge-standards": "./forge-standards/index.ts",
     "./forge-checks": "./forge-checks/index.ts",
+    "./forge-review": "./forge-review/index.ts",
     "./agents": "./agents/index.ts",
     "./members": "./members/index.ts",
     "./inbox": "./inbox/index.ts",
