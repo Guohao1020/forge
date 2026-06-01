@@ -22,6 +22,8 @@ export const workspaceKeys = {
     ["workspaces", wsId, "forge-review-config"] as const,
   forgeEntropyScans: (wsId: string) =>
     ["workspaces", wsId, "forge-entropy-scans"] as const,
+  forgeHealth: (wsId: string) => ["workspaces", wsId, "forge-health"] as const,
+  forgeHealthTrends: (wsId: string) => ["workspaces", wsId, "forge-health-trends"] as const,
   assigneeFrequency: (wsId: string) => ["workspaces", wsId, "assignee-frequency"] as const,
 };
 
@@ -117,6 +119,20 @@ export function forgeEntropyScanListOptions(wsId: string) {
   return queryOptions({
     queryKey: workspaceKeys.forgeEntropyScans(wsId),
     queryFn: () => api.listForgeEntropyScans(),
+  });
+}
+
+export function forgeHealthOptions(wsId: string) {
+  return queryOptions({
+    queryKey: workspaceKeys.forgeHealth(wsId),
+    queryFn: () => api.getForgeHealth(),
+  });
+}
+
+export function forgeHealthTrendsOptions(wsId: string) {
+  return queryOptions({
+    queryKey: workspaceKeys.forgeHealthTrends(wsId),
+    queryFn: () => api.getForgeHealthTrends(),
   });
 }
 

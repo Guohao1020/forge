@@ -45,6 +45,10 @@ import type {
   ForgeReviewConfig,
   ForgeEntropyScan,
   ForgeEntropyScanInput,
+  ForgeHealth,
+  ForgeHealthTrends,
+  ForgeIssueRef,
+  ForgeFixPRRef,
   PersonalAccessToken,
   CreatePersonalAccessTokenRequest,
   CreatePersonalAccessTokenResponse,
@@ -190,6 +194,12 @@ import {
   EMPTY_CREATE_BILLING_CHECKOUT_SESSION_RESPONSE,
   EMPTY_BILLING_CHECKOUT_SESSION_STATUS,
   EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE,
+  ForgeHealthSchema,
+  EMPTY_FORGE_HEALTH,
+  ForgeHealthTrendsSchema,
+  EMPTY_FORGE_TRENDS,
+  ForgeIssueRefListSchema,
+  ForgeFixPRRefListSchema,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -1586,6 +1596,51 @@ export class ApiClient {
 
   async deleteForgeEntropyScan(id: string): Promise<void> {
     await this.fetch(`/api/forge/entropy-scans/${id}`, { method: "DELETE" });
+  }
+
+  // Forge F5: Harness health observability
+  async getForgeHealth(projectId?: string, days = 30): Promise<ForgeHealth> {
+    const q = new URLSearchParams({ days: String(days) });
+    if (projectId) q.set("project_id", projectId);
+    const raw = await this.fetch<unknown>(`/api/forge/health?${q.toString()}`);
+    return parseWithFallback(raw, ForgeHealthSchema, EMPTY_FORGE_HEALTH, {
+      endpoint: "GET /api/forge/health",
+    });
+  }
+
+  async getForgeHealthTrends(projectId?: string, days = 30): Promise<ForgeHealthTrends> {
+    const q = new URLSearchParams({ days: String(days) });
+    if (projectId) q.set("project_id", projectId);
+    const raw = await this.fetch<unknown>(`/api/forge/health/trends?${q.toString()}`);
+    return parseWithFallback(raw, ForgeHealthTrendsSchema, EMPTY_FORGE_TRENDS, {
+      endpoint: "GET /api/forge/health/trends",
+    });
+  }
+
+  async getForgeHealthFindings(projectId?: string): Promise<ForgeIssueRef[]> {
+    const q = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+    const raw = await this.fetch<unknown>(`/api/forge/health/findings${q}`);
+    return parseWithFallback(raw, ForgeIssueRefListSchema, [], {
+      endpoint: "GET /api/forge/health/findings",
+    });
+  }
+
+  async getForgeHealthGateFailures(projectId?: string, days = 30): Promise<ForgeIssueRef[]> {
+    const q = new URLSearchParams({ days: String(days) });
+    if (projectId) q.set("project_id", projectId);
+    const raw = await this.fetch<unknown>(`/api/forge/health/gate-failures?${q.toString()}`);
+    return parseWithFallback(raw, ForgeIssueRefListSchema, [], {
+      endpoint: "GET /api/forge/health/gate-failures",
+    });
+  }
+
+  async getForgeHealthFixPRs(projectId?: string, days = 30): Promise<ForgeFixPRRef[]> {
+    const q = new URLSearchParams({ days: String(days) });
+    if (projectId) q.set("project_id", projectId);
+    const raw = await this.fetch<unknown>(`/api/forge/health/fix-prs?${q.toString()}`);
+    return parseWithFallback(raw, ForgeFixPRRefListSchema, [], {
+      endpoint: "GET /api/forge/health/fix-prs",
+    });
   }
 
   async importSkill(data: { url: string }): Promise<Skill> {
