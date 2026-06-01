@@ -27,6 +27,7 @@ type ForgeEntropyScanBody struct {
 	CronExpression   string `json:"cron_expression"`
 	Timezone         string `json:"timezone"`
 	Enabled          bool   `json:"enabled"`
+	AutoFix          bool   `json:"auto_fix"`
 }
 
 type ForgeEntropyScanResponse struct {
@@ -40,6 +41,7 @@ type ForgeEntropyScanResponse struct {
 	CronExpression   string `json:"cron_expression"`
 	Timezone         string `json:"timezone"`
 	Enabled          bool   `json:"enabled"`
+	AutoFix          bool   `json:"auto_fix"`
 	AutopilotID      string `json:"autopilot_id,omitempty"`
 }
 
@@ -48,6 +50,7 @@ func entropyScanToResponse(s db.ForgeEntropyScan) ForgeEntropyScanResponse {
 		ID: uuidToString(s.ID), Name: s.Name, ScannerAgentID: uuidToString(s.ScannerAgentID),
 		CustomFocus: s.CustomFocus, IncludeStandards: s.IncludeStandards, IncludeChecks: s.IncludeChecks,
 		CronExpression: s.CronExpression, Timezone: s.Timezone, Enabled: s.Enabled,
+		AutoFix: s.AutoFix,
 	}
 	if s.ProjectID.Valid {
 		out.ProjectID = uuidToString(s.ProjectID)
@@ -175,6 +178,7 @@ func (h *Handler) CreateForgeEntropyScan(w http.ResponseWriter, r *http.Request)
 		CronExpression:   req.CronExpression,
 		Timezone:         tz,
 		Enabled:          req.Enabled,
+		AutoFix:          req.AutoFix,
 		CreatedBy:        parseUUID(userID),
 	})
 	if err != nil {
@@ -239,6 +243,7 @@ func (h *Handler) UpdateForgeEntropyScan(w http.ResponseWriter, r *http.Request)
 		Name: req.Name, ScannerAgentID: scannerID, CustomFocus: req.CustomFocus,
 		IncludeStandards: req.IncludeStandards, IncludeChecks: req.IncludeChecks,
 		CronExpression: req.CronExpression, Timezone: tz, Enabled: req.Enabled,
+		AutoFix: req.AutoFix,
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "entropy scan not found")
