@@ -284,6 +284,17 @@ type ForgeProjectProfile struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ForgeReviewConfig struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	ReviewerAgentID pgtype.UUID        `json:"reviewer_agent_id"`
+	Enabled         bool               `json:"enabled"`
+	CreatedBy       pgtype.UUID        `json:"created_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ForgeStandard struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
