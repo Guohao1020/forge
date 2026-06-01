@@ -257,3 +257,262 @@ func (q *Queries) GetForgeReviewOutcomes(ctx context.Context, arg GetForgeReview
 	err := row.Scan(&i.Total, &i.Completed, &i.AvgTurnaroundSec)
 	return i, err
 }
+
+const listRecentFixPRs = `-- name: ListRecentFixPRs :many
+SELECT ffp.id, ffp.issue_id, ffp.pr_url, ffp.created_at, i.number, i.title
+FROM forge_fix_pr ffp
+JOIN issue i ON i.id = ffp.issue_id
+WHERE ffp.workspace_id = $1
+  AND ffp.created_at >= $2::timestamptz
+  AND ($3::uuid IS NULL OR i.project_id = $3)
+ORDER BY ffp.created_at DESC
+LIMIT 50
+`
+
+type ListRecentFixPRsParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+}
+
+type ListRecentFixPRsRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	IssueID   pgtype.UUID        `json:"issue_id"`
+	PrUrl     string             `json:"pr_url"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Number    int32              `json:"number"`
+	Title     string             `json:"title"`
+}
+
+func (q *Queries) ListRecentFixPRs(ctx context.Context, arg ListRecentFixPRsParams) ([]ListRecentFixPRsRow, error) {
+	rows, err := q.db.Query(ctx, listRecentFixPRs, arg.WorkspaceID, arg.Since, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRecentFixPRsRow{}
+	for rows.Next() {
+		var i ListRecentFixPRsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.IssueID,
+			&i.PrUrl,
+			&i.CreatedAt,
+			&i.Number,
+			&i.Title,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentGateFailures = `-- name: ListRecentGateFailures :many
+
+SELECT i.id AS issue_id, i.number, i.title, atq.created_at
+FROM agent_task_queue atq
+JOIN agent a ON a.id = atq.agent_id
+JOIN issue i ON i.id = atq.issue_id
+WHERE a.workspace_id = $1
+  AND atq.failure_reason = 'verification_failed'
+  AND atq.created_at >= $2::timestamptz
+  AND ($3::uuid IS NULL OR i.project_id = $3)
+ORDER BY atq.created_at DESC
+LIMIT 50
+`
+
+type ListRecentGateFailuresParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+}
+
+type ListRecentGateFailuresRow struct {
+	IssueID   pgtype.UUID        `json:"issue_id"`
+	Number    int32              `json:"number"`
+	Title     string             `json:"title"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+// ---- Drill-down lists ----
+func (q *Queries) ListRecentGateFailures(ctx context.Context, arg ListRecentGateFailuresParams) ([]ListRecentGateFailuresRow, error) {
+	rows, err := q.db.Query(ctx, listRecentGateFailures, arg.WorkspaceID, arg.Since, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRecentGateFailuresRow{}
+	for rows.Next() {
+		var i ListRecentGateFailuresRow
+		if err := rows.Scan(
+			&i.IssueID,
+			&i.Number,
+			&i.Title,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const trendEntropyFindings = `-- name: TrendEntropyFindings :many
+
+SELECT DATE(i.created_at AT TIME ZONE $2::text)::text AS date, COUNT(*)::int AS count
+FROM issue i
+JOIN issue_to_label il ON il.issue_id = i.id
+JOIN issue_label l ON l.id = il.label_id
+WHERE i.workspace_id = $1
+  AND l.name = 'forge-entropy'
+  AND i.created_at >= $3::timestamptz
+  AND ($4::uuid IS NULL OR i.project_id = $4)
+GROUP BY DATE(i.created_at AT TIME ZONE $2::text)
+ORDER BY DATE(i.created_at AT TIME ZONE $2::text)
+`
+
+type TrendEntropyFindingsParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Tz          string             `json:"tz"`
+	Since       pgtype.Timestamptz `json:"since"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+}
+
+type TrendEntropyFindingsRow struct {
+	Date  string `json:"date"`
+	Count int32  `json:"count"`
+}
+
+// ---- Trends (date-bucketed, tz-aware) ----
+func (q *Queries) TrendEntropyFindings(ctx context.Context, arg TrendEntropyFindingsParams) ([]TrendEntropyFindingsRow, error) {
+	rows, err := q.db.Query(ctx, trendEntropyFindings,
+		arg.WorkspaceID,
+		arg.Tz,
+		arg.Since,
+		arg.ProjectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TrendEntropyFindingsRow{}
+	for rows.Next() {
+		var i TrendEntropyFindingsRow
+		if err := rows.Scan(&i.Date, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const trendFixPRs = `-- name: TrendFixPRs :many
+SELECT DATE(ffp.created_at AT TIME ZONE $2::text)::text AS date, COUNT(*)::int AS count
+FROM forge_fix_pr ffp
+JOIN issue i ON i.id = ffp.issue_id
+WHERE ffp.workspace_id = $1
+  AND ffp.created_at >= $3::timestamptz
+  AND ($4::uuid IS NULL OR i.project_id = $4)
+GROUP BY DATE(ffp.created_at AT TIME ZONE $2::text)
+ORDER BY DATE(ffp.created_at AT TIME ZONE $2::text)
+`
+
+type TrendFixPRsParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Tz          string             `json:"tz"`
+	Since       pgtype.Timestamptz `json:"since"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+}
+
+type TrendFixPRsRow struct {
+	Date  string `json:"date"`
+	Count int32  `json:"count"`
+}
+
+func (q *Queries) TrendFixPRs(ctx context.Context, arg TrendFixPRsParams) ([]TrendFixPRsRow, error) {
+	rows, err := q.db.Query(ctx, trendFixPRs,
+		arg.WorkspaceID,
+		arg.Tz,
+		arg.Since,
+		arg.ProjectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TrendFixPRsRow{}
+	for rows.Next() {
+		var i TrendFixPRsRow
+		if err := rows.Scan(&i.Date, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const trendGatePassRate = `-- name: TrendGatePassRate :many
+SELECT DATE(atq.created_at AT TIME ZONE $2::text)::text AS date,
+    COUNT(*) FILTER (WHERE atq.status = 'completed')::int AS passed,
+    COUNT(*) FILTER (WHERE atq.failure_reason = 'verification_failed')::int AS failed
+FROM agent_task_queue atq
+JOIN agent a ON a.id = atq.agent_id
+LEFT JOIN issue i ON i.id = atq.issue_id
+WHERE a.workspace_id = $1
+  AND atq.issue_id IS NOT NULL
+  AND atq.created_at >= $3::timestamptz
+  AND ($4::uuid IS NULL OR i.project_id = $4)
+GROUP BY DATE(atq.created_at AT TIME ZONE $2::text)
+ORDER BY DATE(atq.created_at AT TIME ZONE $2::text)
+`
+
+type TrendGatePassRateParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Tz          string             `json:"tz"`
+	Since       pgtype.Timestamptz `json:"since"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+}
+
+type TrendGatePassRateRow struct {
+	Date   string `json:"date"`
+	Passed int32  `json:"passed"`
+	Failed int32  `json:"failed"`
+}
+
+func (q *Queries) TrendGatePassRate(ctx context.Context, arg TrendGatePassRateParams) ([]TrendGatePassRateRow, error) {
+	rows, err := q.db.Query(ctx, trendGatePassRate,
+		arg.WorkspaceID,
+		arg.Tz,
+		arg.Since,
+		arg.ProjectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TrendGatePassRateRow{}
+	for rows.Next() {
+		var i TrendGatePassRateRow
+		if err := rows.Scan(&i.Date, &i.Passed, &i.Failed); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

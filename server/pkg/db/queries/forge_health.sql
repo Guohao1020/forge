@@ -88,3 +88,65 @@ JOIN issue i ON i.id = ffp.issue_id
 WHERE ffp.workspace_id = $1
   AND ffp.created_at >= sqlc.arg('since')::timestamptz
   AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'));
+
+-- ---- Trends (date-bucketed, tz-aware) ----
+
+-- name: TrendEntropyFindings :many
+SELECT DATE(i.created_at AT TIME ZONE sqlc.arg('tz')::text)::text AS date, COUNT(*)::int AS count
+FROM issue i
+JOIN issue_to_label il ON il.issue_id = i.id
+JOIN issue_label l ON l.id = il.label_id
+WHERE i.workspace_id = $1
+  AND l.name = 'forge-entropy'
+  AND i.created_at >= sqlc.arg('since')::timestamptz
+  AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
+GROUP BY DATE(i.created_at AT TIME ZONE sqlc.arg('tz')::text)
+ORDER BY DATE(i.created_at AT TIME ZONE sqlc.arg('tz')::text);
+
+-- name: TrendGatePassRate :many
+SELECT DATE(atq.created_at AT TIME ZONE sqlc.arg('tz')::text)::text AS date,
+    COUNT(*) FILTER (WHERE atq.status = 'completed')::int AS passed,
+    COUNT(*) FILTER (WHERE atq.failure_reason = 'verification_failed')::int AS failed
+FROM agent_task_queue atq
+JOIN agent a ON a.id = atq.agent_id
+LEFT JOIN issue i ON i.id = atq.issue_id
+WHERE a.workspace_id = $1
+  AND atq.issue_id IS NOT NULL
+  AND atq.created_at >= sqlc.arg('since')::timestamptz
+  AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
+GROUP BY DATE(atq.created_at AT TIME ZONE sqlc.arg('tz')::text)
+ORDER BY DATE(atq.created_at AT TIME ZONE sqlc.arg('tz')::text);
+
+-- name: TrendFixPRs :many
+SELECT DATE(ffp.created_at AT TIME ZONE sqlc.arg('tz')::text)::text AS date, COUNT(*)::int AS count
+FROM forge_fix_pr ffp
+JOIN issue i ON i.id = ffp.issue_id
+WHERE ffp.workspace_id = $1
+  AND ffp.created_at >= sqlc.arg('since')::timestamptz
+  AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
+GROUP BY DATE(ffp.created_at AT TIME ZONE sqlc.arg('tz')::text)
+ORDER BY DATE(ffp.created_at AT TIME ZONE sqlc.arg('tz')::text);
+
+-- ---- Drill-down lists ----
+
+-- name: ListRecentGateFailures :many
+SELECT i.id AS issue_id, i.number, i.title, atq.created_at
+FROM agent_task_queue atq
+JOIN agent a ON a.id = atq.agent_id
+JOIN issue i ON i.id = atq.issue_id
+WHERE a.workspace_id = $1
+  AND atq.failure_reason = 'verification_failed'
+  AND atq.created_at >= sqlc.arg('since')::timestamptz
+  AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
+ORDER BY atq.created_at DESC
+LIMIT 50;
+
+-- name: ListRecentFixPRs :many
+SELECT ffp.id, ffp.issue_id, ffp.pr_url, ffp.created_at, i.number, i.title
+FROM forge_fix_pr ffp
+JOIN issue i ON i.id = ffp.issue_id
+WHERE ffp.workspace_id = $1
+  AND ffp.created_at >= sqlc.arg('since')::timestamptz
+  AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
+ORDER BY ffp.created_at DESC
+LIMIT 50;
