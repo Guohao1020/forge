@@ -1086,6 +1086,10 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCompleted(ctx, task)
 
+	// Forge F3: after a coding task completes, enqueue an AI review task for the
+	// configured reviewer (best-effort; skips review tasks / no reviewer / no workdir).
+	s.MaybeEnqueueReview(ctx, task)
+
 	// Invariant: every completed issue task must have at least one agent
 	// comment on the issue, so the user always sees something when a run
 	// ends. If the agent posted a comment during execution (result, progress
