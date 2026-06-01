@@ -90,8 +90,9 @@ CREATE UNIQUE INDEX uq_forge_review_proj ON forge_review_config (project_id)   W
 - `agent_id` = reviewer_agent_id
 - `issue_id` = 同 issue
 - `parent_task_id` = coding task id
-- `work_dir` = coding task 的 work_dir + reuse 标记（复用 Multica 现有 work_dir 复用机制，
-  如 retry 任务那样 —— 实现时确认 reuse 字段，参 `CreateRetryTask`/claim 的 PriorWorkDir）
+- `work_dir` = coding task 的 work_dir（**需 claim 钩子**：Multica 的 resume 是 per-(agent,issue)，
+  reviewer ≠ coder 找不到 coder 的 session，故 claim handler 对 review 任务把
+  `PriorWorkDir = task.work_dir` 覆盖一处。**非零 daemon 改动**——这是对原"复用现有机制"的细化）
 - `context` = JSON `{"forge_review": true, "review_prompt": "Review the changes (run `git diff`).
   Apply the coding standards. Post your findings as comments."}`
 - `status` = queued
@@ -101,11 +102,12 @@ CREATE UNIQUE INDEX uq_forge_review_proj ON forge_review_config (project_id)   W
 review 任务的 context 标 `forge_review:true`；4.1 的触发钩子跳过带此标记的任务完成——评审任务
 完成不会再触发评审。
 
-## 5. reviewer 执行（复用，零新代码）
+## 5. reviewer 执行（多数复用，+1 处 claim 钩子）
 
 - review 任务 claim 时 → **F1 的 `InjectStandards` 自动注入规范**（reviewer 是 agent，走同样
-  claim 钩子）。
-- daemon 复用 parent work_dir（Multica 现有能力）→ reviewer 在同目录。
+  claim 钩子，零改动）。
+- **work_dir 复用需 claim 钩子**（细化 §4.2）：claim handler 对 review 任务把
+  `PriorWorkDir = review 任务的 work_dir`（= coder 的 work_dir）覆盖，reviewer 在同目录。
 - reviewer agent（Claude Code）：`git diff` 看改动 → 按注入规范评审 → 发评论。
 - 评审行为 = reviewer 自己的 `instructions`（身份，用户配）+ 注入的规范（查什么）。
 
@@ -121,9 +123,9 @@ CompleteTask 合成评论）。建议性——不卡 issue 流转。硬门禁是
 
 ## 8. Upstream 隔离（R2）
 
-`forge_review_config` 表 · `server/internal/forge/review.go` · `server/internal/handler/forge_review.go` ·
-`/api/forge/review-config` · UI。**侵入点**：`CompleteTask` 一处 `forge.MaybeEnqueueReview(...)` +
-路由注册几行。
+`forge_review_config` 表 · `server/internal/forge/review.go` · `server/internal/service/forge_review.go` ·
+`server/internal/handler/forge_review.go` · `/api/forge/review-config` · UI。**侵入点**：
+`CompleteTask` 一处 `s.MaybeEnqueueReview(...)` + claim handler 一处 `PriorWorkDir` 钩子 + 路由几行。
 
 ## 9. 测试
 
