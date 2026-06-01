@@ -669,6 +669,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			// Forge F5: Harness health observability.
+			r.Route("/api/forge/health", func(r chi.Router) {
+				r.Get("/", h.GetForgeHealth)
+			})
+
 			// Dashboard — workspace-wide token + run-time rollups for the
 			// "/{slug}/dashboard" page. Optional ?project_id filter scopes
 			// the rollup to a single project.
