@@ -33,8 +33,12 @@ workspace→project 两级 · 项目画像驱动过滤。
 | 1 | 解析逻辑（forge/standards，TDD） | Phase 0 | ✅ 完成（4 单测绿） | [phase-1-resolve.md](phase-1-resolve.md) |
 | 2 | 双层注入钩子（InjectStandards + claim hook） | Phase 1 | ✅ 完成（2 单测绿 + e2e 证明） | [phase-2-inject.md](phase-2-inject.md) |
 | 3 | API（CRUD + project profile） | Phase 0 | ✅ 完成（源码构建服务器往返） | [phase-3-api.md](phase-3-api.md) |
-| 4 | UI（forge-standards views + web 路由） | Phase 3 | ☐ 待做（需 pnpm install） | [phase-4-ui.md](phase-4-ui.md) |
-| 5 | 验收 + 种子 + 文档 | Phase 2, 4 | ◑ 后端 e2e 已验；UI 验收待 P4 | [phase-5-verify.md](phase-5-verify.md) |
+| 4 | UI（forge-standards views + web 路由） | Phase 3 | ✅ 完成（core/views/web typecheck 绿） | [phase-4-ui.md](phase-4-ui.md) |
+| 5 | 验收 + 种子 + 文档 | Phase 2, 4 | ✅ 完成 | [phase-5-verify.md](phase-5-verify.md) |
+
+> **F1 完成（2026-06-01）。** 后端端到端验证（注入写进 agent workdir）+ 前端 standards
+> 管理 UI（列表/双栏编辑，三包 typecheck 绿）。**延后增强**：侧边栏 nav 链接、project profile
+> 编辑 UI、i18n（当前 UI 硬编码英文串）—— 均需 i18n keys / 更多跨文件接线，作为后续 polish。
 
 > **后端 F1 端到端验证通过（2026-06-01）。** 源码构建 backend → daemon 认领 →
 > `forge.InjectStandards` 触发 → 解析 standard → 写入 agent execenv 的
