@@ -109,13 +109,12 @@ func (h *Handler) CreateForgeEntropyScan(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	var projParam pgtype.UUID
-	if req.ProjectID != "" {
-		p, ok := parseUUIDOrBadRequest(w, req.ProjectID, "project_id")
-		if !ok {
-			return
-		}
-		projParam = p
+	if !h.validateAutopilotAssignee(w, r, "agent", scannerID, parseUUID(wsID)) {
+		return
+	}
+	projParam, ok := h.parseAutopilotProjectID(w, r, &req.ProjectID, parseUUID(wsID))
+	if !ok {
+		return
 	}
 	tz := req.Timezone
 	if tz == "" {
@@ -217,6 +216,9 @@ func (h *Handler) UpdateForgeEntropyScan(w http.ResponseWriter, r *http.Request)
 	}
 	scannerID, ok := parseUUIDOrBadRequest(w, req.ScannerAgentID, "scanner_agent_id")
 	if !ok {
+		return
+	}
+	if !h.validateAutopilotAssignee(w, r, "agent", scannerID, parseUUID(wsID)) {
 		return
 	}
 	tz := req.Timezone
