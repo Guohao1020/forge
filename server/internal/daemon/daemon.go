@@ -2213,6 +2213,17 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
+	// Forge F2: verification gate. After the agent session ends, run the
+	// project's configured checks in the workdir; on failure divert to the
+	// fail path (verification_failed) so the work does not pass silently.
+	if result.Status == "completed" && task.IssueID != "" {
+		if failure := d.runForgeChecks(ctx, task.ID, result.WorkDir, taskLog); failure != "" {
+			result.Status = "blocked"
+			result.FailureReason = "verification_failed"
+			result.Comment = failure
+		}
+	}
+
 	d.reportTaskResult(ctx, task.ID, result, taskLog)
 
 	// Write GC metadata after the task finishes so the periodic GC loop
