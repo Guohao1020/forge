@@ -278,6 +278,24 @@ type ForgeCheck struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ForgeEntropyScan struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	Name             string             `json:"name"`
+	ScannerAgentID   pgtype.UUID        `json:"scanner_agent_id"`
+	CustomFocus      string             `json:"custom_focus"`
+	IncludeStandards bool               `json:"include_standards"`
+	IncludeChecks    bool               `json:"include_checks"`
+	CronExpression   string             `json:"cron_expression"`
+	Timezone         string             `json:"timezone"`
+	Enabled          bool               `json:"enabled"`
+	AutopilotID      pgtype.UUID        `json:"autopilot_id"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ForgeProjectProfile struct {
 	ProjectID pgtype.UUID        `json:"project_id"`
 	Tags      []string           `json:"tags"`
