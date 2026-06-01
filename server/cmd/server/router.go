@@ -659,6 +659,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/", h.GetForgeReviewConfig)
 				r.Put("/", h.PutForgeReviewConfig)
 			})
+			// Forge F4: entropy scan config (periodic whole-repo quality scan).
+			r.Route("/api/forge/entropy-scans", func(r chi.Router) {
+				r.Get("/", h.ListForgeEntropyScans)
+				r.Post("/", h.CreateForgeEntropyScan)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Patch("/", h.UpdateForgeEntropyScan)
+					r.Delete("/", h.DeleteForgeEntropyScan)
+				})
+			})
 
 			// Dashboard — workspace-wide token + run-time rollups for the
 			// "/{slug}/dashboard" page. Optional ?project_id filter scopes
