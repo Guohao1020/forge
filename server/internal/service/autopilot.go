@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/forgeentropy"
 	"github.com/multica-ai/multica/server/internal/issueposition"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -157,6 +158,15 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 
 	title := s.interpolateTemplate(ap, *run, triggerTimezone)
 	description := s.buildIssueDescription(ap, *run, triggerTimezone)
+
+	// Forge F4: if this autopilot backs an entropy scan, override the issue
+	// description with the composed scan brief (F1 standards + F2 checks +
+	// custom focus + open-findings dedup list). GetEntropyScanByAutopilot
+	// returns an error (no rows) for ordinary autopilots, leaving the normal
+	// description untouched. ResolveBrief is best-effort and never errors.
+	if scan, err := s.Queries.GetEntropyScanByAutopilot(ctx, ap.ID); err == nil {
+		description = pgtype.Text{String: forgeentropy.ResolveBrief(ctx, s.Queries, scan), Valid: true}
+	}
 
 	issueNumber, err := qtx.IncrementIssueCounter(ctx, ap.WorkspaceID)
 	if err != nil {
