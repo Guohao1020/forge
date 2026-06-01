@@ -20,6 +20,8 @@ export const workspaceKeys = {
   forgeChecks: (wsId: string) => ["workspaces", wsId, "forge-checks"] as const,
   forgeReviewConfig: (wsId: string) =>
     ["workspaces", wsId, "forge-review-config"] as const,
+  forgeEntropyScans: (wsId: string) =>
+    ["workspaces", wsId, "forge-entropy-scans"] as const,
   assigneeFrequency: (wsId: string) => ["workspaces", wsId, "assignee-frequency"] as const,
 };
 
@@ -108,6 +110,13 @@ export function forgeReviewConfigOptions(wsId: string) {
   return queryOptions({
     queryKey: workspaceKeys.forgeReviewConfig(wsId),
     queryFn: () => api.getForgeReviewConfig(),
+  });
+}
+
+export function forgeEntropyScanListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: workspaceKeys.forgeEntropyScans(wsId),
+    queryFn: () => api.listForgeEntropyScans(),
   });
 }
 

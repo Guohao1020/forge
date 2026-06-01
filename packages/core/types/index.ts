@@ -155,3 +155,4 @@ export type {
 export type { ForgeStandard, ForgeStandardInput } from "./forge-standard";
 export type { ForgeCheck, ForgeCheckInput } from "./forge-check";
 export type { ForgeReviewConfig } from "./forge-review";
+export type { ForgeEntropyScan, ForgeEntropyScanInput } from "./forge-entropy";

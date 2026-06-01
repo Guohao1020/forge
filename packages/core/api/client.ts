@@ -43,6 +43,8 @@ import type {
   ForgeCheck,
   ForgeCheckInput,
   ForgeReviewConfig,
+  ForgeEntropyScan,
+  ForgeEntropyScanInput,
   PersonalAccessToken,
   CreatePersonalAccessTokenRequest,
   CreatePersonalAccessTokenResponse,
@@ -1556,6 +1558,34 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
+  }
+
+  // Forge F4: entropy scans (periodic quality scan config)
+  async listForgeEntropyScans(): Promise<ForgeEntropyScan[]> {
+    return this.fetch("/api/forge/entropy-scans");
+  }
+
+  async createForgeEntropyScan(
+    data: ForgeEntropyScanInput,
+  ): Promise<ForgeEntropyScan> {
+    return this.fetch("/api/forge/entropy-scans", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateForgeEntropyScan(
+    id: string,
+    data: ForgeEntropyScanInput,
+  ): Promise<ForgeEntropyScan> {
+    return this.fetch(`/api/forge/entropy-scans/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteForgeEntropyScan(id: string): Promise<void> {
+    await this.fetch(`/api/forge/entropy-scans/${id}`, { method: "DELETE" });
   }
 
   async importSkill(data: { url: string }): Promise<Skill> {
