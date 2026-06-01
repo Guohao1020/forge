@@ -32,17 +32,17 @@
 
 | Phase | 名称 | Depends-on | 状态 | 文件 |
 |-------|------|-----------|------|------|
-| 0 | 快照后端（forge_health.sql 聚合 + GetForgeHealth 端点） | — | ☐ | [phase-0-snapshot.md](phase-0-snapshot.md) |
-| 1 | 趋势 + 钻取后端（trend/drill query + 4 端点） | Phase 0 | ☐ | [phase-1-trends-drill.md](phase-1-trends-drill.md) |
-| 2 | 前端 core 接线 + 快照卡 + zod schema | Phase 0 | ☐ | [phase-2-frontend-snapshot.md](phase-2-frontend-snapshot.md) |
-| 3 | 前端趋势图(recharts) + 钻取面板 | Phase 1, 2 | ☐ | [phase-3-frontend-trends-drill.md](phase-3-frontend-trends-drill.md) |
-| 4 | 验收 + 文档 | Phase 1, 2, 3 | ☐ | [phase-4-verify.md](phase-4-verify.md) |
+| 0 | 快照后端（forge_health.sql 聚合 + GetForgeHealth 端点） | — | ✅ | [phase-0-snapshot.md](phase-0-snapshot.md) |
+| 1 | 趋势 + 钻取后端（trend/drill query + 4 端点） | Phase 0 | ✅ | [phase-1-trends-drill.md](phase-1-trends-drill.md) |
+| 2 | 前端 core 接线 + 快照卡 + zod schema | Phase 0 | ✅ | [phase-2-frontend-snapshot.md](phase-2-frontend-snapshot.md) |
+| 3 | 前端趋势图(recharts) + 钻取面板 | Phase 1, 2 | ✅ | [phase-3-frontend-trends-drill.md](phase-3-frontend-trends-drill.md) |
+| 4 | 验收 + 文档 | Phase 1, 2, 3 | ✅ | [phase-4-verify.md](phase-4-verify.md) |
 
 ## 完成门禁（F5 DoD）
-- [ ] `forge_health.sql` 快照聚合（配置 COUNT + 门禁/评审/findings/scan-runs/fix-PR 窗口聚合）+ `GetForgeHealth` 端点
-- [ ] 趋势（熵发现/门禁通过/修复 PR 按天）+ 钻取（gate-failures/fix-prs list + findings 复用）+ 4 端点
-- [ ] 前端 `forge-health` view:快照卡 + recharts 趋势 + 混合钻取 + **health response zod schema**;三包 typecheck 绿
-- [ ] **绕凭证集成**:源码构建栈 `GET /api/forge/health` → 断言配置计数非零 + fix-PR 开启数 ≥1 + 门禁/评审计数与 DB 一致;`/trends` 返回 date-bucketed;钻取端点返回 list
+- [x] `forge_health.sql` 9 个快照聚合（配置 COUNT + 门禁/评审/findings/scan-runs/fix-PR 窗口聚合）+ `GetForgeHealth` 端点
+- [x] 趋势 3（熵发现/门禁通过/修复 PR 按天）+ 钻取（gate-failures/fix-prs list + findings 复用）+ 4 端点
+- [x] 前端 `forge-health` view:快照卡 + recharts 趋势(3 图) + 混合钻取(findings/gate 内嵌、fix-PR 外链) + **health response zod schema**;三包 typecheck 绿 + core 413 单测绿
+- [x] **绕凭证集成(源码构建栈实测)**:`GET /api/forge/health` → standards=1/checks=1/reviewers=1/scans=1 配置非零、gate pass=1、review total=1、**fix_prs opened=1 / merged=0 / matched=0(优雅降级)**、scan_runs=1 → `SNAPSHOT_REAL=True`;`/trends` 返回 date-bucketed(gate/fixpr 各 1 天);drill fix-prs=1(含 .../pull/999)。**纯读聚合 F1–F4b 留下的真实数据,无需 agent 跑**
 
 ## 已知约束
 - **PR 合并率 webhook 门**:`forge_fix_pr.pr_url ↔ github_pull_request.html_url` 文本 join;无 webhook 数据(`matched=0`)→ UI 显「— · 需 GitHub App」。
