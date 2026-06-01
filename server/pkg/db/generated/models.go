@@ -294,6 +294,17 @@ type ForgeEntropyScan struct {
 	CreatedBy        pgtype.UUID        `json:"created_by"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	AutoFix          bool               `json:"auto_fix"`
+}
+
+type ForgeFixPr struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	TaskID      pgtype.UUID        `json:"task_id"`
+	PrUrl       string             `json:"pr_url"`
+	Branch      string             `json:"branch"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type ForgeProjectProfile struct {

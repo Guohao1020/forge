@@ -3,8 +3,8 @@
 -- name: CreateEntropyScan :one
 INSERT INTO forge_entropy_scan (
     workspace_id, project_id, name, scanner_agent_id, custom_focus,
-    include_standards, include_checks, cron_expression, timezone, enabled, created_by
-) VALUES ($1, sqlc.narg('project_id'), $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    include_standards, include_checks, cron_expression, timezone, enabled, created_by, auto_fix
+) VALUES ($1, sqlc.narg('project_id'), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
 -- name: SetEntropyScanAutopilot :exec
@@ -25,7 +25,7 @@ ORDER BY created_at DESC;
 -- name: UpdateEntropyScan :one
 UPDATE forge_entropy_scan SET
     name = $3, scanner_agent_id = $4, custom_focus = $5, include_standards = $6,
-    include_checks = $7, cron_expression = $8, timezone = $9, enabled = $10, updated_at = now()
+    include_checks = $7, cron_expression = $8, timezone = $9, enabled = $10, auto_fix = $11, updated_at = now()
 WHERE id = $1 AND workspace_id = $2
 RETURNING *;
 

@@ -15,9 +15,9 @@ const createEntropyScan = `-- name: CreateEntropyScan :one
 
 INSERT INTO forge_entropy_scan (
     workspace_id, project_id, name, scanner_agent_id, custom_focus,
-    include_standards, include_checks, cron_expression, timezone, enabled, created_by
-) VALUES ($1, $11, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, workspace_id, project_id, name, scanner_agent_id, custom_focus, include_standards, include_checks, cron_expression, timezone, enabled, autopilot_id, created_by, created_at, updated_at
+    include_standards, include_checks, cron_expression, timezone, enabled, created_by, auto_fix
+) VALUES ($1, $12, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, workspace_id, project_id, name, scanner_agent_id, custom_focus, include_standards, include_checks, cron_expression, timezone, enabled, autopilot_id, created_by, created_at, updated_at, auto_fix
 `
 
 type CreateEntropyScanParams struct {
@@ -31,6 +31,7 @@ type CreateEntropyScanParams struct {
 	Timezone         string      `json:"timezone"`
 	Enabled          bool        `json:"enabled"`
 	CreatedBy        pgtype.UUID `json:"created_by"`
+	AutoFix          bool        `json:"auto_fix"`
 	ProjectID        pgtype.UUID `json:"project_id"`
 }
 
@@ -47,6 +48,7 @@ func (q *Queries) CreateEntropyScan(ctx context.Context, arg CreateEntropyScanPa
 		arg.Timezone,
 		arg.Enabled,
 		arg.CreatedBy,
+		arg.AutoFix,
 		arg.ProjectID,
 	)
 	var i ForgeEntropyScan
@@ -66,6 +68,7 @@ func (q *Queries) CreateEntropyScan(ctx context.Context, arg CreateEntropyScanPa
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AutoFix,
 	)
 	return i, err
 }
@@ -88,7 +91,7 @@ func (q *Queries) DeleteEntropyScan(ctx context.Context, arg DeleteEntropyScanPa
 }
 
 const getEntropyScan = `-- name: GetEntropyScan :one
-SELECT id, workspace_id, project_id, name, scanner_agent_id, custom_focus, include_standards, include_checks, cron_expression, timezone, enabled, autopilot_id, created_by, created_at, updated_at FROM forge_entropy_scan WHERE id = $1 AND workspace_id = $2
+SELECT id, workspace_id, project_id, name, scanner_agent_id, custom_focus, include_standards, include_checks, cron_expression, timezone, enabled, autopilot_id, created_by, created_at, updated_at, auto_fix FROM forge_entropy_scan WHERE id = $1 AND workspace_id = $2
 `
 
 type GetEntropyScanParams struct {
@@ -115,12 +118,13 @@ func (q *Queries) GetEntropyScan(ctx context.Context, arg GetEntropyScanParams) 
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AutoFix,
 	)
 	return i, err
 }
 
 const getEntropyScanByAutopilot = `-- name: GetEntropyScanByAutopilot :one
-SELECT id, workspace_id, project_id, name, scanner_agent_id, custom_focus, include_standards, include_checks, cron_expression, timezone, enabled, autopilot_id, created_by, created_at, updated_at FROM forge_entropy_scan WHERE autopilot_id = $1
+SELECT id, workspace_id, project_id, name, scanner_agent_id, custom_focus, include_standards, include_checks, cron_expression, timezone, enabled, autopilot_id, created_by, created_at, updated_at, auto_fix FROM forge_entropy_scan WHERE autopilot_id = $1
 `
 
 func (q *Queries) GetEntropyScanByAutopilot(ctx context.Context, autopilotID pgtype.UUID) (ForgeEntropyScan, error) {
@@ -142,12 +146,13 @@ func (q *Queries) GetEntropyScanByAutopilot(ctx context.Context, autopilotID pgt
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AutoFix,
 	)
 	return i, err
 }
 
 const listEntropyScans = `-- name: ListEntropyScans :many
-SELECT id, workspace_id, project_id, name, scanner_agent_id, custom_focus, include_standards, include_checks, cron_expression, timezone, enabled, autopilot_id, created_by, created_at, updated_at FROM forge_entropy_scan
+SELECT id, workspace_id, project_id, name, scanner_agent_id, custom_focus, include_standards, include_checks, cron_expression, timezone, enabled, autopilot_id, created_by, created_at, updated_at, auto_fix FROM forge_entropy_scan
 WHERE workspace_id = $1
   AND project_id IS NOT DISTINCT FROM $2
 ORDER BY created_at DESC
@@ -183,6 +188,7 @@ func (q *Queries) ListEntropyScans(ctx context.Context, arg ListEntropyScansPara
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AutoFix,
 		); err != nil {
 			return nil, err
 		}
@@ -257,9 +263,9 @@ func (q *Queries) SetEntropyScanAutopilot(ctx context.Context, arg SetEntropySca
 const updateEntropyScan = `-- name: UpdateEntropyScan :one
 UPDATE forge_entropy_scan SET
     name = $3, scanner_agent_id = $4, custom_focus = $5, include_standards = $6,
-    include_checks = $7, cron_expression = $8, timezone = $9, enabled = $10, updated_at = now()
+    include_checks = $7, cron_expression = $8, timezone = $9, enabled = $10, auto_fix = $11, updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, project_id, name, scanner_agent_id, custom_focus, include_standards, include_checks, cron_expression, timezone, enabled, autopilot_id, created_by, created_at, updated_at
+RETURNING id, workspace_id, project_id, name, scanner_agent_id, custom_focus, include_standards, include_checks, cron_expression, timezone, enabled, autopilot_id, created_by, created_at, updated_at, auto_fix
 `
 
 type UpdateEntropyScanParams struct {
@@ -273,6 +279,7 @@ type UpdateEntropyScanParams struct {
 	CronExpression   string      `json:"cron_expression"`
 	Timezone         string      `json:"timezone"`
 	Enabled          bool        `json:"enabled"`
+	AutoFix          bool        `json:"auto_fix"`
 }
 
 func (q *Queries) UpdateEntropyScan(ctx context.Context, arg UpdateEntropyScanParams) (ForgeEntropyScan, error) {
@@ -287,6 +294,7 @@ func (q *Queries) UpdateEntropyScan(ctx context.Context, arg UpdateEntropyScanPa
 		arg.CronExpression,
 		arg.Timezone,
 		arg.Enabled,
+		arg.AutoFix,
 	)
 	var i ForgeEntropyScan
 	err := row.Scan(
@@ -305,6 +313,7 @@ func (q *Queries) UpdateEntropyScan(ctx context.Context, arg UpdateEntropyScanPa
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AutoFix,
 	)
 	return i, err
 }
