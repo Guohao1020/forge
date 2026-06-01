@@ -17,6 +17,7 @@ export const workspaceKeys = {
     ["workspaces", wsId, "squads", squadId, "members-status"] as const,
   skills: (wsId: string) => ["workspaces", wsId, "skills"] as const,
   forgeStandards: (wsId: string) => ["workspaces", wsId, "forge-standards"] as const,
+  forgeChecks: (wsId: string) => ["workspaces", wsId, "forge-checks"] as const,
   assigneeFrequency: (wsId: string) => ["workspaces", wsId, "assignee-frequency"] as const,
 };
 
@@ -91,6 +92,13 @@ export function forgeStandardListOptions(wsId: string) {
   return queryOptions({
     queryKey: workspaceKeys.forgeStandards(wsId),
     queryFn: () => api.listForgeStandards(),
+  });
+}
+
+export function forgeCheckListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: workspaceKeys.forgeChecks(wsId),
+    queryFn: () => api.listForgeChecks(),
   });
 }
 

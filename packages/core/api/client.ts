@@ -40,6 +40,8 @@ import type {
   SetAgentSkillsRequest,
   ForgeStandard,
   ForgeStandardInput,
+  ForgeCheck,
+  ForgeCheckInput,
   PersonalAccessToken,
   CreatePersonalAccessTokenRequest,
   CreatePersonalAccessTokenResponse,
@@ -1513,6 +1515,29 @@ export class ApiClient {
 
   async deleteForgeStandard(id: string): Promise<void> {
     await this.fetch(`/api/forge/standards/${id}`, { method: "DELETE" });
+  }
+
+  // Forge F2: verification checks
+  async listForgeChecks(): Promise<ForgeCheck[]> {
+    return this.fetch("/api/forge/checks");
+  }
+
+  async createForgeCheck(data: ForgeCheckInput): Promise<ForgeCheck> {
+    return this.fetch("/api/forge/checks", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateForgeCheck(id: string, data: ForgeCheckInput): Promise<ForgeCheck> {
+    return this.fetch(`/api/forge/checks/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteForgeCheck(id: string): Promise<void> {
+    await this.fetch(`/api/forge/checks/${id}`, { method: "DELETE" });
   }
 
   async importSkill(data: { url: string }): Promise<Skill> {
