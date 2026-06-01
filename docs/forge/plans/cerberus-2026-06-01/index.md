@@ -27,11 +27,15 @@ workspace→project 加法）。
 
 | Phase | 名称 | Depends-on | 状态 | 文件 |
 |-------|------|-----------|------|------|
-| 0 | 数据层（迁移 112 + sqlc） | — | ☐ | [phase-0-data-layer.md](phase-0-data-layer.md) |
-| 1 | 解析逻辑（forge/checks，TDD） | Phase 0 | ☐ | [phase-1-resolve.md](phase-1-resolve.md) |
-| 2 | daemon 验证（端点 + forge_verify + hook） | Phase 1 | ☐ | [phase-2-daemon-verify.md](phase-2-daemon-verify.md) |
-| 3 | API + UI（checks CRUD + views） | Phase 0 | ☐ | [phase-3-api-ui.md](phase-3-api-ui.md) |
-| 4 | 验收 + e2e + 文档 | Phase 2, 3 | ☐ | [phase-4-verify.md](phase-4-verify.md) |
+| 0 | 数据层（迁移 112 + sqlc） | — | ✅ 完成 | [phase-0-data-layer.md](phase-0-data-layer.md) |
+| 1 | 解析逻辑（forge/checks，TDD） | Phase 0 | ✅ 完成（2 单测） | [phase-1-resolve.md](phase-1-resolve.md) |
+| 2 | daemon 验证（端点 + forge_verify + hook） | Phase 1 | ✅ 完成（runChecks 2 单测 + 编译） | [phase-2-daemon-verify.md](phase-2-daemon-verify.md) |
+| 3 | API + UI（checks CRUD + views） | Phase 0 | ✅ 完成（三包 typecheck 绿） | [phase-3-api-ui.md](phase-3-api-ui.md) |
+| 4 | 验收 + e2e + 文档 | Phase 2, 3 | ◑ 逻辑全验；活体门禁 e2e 待凭证 | [phase-4-verify.md](phase-4-verify.md) |
+
+> **F2 门禁逻辑完成（2026-06-01）。** ResolveChecks + runChecks 单测绿；daemon 端点 +
+> handleTask 钩子编译通过；checks CRUD + UI（三包 typecheck 绿）。**活体门禁 e2e**（真 agent
+> 完成→拦截→评论）需可用 provider 凭证，延后（见 spec §8/R4）。
 
 ## 与 F1（themis）的关系
 Phase 0/1/3 紧密镜像 F1 的对应 phase（migration/sqlc、resolve 纯函数、API/UI 镜像
