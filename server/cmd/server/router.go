@@ -644,6 +644,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/", h.GetForgeProjectProfile)
 				r.Put("/", h.PutForgeProjectProfile)
 			})
+			// Forge F2: verification checks CRUD.
+			r.Route("/api/forge/checks", func(r chi.Router) {
+				r.Get("/", h.ListForgeChecks)
+				r.Post("/", h.CreateForgeCheck)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetForgeCheck)
+					r.Put("/", h.UpdateForgeCheck)
+					r.Delete("/", h.DeleteForgeCheck)
+				})
+			})
 
 			// Dashboard — workspace-wide token + run-time rollups for the
 			// "/{slug}/dashboard" page. Optional ?project_id filter scopes
