@@ -47,3 +47,24 @@ func TestComposeBrief_OmitsEmptySections(t *testing.T) {
 		t.Fatalf("brief missing always-on sections\n---\n%s", out)
 	}
 }
+
+func TestComposeBrief_AutoFixOn(t *testing.T) {
+	out := ComposeBrief(BriefInput{ScanName: "weekly", AutoFix: true})
+	for _, want := range []string{
+		"Fixing (this scan has auto-fix enabled)",
+		"gh pr create",
+		"Closes",
+		"only file issues",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("auto-fix brief missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestComposeBrief_AutoFixOff(t *testing.T) {
+	out := ComposeBrief(BriefInput{ScanName: "weekly", AutoFix: false})
+	if strings.Contains(out, "Fixing (this scan has auto-fix enabled)") || strings.Contains(out, "gh pr create") {
+		t.Fatalf("auto-fix OFF brief must not contain fixing section\n---\n%s", out)
+	}
+}

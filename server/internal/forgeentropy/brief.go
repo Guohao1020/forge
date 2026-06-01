@@ -25,6 +25,7 @@ type BriefInput struct {
 	ChecksText    string // "" = omit section
 	CustomFocus   string // "" = omit section
 	OpenFindings  []FindingRef
+	AutoFix       bool // when true, the brief instructs the agent to fix + open a PR
 }
 
 // ComposeBrief builds the scanner agent's Markdown brief. Pure — unit-testable.
@@ -57,6 +58,15 @@ func ComposeBrief(in BriefInput) string {
 		}
 		b.WriteString("For each item above that still exists, add a short comment confirming it persists.\n")
 		b.WriteString("Only create NEW issues for findings NOT already listed.\n")
+	}
+	if in.AutoFix {
+		b.WriteString("\n## Fixing (this scan has auto-fix enabled)\n")
+		b.WriteString("For findings you can fix SAFELY and with high confidence:\n")
+		b.WriteString("- make the change, commit to a new branch, and open a PR with `gh pr create`\n")
+		b.WriteString("- put `Closes <the identifier of the issue you are working on>` in the PR body\n")
+		b.WriteString("- report the PR URL in your task output\n")
+		b.WriteString("For anything risky, ambiguous, or large: do NOT fix — file an issue instead (as below).\n")
+		b.WriteString("If you lack git push / GitHub access here, skip fixing and only file issues.\n")
 	}
 	b.WriteString("\n## How to report\n")
 	b.WriteString("For each NEW finding, create an issue via the `multica` CLI:\n")
