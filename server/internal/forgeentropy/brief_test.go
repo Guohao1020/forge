@@ -54,6 +54,7 @@ func TestComposeBrief_AutoFixOn(t *testing.T) {
 		"Fixing (this scan has auto-fix enabled)",
 		"gh pr create",
 		"Closes",
+		"report the PR URL",
 		"only file issues",
 	} {
 		if !strings.Contains(out, want) {
