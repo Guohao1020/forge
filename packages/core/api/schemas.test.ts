@@ -4,7 +4,9 @@ import {
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
   DuplicateIssueErrorBodySchema,
+  EMPTY_FORGE_HEALTH,
   EMPTY_USER,
+  ForgeHealthSchema,
   ListIssuesResponseSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
@@ -268,5 +270,44 @@ describe("dashboard + runtime usage schema drift", () => {
       { date: "2026-05-19", region: "us-east" },
     ]);
     expect((parsed[0] as Record<string, unknown>).region).toBe("us-east");
+  });
+});
+
+// Forge F5: the Harness-health endpoint drives the observability dashboard.
+// Every numeric field feeds a KPI / chart, so a malformed body must degrade
+// to the explicit EMPTY_FORGE_HEALTH fallback rather than throwing into the
+// UI, and a future server-added field must pass through untouched (.loose()).
+describe("Forge F5 health schemas", () => {
+  it("parses a valid health response", () => {
+    const valid = {
+      standards: [{ category: "style", count: 2 }],
+      standards_total: 2, checks: 1, review_configs: 1, scans: 1,
+      gate: { passed: 3, failed: 1 },
+      review: { total: 2, completed: 1, avg_turnaround_sec: 120 },
+      open_findings: 0, scan_runs: 4,
+      fix_prs: { opened: 1, merged: 0, matched: 0 },
+    };
+    expect(
+      parseWithFallback(valid, ForgeHealthSchema, EMPTY_FORGE_HEALTH, { endpoint: "test" }),
+    ).toEqual(valid);
+  });
+
+  it("falls back to EMPTY on a malformed health response", () => {
+    const malformed = { standards: "not-an-array", checks: "nope" };
+    expect(
+      parseWithFallback(malformed, ForgeHealthSchema, EMPTY_FORGE_HEALTH, { endpoint: "test" }),
+    ).toEqual(EMPTY_FORGE_HEALTH);
+  });
+
+  it("tolerates unknown server-added fields (loose)", () => {
+    const withExtra = {
+      standards: [], standards_total: 0, checks: 0, review_configs: 0, scans: 0,
+      gate: { passed: 0, failed: 0 },
+      review: { total: 0, completed: 0, avg_turnaround_sec: 0 },
+      open_findings: 0, scan_runs: 0, fix_prs: { opened: 0, merged: 0, matched: 0 },
+      future_field: "ignored",
+    };
+    const parsed = parseWithFallback(withExtra, ForgeHealthSchema, EMPTY_FORGE_HEALTH, { endpoint: "test" });
+    expect(parsed.checks).toBe(0); // parsed successfully, not the fallback-by-error
   });
 });

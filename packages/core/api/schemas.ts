@@ -880,17 +880,17 @@ export const EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE: CreateBillingPortalSe
 
 // Forge F5: Harness health
 export const ForgeHealthSchema = z.object({
-  standards: z.array(z.object({ category: z.string(), count: z.number() })),
+  standards: z.array(z.object({ category: z.string(), count: z.number() }).loose()),
   standards_total: z.number(),
   checks: z.number(),
   review_configs: z.number(),
   scans: z.number(),
-  gate: z.object({ passed: z.number(), failed: z.number() }),
-  review: z.object({ total: z.number(), completed: z.number(), avg_turnaround_sec: z.number() }),
+  gate: z.object({ passed: z.number(), failed: z.number() }).loose(),
+  review: z.object({ total: z.number(), completed: z.number(), avg_turnaround_sec: z.number() }).loose(),
   open_findings: z.number(),
   scan_runs: z.number(),
-  fix_prs: z.object({ opened: z.number(), merged: z.number(), matched: z.number() }),
-});
+  fix_prs: z.object({ opened: z.number(), merged: z.number(), matched: z.number() }).loose(),
+}).loose();
 export const EMPTY_FORGE_HEALTH = {
   standards: [], standards_total: 0, checks: 0, review_configs: 0, scans: 0,
   gate: { passed: 0, failed: 0 },
@@ -903,17 +903,17 @@ const ForgeTrendPointSchema = z.object({
   passed: z.number().optional(),
   failed: z.number().optional(),
   count: z.number().optional(),
-});
+}).loose();
 export const ForgeHealthTrendsSchema = z.object({
   findings: z.array(ForgeTrendPointSchema),
   gate: z.array(ForgeTrendPointSchema),
   fix_prs: z.array(ForgeTrendPointSchema),
-});
+}).loose();
 export const EMPTY_FORGE_TRENDS = { findings: [], gate: [], fix_prs: [] };
 
 export const ForgeIssueRefListSchema = z.array(
-  z.object({ issue_id: z.string(), number: z.number(), title: z.string() }),
+  z.object({ issue_id: z.string(), number: z.number(), title: z.string() }).loose(),
 );
 export const ForgeFixPRRefListSchema = z.array(
-  z.object({ issue_id: z.string(), number: z.number(), title: z.string(), pr_url: z.string() }),
+  z.object({ issue_id: z.string(), number: z.number(), title: z.string(), pr_url: z.string() }).loose(),
 );
