@@ -20,6 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/forge"
+	"github.com/multica-ai/multica/server/internal/forgereview"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -1334,6 +1335,13 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+
+	// Forge F3: a review task reuses the coder's workdir (stored on the review
+	// task row) so the reviewer can `git diff` the changes. The per-(agent,issue)
+	// resume lookup above won't find it (reviewer != coder), so override here.
+	if forgereview.IsReviewTask(task.Context) && task.WorkDir.Valid {
+		resp.PriorWorkDir = task.WorkDir.String
 	}
 
 	// Chat task: populate workspace/session info from the chat_session table.
