@@ -21,7 +21,7 @@ type Querier interface {
 // scope and composes the brief. Best-effort: any resolve/query error degrades
 // that section to empty — never blocks dispatch.
 func ResolveBrief(ctx context.Context, q Querier, scan db.ForgeEntropyScan) string {
-	in := BriefInput{ScanName: scan.Name, CustomFocus: scan.CustomFocus}
+	in := BriefInput{ScanName: scan.Name, CustomFocus: scan.CustomFocus, AutoFix: scan.AutoFix}
 
 	if scan.IncludeStandards {
 		if res, err := standards.Resolve(ctx, q, scan.WorkspaceID, scan.ProjectID); err == nil {
