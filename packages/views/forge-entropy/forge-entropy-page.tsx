@@ -24,6 +24,7 @@ const EMPTY: ForgeEntropyScanInput = {
   cron_expression: "0 9 * * 1",
   timezone: "UTC",
   enabled: true,
+  auto_fix: false,
 };
 
 export function ForgeEntropyPage() {
@@ -55,6 +56,7 @@ export function ForgeEntropyPage() {
       cron_expression: s.cron_expression,
       timezone: s.timezone,
       enabled: s.enabled,
+      auto_fix: s.auto_fix,
     });
     setError("");
   };
@@ -224,6 +226,16 @@ export function ForgeEntropyPage() {
                 }
               />
               Include verification checks (F2) in the brief
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.auto_fix}
+                onChange={(e) =>
+                  setForm({ ...form, auto_fix: e.target.checked })
+                }
+              />
+              Let the agent fix what it safely can and open a PR
             </label>
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">

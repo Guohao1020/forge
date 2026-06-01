@@ -11,6 +11,7 @@ export interface ForgeEntropyScan {
   cron_expression: string;
   timezone: string;
   enabled: boolean;
+  auto_fix: boolean;
   autopilot_id?: string;
 }
 
@@ -24,4 +25,5 @@ export interface ForgeEntropyScanInput {
   cron_expression: string;
   timezone: string;
   enabled: boolean;
+  auto_fix: boolean;
 }
