@@ -1,4 +1,4 @@
-package forge
+package checks
 
 import (
 	"context"

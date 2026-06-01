@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// ForgeCheck mirrors the server's forge.Check (name + shell command).
+// ForgeCheck mirrors the server's checks.Check (name + shell command).
 type ForgeCheck struct {
 	Name    string `json:"name"`
 	Command string `json:"command"`
