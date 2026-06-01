@@ -654,6 +654,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/", h.DeleteForgeCheck)
 				})
 			})
+			// Forge F3: AI review config (reviewer agent per scope).
+			r.Route("/api/forge/review-config", func(r chi.Router) {
+				r.Get("/", h.GetForgeReviewConfig)
+				r.Put("/", h.PutForgeReviewConfig)
+			})
 
 			// Dashboard — workspace-wide token + run-time rollups for the
 			// "/{slug}/dashboard" page. Optional ?project_id filter scopes
