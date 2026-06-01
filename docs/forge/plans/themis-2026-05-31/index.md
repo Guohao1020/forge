@@ -29,12 +29,18 @@ workspace→project 两级 · 项目画像驱动过滤。
 
 | Phase | 名称 | Depends-on | 状态 | 文件 |
 |-------|------|-----------|------|------|
-| 0 | Build env + 数据层（迁移 + sqlc） | — | ☐ | [phase-0-data-layer.md](phase-0-data-layer.md) |
-| 1 | 解析逻辑（forge/standards，TDD） | Phase 0 | ☐ | [phase-1-resolve.md](phase-1-resolve.md) |
-| 2 | 双层注入钩子（InjectStandards + claim hook） | Phase 1 | ☐ | [phase-2-inject.md](phase-2-inject.md) |
-| 3 | API（CRUD + project profile） | Phase 0 | ☐ | [phase-3-api.md](phase-3-api.md) |
-| 4 | UI（forge-standards views + web 路由） | Phase 3 | ☐ | [phase-4-ui.md](phase-4-ui.md) |
-| 5 | 验收 + 种子 + 文档 | Phase 2, 4 | ☐ | [phase-5-verify.md](phase-5-verify.md) |
+| 0 | Build env + 数据层（迁移 + sqlc） | — | ✅ 完成 | [phase-0-data-layer.md](phase-0-data-layer.md) |
+| 1 | 解析逻辑（forge/standards，TDD） | Phase 0 | ✅ 完成（4 单测绿） | [phase-1-resolve.md](phase-1-resolve.md) |
+| 2 | 双层注入钩子（InjectStandards + claim hook） | Phase 1 | ✅ 完成（2 单测绿 + e2e 证明） | [phase-2-inject.md](phase-2-inject.md) |
+| 3 | API（CRUD + project profile） | Phase 0 | ✅ 完成（源码构建服务器往返） | [phase-3-api.md](phase-3-api.md) |
+| 4 | UI（forge-standards views + web 路由） | Phase 3 | ☐ 待做（需 pnpm install） | [phase-4-ui.md](phase-4-ui.md) |
+| 5 | 验收 + 种子 + 文档 | Phase 2, 4 | ◑ 后端 e2e 已验；UI 验收待 P4 | [phase-5-verify.md](phase-5-verify.md) |
+
+> **后端 F1 端到端验证通过（2026-06-01）。** 源码构建 backend → daemon 认领 →
+> `forge.InjectStandards` 触发 → 解析 standard → 写入 agent execenv 的
+> `.claude/skills/forge-standards/SKILL.md`（内容为解析后的 standard）。迁移 111 经 migrate
+> 工具在全新 DB 按序应用；`/api/forge/standards` 在源码构建服务器往返成功。
+> **剩 Phase 4 UI**（前端列表/双栏编辑/profile，需 pnpm install）。
 
 ## 关键前置：构建/测试环境
 
