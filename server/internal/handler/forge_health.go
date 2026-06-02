@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"github.com/multica-ai/multica/server/internal/forgehealth"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -42,6 +43,9 @@ type ForgeHealthResponse struct {
 	OpenFindings   int32                      `json:"open_findings"`
 	ScanRuns       int32                      `json:"scan_runs"`
 	FixPRs         ForgeHealthFixPRs          `json:"fix_prs"`
+	Score          int                        `json:"score"`
+	Status         string                     `json:"status"`
+	NoActivity     bool                       `json:"no_activity"`
 }
 
 func (h *Handler) GetForgeHealth(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +85,15 @@ func (h *Handler) GetForgeHealth(w http.ResponseWriter, r *http.Request) {
 	if fp, err := h.Queries.GetForgeFixPROutcomes(ctx, db.GetForgeFixPROutcomesParams{WorkspaceID: ws, ProjectID: projectID, Since: since}); err == nil {
 		out.FixPRs = ForgeHealthFixPRs{Opened: fp.Opened, Merged: fp.Merged, Matched: fp.Matched}
 	}
+
+	sr := forgehealth.Score(forgehealth.ScoreInput{
+		StandardsTotal: out.StandardsTotal, Checks: out.Checks,
+		ReviewConfigs: out.ReviewConfigs, Scans: out.Scans,
+		GatePassed: out.Gate.Passed, GateFailed: out.Gate.Failed,
+		ReviewTotal: out.Review.Total, ReviewCompleted: out.Review.Completed,
+		OpenFindings: out.OpenFindings, FixPRsOpened: out.FixPRs.Opened,
+	})
+	out.Score, out.Status, out.NoActivity = sr.Score, sr.Status, sr.NoActivity
 
 	writeJSON(w, http.StatusOK, out)
 }
