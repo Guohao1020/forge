@@ -890,12 +890,16 @@ export const ForgeHealthSchema = z.object({
   open_findings: z.number(),
   scan_runs: z.number(),
   fix_prs: z.object({ opened: z.number(), merged: z.number(), matched: z.number() }).loose(),
+  score: z.number(),
+  status: z.string(),
+  no_activity: z.boolean(),
 }).loose();
 export const EMPTY_FORGE_HEALTH = {
   standards: [], standards_total: 0, checks: 0, review_configs: 0, scans: 0,
   gate: { passed: 0, failed: 0 },
   review: { total: 0, completed: 0, avg_turnaround_sec: 0 },
   open_findings: 0, scan_runs: 0, fix_prs: { opened: 0, merged: 0, matched: 0 },
+  score: 0, status: "red", no_activity: true,
 };
 
 const ForgeTrendPointSchema = z.object({

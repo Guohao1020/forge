@@ -286,6 +286,7 @@ describe("Forge F5 health schemas", () => {
       review: { total: 2, completed: 1, avg_turnaround_sec: 120 },
       open_findings: 0, scan_runs: 4,
       fix_prs: { opened: 1, merged: 0, matched: 0 },
+      score: 80, status: "green", no_activity: false,
     };
     expect(
       parseWithFallback(valid, ForgeHealthSchema, EMPTY_FORGE_HEALTH, { endpoint: "test" }),

@@ -12,6 +12,9 @@ export interface ForgeHealth {
   open_findings: number;
   scan_runs: number;
   fix_prs: { opened: number; merged: number; matched: number };
+  score: number;
+  status: string;
+  no_activity: boolean;
 }
 export interface ForgeTrendPoint { date: string; passed?: number; failed?: number; count?: number; }
 export interface ForgeHealthTrends { findings: ForgeTrendPoint[]; gate: ForgeTrendPoint[]; fix_prs: ForgeTrendPoint[]; }
