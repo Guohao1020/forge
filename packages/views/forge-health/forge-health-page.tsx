@@ -22,6 +22,12 @@ function rate(num: number, den: number): string {
   return `${Math.round((num / den) * 100)}%`;
 }
 
+const statusDot: Record<string, string> = {
+  green: "bg-green-500",
+  yellow: "bg-amber-500",
+  red: "bg-red-500",
+};
+
 function MetricCard({
   label, value, sub, active, onClick,
 }: { label: string; value: string; sub?: string; active?: boolean; onClick?: () => void }) {
@@ -106,11 +112,20 @@ export function ForgeHealthPage() {
 
   return (
     <div className="flex flex-1 min-h-0 flex-col gap-6 overflow-y-auto p-6">
-      <div>
-        <h1 className="text-lg font-semibold">Harness health</h1>
-        <p className="text-xs text-muted-foreground">
-          What the Forge Harness is doing across this workspace (last 30 days for activity).
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-lg font-semibold">Harness health</h1>
+          <p className="text-xs text-muted-foreground">
+            What the Forge Harness is doing across this workspace (last 30 days for activity).
+          </p>
+        </div>
+        <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+          <span className={`size-2.5 shrink-0 rounded-full ${statusDot[h.status] ?? "bg-muted"}`} />
+          <span className="text-2xl font-semibold tabular-nums">{h.score}</span>
+          <span className="text-xs text-muted-foreground">
+            /100{h.no_activity ? " · configured, no activity yet" : ""}
+          </span>
+        </div>
       </div>
 
       <section>
