@@ -24,15 +24,15 @@
 
 | Phase | 名称 | Depends-on | 状态 | 文件 |
 |-------|------|-----------|------|------|
-| 0 | 后端 Score 纯函数(TDD)+ handler 接线 + 响应字段 | — | ☐ | [phase-0-score.md](phase-0-score.md) |
-| 1 | 前端 types/zod/badge | Phase 0 | ☐ | [phase-1-frontend.md](phase-1-frontend.md) |
-| 2 | 验收 + 文档 | Phase 0, 1 | ☐ | [phase-2-verify.md](phase-2-verify.md) |
+| 0 | 后端 Score 纯函数(TDD)+ handler 接线 + 响应字段 | — | ✅ | [phase-0-score.md](phase-0-score.md) |
+| 1 | 前端 types/zod/badge | Phase 0 | ✅ | [phase-1-frontend.md](phase-1-frontend.md) |
+| 2 | 验收 + 文档 | Phase 0, 1 | ✅ | [phase-2-verify.md](phase-2-verify.md) |
 
 ## 完成门禁（DoD）
-- [ ] `forgehealth.Score` 纯函数 + 表驱动单测(全配满质量→100绿 / 配了没跑→纯覆盖+no_activity / 门禁全挂→40红 / 零配置→0红 / live→80绿)
-- [ ] `GetForgeHealth` 响应加 `score`/`status`/`no_activity`,`go build`+vet 绿
-- [ ] 前端 types/zod/EMPTY 加三字段 + 顶部健康分 badge,三包 typecheck 绿
-- [ ] **绕凭证集成**:源码构建栈 `GET /api/forge/health` 返回 `score`/`status` 与 DB 实际计数手算一致(当前真实数据 → score≈80 green)
+- [x] `forgehealth.Score` 纯函数 + 7 个表驱动单测(全配满质量→100绿 / 配了没跑→纯覆盖+no_activity / 门禁全挂→40红 / 零配置→0红 / live→80绿 / 半半→50黄 / entropy 比率→70黄)
+- [x] `GetForgeHealth` 响应加 `score`/`status`/`no_activity`,`go build`+vet 绿
+- [x] 前端 types/zod/EMPTY 加三字段(+ 修 F5 schema 测 fixture)+ 顶部健康分 badge,三包 typecheck + core 416 单测绿
+- [x] **绕凭证集成(源码构建栈实测)**:`GET /api/forge/health` → **SCORE=80 STATUS=green NO_ACTIVITY=False**,与真实计数手算一致(coverage=1.0、gatePass=1.0、reviewDone=0.0、entropy=1.0、mean=0.667 → 80);`SCORE_VALID=True`。纯函数 live 用例与真端点吻合
 
 ## 后续
 阈值告警 / 历史分数趋势 / 可配置权重。
