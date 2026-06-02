@@ -13,6 +13,7 @@ import type {
   CreateAgentFromTemplateResponse,
   CreateBillingCheckoutSessionResponse,
   CreateBillingPortalSessionResponse,
+  ForgeHealth,
   GroupedIssuesResponse,
   ListIssuesResponse,
   ListWebhookDeliveriesResponse,
@@ -894,7 +895,7 @@ export const ForgeHealthSchema = z.object({
   status: z.string(),
   no_activity: z.boolean(),
 }).loose();
-export const EMPTY_FORGE_HEALTH = {
+export const EMPTY_FORGE_HEALTH: ForgeHealth = {
   standards: [], standards_total: 0, checks: 0, review_configs: 0, scans: 0,
   gate: { passed: 0, failed: 0 },
   review: { total: 0, completed: 0, avg_turnaround_sec: 0 },

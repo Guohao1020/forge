@@ -302,13 +302,18 @@ describe("Forge F5 health schemas", () => {
 
   it("tolerates unknown server-added fields (loose)", () => {
     const withExtra = {
-      standards: [], standards_total: 0, checks: 0, review_configs: 0, scans: 0,
+      standards: [], standards_total: 0, checks: 7, review_configs: 0, scans: 0,
       gate: { passed: 0, failed: 0 },
       review: { total: 0, completed: 0, avg_turnaround_sec: 0 },
       open_findings: 0, scan_runs: 0, fix_prs: { opened: 0, merged: 0, matched: 0 },
+      score: 55, status: "yellow", no_activity: false,
       future_field: "ignored",
     };
     const parsed = parseWithFallback(withExtra, ForgeHealthSchema, EMPTY_FORGE_HEALTH, { endpoint: "test" });
-    expect(parsed.checks).toBe(0); // parsed successfully, not the fallback-by-error
+    // A fully-valid body + an unknown future field parses successfully (loose),
+    // NOT the fallback. checks=7 / status="yellow" differ from EMPTY_FORGE_HEALTH
+    // (0 / "red"), so these assertions prove the parse succeeded, not the fallback.
+    expect(parsed.checks).toBe(7);
+    expect(parsed.status).toBe("yellow");
   });
 });
