@@ -17,6 +17,8 @@ func TestScore(t *testing.T) {
 		{"nothing", ScoreInput{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, "red", true},
 		{"live data", ScoreInput{1, 1, 1, 1, 1, 0, 1, 0, 0, 1}, 80, "green", false},
 		{"half configured, half quality", ScoreInput{1, 1, 0, 0, 1, 1, 0, 0, 0, 0}, 50, "yellow", false},
+		// entropyControl ratio path: open>0 → fixPRs/(open+fixPRs)=1/2=0.5; coverage=1.0; score=100*(0.4+0.6*0.5)=70.
+		{"entropy ratio path", ScoreInput{1, 1, 1, 1, 0, 0, 0, 0, 1, 1}, 70, "yellow", false},
 	}
 	for _, c := range cases {
 		got := Score(c.in)
