@@ -85,13 +85,11 @@ func (h *Handler) CreateForgeStandard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and category are required")
 		return
 	}
-	var projID pgtype.UUID
-	if req.ProjectID != "" {
-		p, valid := parseUUIDOrBadRequest(w, req.ProjectID, "project_id")
-		if !valid {
-			return
-		}
-		projID = p
+	// parseAutopilotProjectID validates the project belongs to this workspace
+	// (empty project_id → workspace-level, returns the zero UUID).
+	projID, ok := h.parseAutopilotProjectID(w, r, &req.ProjectID, parseUUID(wsID))
+	if !ok {
+		return
 	}
 	enabled := true
 	if req.Enabled != nil {
@@ -190,8 +188,19 @@ type ForgeProfileBody struct {
 }
 
 func (h *Handler) GetForgeProjectProfile(w http.ResponseWriter, r *http.Request) {
+	wsID := h.resolveWorkspaceID(r)
+	if wsID == "" {
+		writeError(w, http.StatusBadRequest, "workspace_id is required")
+		return
+	}
 	projID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "project id")
 	if !ok {
+		return
+	}
+	// Forge security: the project must belong to this workspace — otherwise a
+	// caller could read another workspace's project profile.
+	if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: projID, WorkspaceID: parseUUID(wsID)}); err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
 	prof, err := h.Queries.GetForgeProjectProfile(r.Context(), projID)
@@ -203,8 +212,19 @@ func (h *Handler) GetForgeProjectProfile(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) PutForgeProjectProfile(w http.ResponseWriter, r *http.Request) {
+	wsID := h.resolveWorkspaceID(r)
+	if wsID == "" {
+		writeError(w, http.StatusBadRequest, "workspace_id is required")
+		return
+	}
 	projID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "project id")
 	if !ok {
+		return
+	}
+	// Forge security: the project must belong to this workspace — otherwise a
+	// caller could write another workspace's project profile.
+	if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: projID, WorkspaceID: parseUUID(wsID)}); err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
 	var req ForgeProfileBody

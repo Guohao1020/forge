@@ -75,13 +75,11 @@ func (h *Handler) CreateForgeCheck(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and command are required")
 		return
 	}
-	var projID pgtype.UUID
-	if req.ProjectID != "" {
-		p, valid := parseUUIDOrBadRequest(w, req.ProjectID, "project_id")
-		if !valid {
-			return
-		}
-		projID = p
+	// parseAutopilotProjectID validates the project belongs to this workspace
+	// (empty project_id → workspace-level, returns the zero UUID).
+	projID, ok := h.parseAutopilotProjectID(w, r, &req.ProjectID, parseUUID(wsID))
+	if !ok {
+		return
 	}
 	enabled := true
 	if req.Enabled != nil {

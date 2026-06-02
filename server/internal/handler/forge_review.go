@@ -64,8 +64,14 @@ func (h *Handler) PutForgeReviewConfig(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Forge security: the reviewer agent must belong to this workspace —
+	// otherwise a caller could pin a foreign agent as their reviewer.
+	if !h.validateAutopilotAssignee(w, r, "agent", reviewerID, parseUUID(wsID)) {
+		return
+	}
 	if req.ProjectID != "" {
-		projID, ok := parseUUIDOrBadRequest(w, req.ProjectID, "project_id")
+		// parseAutopilotProjectID also validates the project belongs to this workspace.
+		projID, ok := h.parseAutopilotProjectID(w, r, &req.ProjectID, parseUUID(wsID))
 		if !ok {
 			return
 		}
