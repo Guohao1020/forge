@@ -13,6 +13,9 @@
   —— 当前方向的设计 spec：以 Multica 为底座的 F0 基座切片。
 - **[plans/atlas-2026-05-30/](plans/atlas-2026-05-30/index.md)** —— F0 实施计划（6 phase）。
 - **[references/coding-standards.md](references/coding-standards.md)** —— 编码规范（F1 规范中心的种子）。
+- **[references/2026-06-03-live-execution-runbook.md](references/2026-06-03-live-execution-runbook.md)**
+  —— 活体执行 Runbook：真实 provider 凭证接入（路由器 / Claude / Codex）+ 真实 gate→review 闭环搭法 +
+  关键坑根因修复（stale daemon、OAuth 遮蔽、Codex Windows elevated UAC）。
 - **PRD.md / product-design.md / DESIGN.md** —— 产品需求与设计（多数仍适用，但需按 Multica 底座复核）。
 - **harness-data-flow.mmd / architecture.mmd** —— Harness 概念图（部分概念沿用，技术栈以 Multica 为准）。
 
