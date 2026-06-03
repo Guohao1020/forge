@@ -128,7 +128,41 @@ key 走 `custom_env` 的 `ROUTER_API_KEY`，`agent.model = gpt-5.5`。
    覆盖掉 daemon 的沙箱块，不再拉 elevated 助手，免弹框。权衡：Forge 的 codex 任务变无沙箱
    （用户级全权，仍低于点"允许"授予的管理员级；且只在隔离克隆里跑、brief 有界）。
 
-## 6. 复现清单（关键坐标）
+## 6. F4 熵扫描 + F4b 自愈活体（含一个真 bug，已修）
+
+把 F4 / F4b 在 Codex + 真实克隆上真跑了一遍，踩出 4 个集成问题：
+
+### F4 熵扫描（advisory）
+- **触发**：把熵 autopilot 的 `autopilot_trigger.next_run_at` 回拨到过去，server 调度器即真实
+  `DispatchAutopilot` → 合成 brief（`WHOLE-REPOSITORY` + `custom_focus`）→ 建 issue → scanner agent
+  真扫 → `multica issue create` 填发现。
+- **坑 A：issue 号计数器 desync**。Multica 用 `workspace.issue_counter`（`IncrementIssueCounter`）分配号，
+  不是 `MAX(number)+1`。手工 SQL 直插 issue（我用了 `MAX+1`）会把 `issue.number` 顶到计数器前面 →
+  autopilot 分配号时撞 `uq_issue_workspace_number`。修：`UPDATE workspace SET issue_counter = GREATEST(...)`。
+- **坑 B：autopilot 是 workspace 级（`project_id=NULL`）** → 建的 issue 不落进带 `local_directory` 的 project →
+  agent 拿到空 workdir、找不到文件（老实报 `blocked`）。修：给 autopilot + scan 绑 `project_id`。
+- 结果：CodexForge 真扫 `score.go`，填了 2 个 `[forge-entropy]` 发现 issue。
+
+### F4b 自愈（auto_fix → PR）
+- **搭法**：`local_directory` 是 in-place，所以给隔离克隆建了个 **throwaway 私有 GitHub 仓**当 origin
+  （`gh repo create` + 推 orphan 快照，绕开 shallow-clone 推送报错 `did not receive expected object`）；
+  agent 用本机 keyring 认证的 `gh` 开 PR。
+- **agent 侧全成**：CodexForge 真改 `score.go`（clamp）→ 建分支 → push → `gh pr create` → **真 PR** →
+  把 `pr_url`/`pr_number` 钉进 issue metadata；并自动触发 F2 `go vet` 门禁 + F3 评审
+  （证明「F4b 零新增 F2/F3 代码、复用触发」成立）。
+- **坑 C（真 bug，已修）：PR 桥读错源**。`MaybeRecordFixPR` 读任务完成结果 `result.pr_url`，但 agent 按
+  runtime 规范把 PR 钉到 **issue metadata**（`multica issue metadata set pr_url`）—— 两处不通，桥永不触发、
+  `forge_fix_pr` 不记录、F5 fix-PR 指标恒 0。**这个断层被早期「绕凭证」验证盖住了**（当时直接往
+  `/complete` 喂假 `pr_url`，绕过了 agent 的真实上报路径）。修：`result.pr_url` 为空时回退读
+  `issue.metadata.pr_url`（commit `c207e473`，含 `metadataPRURL` helper + `TestMetadataPRURL`）。
+  **这是活体测试相对纯绕凭证验证的核心价值——纯绕凭证会漏掉 agent↔平台的真实交互断层。**
+- **坑 D：server 容器也滞后 + 重建端口坑**。改 server 端代码（如 `MaybeRecordFixPR`）要重建 backend 容器：
+  `docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml -p forge-build up -d --build backend`。
+  backend 端口靠 `BACKEND_PORT=8081` 避开本机 `tagging-orchestration` 占的 `8080`；漏设会撞
+  `Bind 0.0.0.0:8080 ... already allocated`，且把 backend recreate 成 down。
+  **daemon 与 server 容器都需用当前源码重建，各自侧的新功能才真生效**（同坑 1 的 stale-daemon 教训）。
+
+## 7. 复现清单（关键坐标）
 
 - workspace `1379e8af-…`，owner `harvey@forge.local`（user `f6ae7312-…`）
 - daemon_id `019e798d-…`，runtimes：claude `1f8974e1-…` / codex `5ee21316-…` / openclaw `33702ac1-…`
