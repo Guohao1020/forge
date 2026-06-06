@@ -48,7 +48,9 @@ services:
       NACOS_AUTH_IDENTITY_KEY: ${NACOS_AUTH_IDENTITY_KEY:-nacos}
       NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:-nacos}
     ports:
-      - "127.0.0.1:${NACOS_PORT:-8848}:8848"
+      - "127.0.0.1:${NACOS_PORT:-8848}:8848"          # main server / REST API
+      - "127.0.0.1:${NACOS_CONSOLE_PORT:-8849}:8080"  # Web 控制台 UI (镜像内在 8080;宿主 8080 被占故映 8849)
+      - "127.0.0.1:9848:9848"                          # gRPC (SDK clients)
     volumes:
       - nacos_data:/home/nacos/data
     restart: unless-stopped
