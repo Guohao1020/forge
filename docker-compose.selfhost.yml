@@ -34,6 +34,25 @@ services:
       timeout: 5s
       retries: 5
 
+  # Nacos 3.x — AI Registry (MCP server 中心目录). dev: standalone, auth off.
+  # The three NACOS_AUTH_* are REQUIRED by Nacos 3.x even with auth disabled
+  # (measured in iris spike; see server/internal/nacos/REST.md). The token
+  # default below is a non-secret dev placeholder — override in production and
+  # enable auth there.
+  nacos:
+    image: nacos/nacos-server:v3.0.1
+    environment:
+      MODE: standalone
+      NACOS_AUTH_ENABLE: "false"
+      NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN:-ZGV2LW9ubHktY2hhbmdlLWluLXByb2QtbmFjb3MtYXV0aC10b2tlbi1rZXktMDEyMzQ1Njc4OQ==}
+      NACOS_AUTH_IDENTITY_KEY: ${NACOS_AUTH_IDENTITY_KEY:-nacos}
+      NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:-nacos}
+    ports:
+      - "127.0.0.1:${NACOS_PORT:-8848}:8848"
+    volumes:
+      - nacos_data:/home/nacos/data
+    restart: unless-stopped
+
   backend:
     image: ${MULTICA_BACKEND_IMAGE:-ghcr.io/multica-ai/multica-backend}:${MULTICA_IMAGE_TAG:-latest}
     depends_on:
@@ -104,3 +123,4 @@ services:
 volumes:
   pgdata:
   backend_uploads:
+  nacos_data:
