@@ -23,6 +23,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/handler"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/nacos"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
@@ -166,6 +167,24 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.PATCache = patCache
 	h.DaemonTokenCache = daemonTokenCache
 	h.MembershipCache = auth.NewMembershipCache(rdb)
+
+	// Forge iris (N1): Nacos AI Registry adapter backs the MCP server catalog
+	// (/api/mcp-registry/*) and the dispatch-time mcp_refs resolver. Wired only
+	// when NACOS_SERVER_ADDR is set; otherwise h.Nacos stays nil and both the
+	// catalog API (503) and the claim hook (keeps inline mcp_config) no-op
+	// gracefully. The adapter is wrapped in a CachedQuerier so a transient
+	// Nacos outage degrades to the last-known shape instead of failing dispatch.
+	if addr := os.Getenv("NACOS_SERVER_ADDR"); addr != "" {
+		idKey := os.Getenv("NACOS_AUTH_IDENTITY_KEY")
+		if idKey == "" {
+			idKey = "nacos"
+		}
+		idVal := os.Getenv("NACOS_AUTH_IDENTITY_VALUE")
+		if idVal == "" {
+			idVal = "nacos"
+		}
+		h.Nacos = nacos.NewCachedQuerier(nacos.NewClient(addr, idKey, idVal))
+	}
 
 	// Cloud PAT verifier: validates mcn_ tokens against Multica Cloud
 	// Fleet. Returns nil when no Fleet URL is configured — the Auth /
@@ -667,6 +686,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/", h.UpdateForgeEntropyScan)
 					r.Delete("/", h.DeleteForgeEntropyScan)
 				})
+			})
+
+			// Forge iris (N1): MCP server catalog backed by the Nacos AI
+			// Registry. Reads are workspace-member gated; register / lifecycle
+			// are owner/admin only (enforced in the handlers).
+			r.Route("/api/mcp-registry/servers", func(r chi.Router) {
+				r.Get("/", h.ListMCPCatalog)
+				r.Post("/", h.RegisterMCPCatalogServer)
+				r.Get("/{name}", h.GetMCPCatalogServer)
+				r.Put("/{name}/lifecycle", h.SetMCPCatalogLifecycle)
 			})
 
 			// Forge F5: Harness health observability.

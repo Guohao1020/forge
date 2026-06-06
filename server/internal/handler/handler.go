@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/nacos"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
@@ -112,7 +113,12 @@ type Handler struct {
 	WebhookRateLimiter    WebhookRateLimiter
 	WebhookIPRateLimiter  WebhookRateLimiter
 	CloudRuntime          cloudRuntimeProxy
-	cfg                   Config
+	// Nacos backs the Forge MCP server catalog (/api/mcp-registry/*) and the
+	// dispatch-time mcp_refs resolver. nil when NACOS_SERVER_ADDR is unset —
+	// the catalog API returns 503 and the claim hook leaves mcp_config as the
+	// agent's inline value, so deployments without Nacos are unaffected.
+	Nacos nacos.NacosQuerier
+	cfg   Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
