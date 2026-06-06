@@ -161,3 +161,4 @@ export type {
   ForgeIssueRef, ForgeFixPRRef,
 } from "./forge-health";
 export type { MCPServerShape, MCPRef, MCPServerList } from "./mcp-registry";
+export type { ProviderShape, ProviderModel, ProviderRef, ProviderList } from "./llm-provider";

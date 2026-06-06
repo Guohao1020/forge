@@ -16,6 +16,7 @@ import type {
   ForgeHealth,
   GroupedIssuesResponse,
   MCPServerList,
+  ProviderList,
   ListIssuesResponse,
   ListWebhookDeliveriesResponse,
   Squad,
@@ -927,6 +928,24 @@ export const MCPServerListSchema = z.object({
 }).loose();
 
 export const EMPTY_MCP_LIST: MCPServerList = { servers: [] };
+
+// Forge prometheus (N2): LLM provider catalog. Same drift rules as the MCP
+// catalog above — the shape crosses an external Nacos config center, so string
+// enums (protocol/lifecycle) stay `z.string()`, every object ends in `.loose()`,
+// and a bad list degrades to EMPTY_PROVIDER_LIST instead of throwing into the UI.
+export const ProviderShapeSchema = z.object({
+  name: z.string(),
+  namespace: z.string().optional(),
+  version: z.string(),
+  protocol: z.string(),
+  base_url: z.string(),
+  auth_key: z.string(),
+  wire_api: z.string().optional(),
+  models: z.array(z.object({ id: z.string(), label: z.string().optional(), default: z.boolean().optional() }).loose()).optional(),
+  lifecycle: z.string(),
+}).loose();
+export const ProviderListSchema = z.object({ providers: z.array(ProviderShapeSchema) }).loose();
+export const EMPTY_PROVIDER_LIST: ProviderList = { providers: [] };
 
 const ForgeTrendPointSchema = z.object({
   date: z.string(),
