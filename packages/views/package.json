@@ -30,6 +30,7 @@
     "./forge-entropy": "./forge-entropy/index.ts",
     "./forge-health": "./forge-health/index.ts",
     "./mcp-catalog": "./mcp-catalog/index.ts",
+    "./llm-providers": "./llm-providers/index.ts",
     "./agents": "./agents/index.ts",
     "./members": "./members/index.ts",
     "./inbox": "./inbox/index.ts",
