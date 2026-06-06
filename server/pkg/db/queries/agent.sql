@@ -17,11 +17,18 @@ SELECT * FROM agent
 WHERE id = $1 AND workspace_id = $2;
 
 -- name: CreateAgent :one
+-- mcp_refs is COALESCE-defaulted to '[]' so existing CreateAgent callers that
+-- don't set the new field still satisfy the NOT NULL column; callers that do
+-- pass refs (agent created pre-wired to catalog servers) get them honored.
 INSERT INTO agent (
     workspace_id, name, description, avatar_url, runtime_mode,
     runtime_config, runtime_id, visibility, max_concurrent_tasks, owner_id,
-    instructions, custom_env, custom_args, mcp_config, model, thinking_level
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+    instructions, custom_env, custom_args, mcp_config, model, thinking_level,
+    mcp_refs
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+    COALESCE(sqlc.narg('mcp_refs')::jsonb, '[]'::jsonb)
+)
 RETURNING *;
 
 -- name: UpdateAgent :one
@@ -39,6 +46,7 @@ UPDATE agent SET
     custom_env = COALESCE(sqlc.narg('custom_env'), custom_env),
     custom_args = COALESCE(sqlc.narg('custom_args'), custom_args),
     mcp_config = COALESCE(sqlc.narg('mcp_config'), mcp_config),
+    mcp_refs = COALESCE(sqlc.narg('mcp_refs'), mcp_refs),
     model = COALESCE(sqlc.narg('model'), model),
     thinking_level = COALESCE(sqlc.narg('thinking_level'), thinking_level),
     updated_at = now()
