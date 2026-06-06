@@ -1,7 +1,13 @@
 # Nacos 3.x AI Registry — 实测 REST 接口(iris spike,2026-06-06)
 
-实测自 `nacos/nacos-server:v3.0.1` standalone(throwaway `nacos-spike`,临时端口 18848)。
+最初实测自 `nacos/nacos-server:v3.0.1` standalone(throwaway,临时端口 18848);
+随后把 compose 栈固定到 **`v3.2.2`**(与用户官网一键安装版本一致,自带 Web 控制台),
+适配集成测试(`TestClientRoundTrip`,register→get→list)对 **v3.2.2 同样通过** ——
+本节记录的 AI Registry MCP API 在 3.0.1→3.2.2 间稳定。
 适配实现(`client.go`)照本文件填具体 path/payload。
+
+> 端口(compose,见 `docker-compose.selfhost.yml`):宿主 `8848`=REST API/主服务,
+> `8849`→镜像内 `8080`=Web 控制台 UI(宿主 8080 被占故映 8849),`9848`=gRPC(SDK)。
 
 ## 启动必需 env(Nacos 3.x 强制,即使关 auth)
 
