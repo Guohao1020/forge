@@ -125,6 +125,18 @@ func (h *Handler) RegisterLLMProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "provider name, version and protocol are required")
 		return
 	}
+	// Reject a protocol no mapper can translate — it would register fine but
+	// never bind to an agent (the resolver skips it), a silent dead end.
+	if !providerresolve.KnownProtocol(req.Provider.Protocol) {
+		writeError(w, http.StatusBadRequest, "unknown protocol")
+		return
+	}
+	// Default the lifecycle so an API caller that omits it doesn't persist a
+	// provider with lifecycle "" — which the resolver + picker both treat as
+	// not-published, making it invisibly un-bindable.
+	if req.Provider.Lifecycle == "" {
+		req.Provider.Lifecycle = "published"
+	}
 	if err := h.Providers.RegisterProvider(r.Context(), ns, req.Provider); err != nil {
 		writeError(w, http.StatusBadGateway, "nacos unavailable")
 		return

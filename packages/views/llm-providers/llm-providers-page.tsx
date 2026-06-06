@@ -69,7 +69,14 @@ export function LlmProvidersPage() {
   const [error, setError] = useState("");
 
   const invalidate = () =>
-    qc.invalidateQueries({ queryKey: workspaceKeys.llmProviders(wsId) });
+    Promise.all([
+      qc.invalidateQueries({ queryKey: workspaceKeys.llmProviders(wsId) }),
+      // The agent model-picker reads each bound provider under its own
+      // ["llm-providers", ns, name, ref] key (model-picker.tsx) — invalidate
+      // that tree too so editing a provider's models[] here doesn't leave the
+      // inspector showing a stale catalog until its staleTime lapses.
+      qc.invalidateQueries({ queryKey: ["llm-providers"] }),
+    ]);
 
   const sorted = useMemo(
     () =>
@@ -112,7 +119,7 @@ export function LlmProvidersPage() {
   const toggleLifecycle = async (p: ProviderShape) => {
     const next = p.lifecycle === "published" ? "offline" : "published";
     try {
-      await api.setProviderLifecycle(p.name, p.version, next);
+      await api.setProviderLifecycle(p.name, p.version, next, p.namespace);
       await invalidate();
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed to update lifecycle");

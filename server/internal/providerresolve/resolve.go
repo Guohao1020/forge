@@ -73,6 +73,15 @@ func Resolve(ctx context.Context, q nacos.ProviderQuerier, in Input) (Result, []
 	return Result{Env: env, Args: args, Model: model}, warns, nil
 }
 
+// KnownProtocol reports whether a mapper is registered for the protocol. The
+// API uses it to reject providers whose protocol no mapper can translate — such
+// a provider would register fine but could never be bound to an agent (the
+// dispatch resolver skips it with a warning), a silent dead end.
+func KnownProtocol(protocol string) bool {
+	_, ok := mappers[protocol]
+	return ok
+}
+
 func defaultModel(s nacos.ProviderShape) string {
 	for _, mm := range s.Models {
 		if mm.Default {

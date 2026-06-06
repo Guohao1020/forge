@@ -173,6 +173,59 @@ func TestLLMProviders_RegisterRejectsMissingFields(t *testing.T) {
 	}
 }
 
+func TestLLMProviders_RegisterDefaultsLifecycle(t *testing.T) {
+	fake := &fakeProviderCatalog{}
+	withFakeProviders(t, fake)
+	// owner registers WITHOUT lifecycle → server defaults it to "published" so
+	// the provider is bindable (empty lifecycle would be silently un-bindable).
+	body := map[string]any{"provider": map[string]any{
+		"name": "router", "version": "1", "protocol": "anthropic",
+		"base_url": "https://catalog", "auth_key": "ROUTER_API_KEY",
+	}}
+	w := httptest.NewRecorder()
+	testHandler.RegisterLLMProvider(w, newRequestAsUser(testUserID, "POST", "/api/llm-providers", body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("register without lifecycle: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := fake.items[pk(testWorkspaceID, "router")].Lifecycle; got != "published" {
+		t.Fatalf("lifecycle defaulted to %q, want published", got)
+	}
+}
+
+func TestLLMProviders_RegisterRejectsUnknownProtocol(t *testing.T) {
+	withFakeProviders(t, &fakeProviderCatalog{})
+	body := map[string]any{"provider": map[string]any{
+		"name": "router", "version": "1", "protocol": "bedrock",
+		"base_url": "https://catalog", "auth_key": "K",
+	}}
+	w := httptest.NewRecorder()
+	testHandler.RegisterLLMProvider(w, newRequestAsUser(testUserID, "POST", "/api/llm-providers", body))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("register unknown protocol: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestLLMProviders_LifecycleSharedNamespace(t *testing.T) {
+	fake := &fakeProviderCatalog{items: map[string]nacos.ProviderShape{
+		pk(sharedMCPNamespace, "router"): publishedProvider("router"),
+	}}
+	withFakeProviders(t, fake)
+	// owner flips a SHARED-namespace provider offline via ?namespace=shared —
+	// the path the catalog UI must use for shared providers (the toggle passes
+	// p.namespace, otherwise the server defaults ns to the workspace and 404s).
+	req := newRequestAsUser(testUserID, "PUT", "/api/llm-providers/router/lifecycle?namespace="+sharedMCPNamespace,
+		map[string]any{"version": "1", "lifecycle": "offline"})
+	req = withURLParam(req, "name", "router")
+	w := httptest.NewRecorder()
+	testHandler.SetLLMProviderLifecycle(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("shared-ns lifecycle: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := fake.items[pk(sharedMCPNamespace, "router")].Lifecycle; got != "offline" {
+		t.Fatalf("shared provider lifecycle = %q, want offline", got)
+	}
+}
+
 func TestLLMProviders_GetRejectsForeignNamespace(t *testing.T) {
 	withFakeProviders(t, &fakeProviderCatalog{items: map[string]nacos.ProviderShape{
 		pk(testWorkspaceID, "router"): publishedProvider("router"),

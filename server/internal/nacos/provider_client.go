@@ -166,6 +166,13 @@ func (c *ProviderClient) ListProviders(ctx context.Context, namespace string) ([
 // SetProviderLifecycle flips a provider's lifecycle field and re-publishes. The
 // config center has no native lifecycle concept, so lifecycle is just a content
 // field; offline is a soft delete (the config and its history stay intact).
+//
+// version is accepted for signature symmetry with the MCP adapter but is
+// currently IGNORED: GetProvider only returns the current published content (the
+// config center has no per-version retrieval in the basic API), so the flip
+// always targets the single live config regardless of version. Per-version
+// lifecycle would require the config history API; until then a provider has one
+// effective version. Callers should not rely on version to scope the flip.
 func (c *ProviderClient) SetProviderLifecycle(ctx context.Context, namespace, name, version, lifecycle string) error {
 	shape, err := c.GetProvider(ctx, namespace, name, version)
 	if err != nil {
