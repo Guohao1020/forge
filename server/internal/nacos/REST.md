@@ -53,8 +53,38 @@ NACOS_AUTH_IDENTITY_VALUE=nacos
   `McpServerBasicInfo` ↔ `MCPServerShape` 的双向翻译(env_keys/header_keys 只存 KEY 名,无密)。
 - 适配层固定带 identity header。
 
+## McpServerBasicInfo(实测定稿)
+
+注册成功的最小 + 带配置 body(`serverSpecification`,form 参数,JSON 字符串):
+```json
+{
+  "name": "demo",
+  "protocol": "stdio",                  // 我们的 transport;remote 用 "mcp-sse"/"http"
+  "description": "...",
+  "versionDetail": { "version": "1.0.0" },
+  "localServerConfig":  { "command": "...", "args": ["..."], "env_keys": ["..."] },  // stdio;原样 round-trip
+  "remoteServerConfig": { "url": "...", "header_keys": ["..."] }                     // remote
+}
+```
+读回(get/list pageItems)字段:`id, name, protocol, frontProtocol, description,
+versionDetail{version,release_date,is_latest}, version, remoteServerConfig, localServerConfig,
+enabled(bool), capabilities, toolSpec, allVersions[], namespaceId`。
+**`localServerConfig`/`remoteServerConfig` 是不透明 JSON,原样存取** → 直接放我们的 shape。
+
+## MCPServerShape ↔ McpServerBasicInfo 映射(适配层)
+
+| MCPServerShape | Nacos |
+|---|---|
+| Name | name |
+| Version | versionDetail.version(读回也在顶层 version) |
+| Transport | protocol |
+| Command/Args/EnvKeys | localServerConfig.{command,args,env_keys}(stdio) |
+| URL/HeaderKeys | remoteServerConfig.{url,header_keys}(remote) |
+| Lifecycle | enabled(true→"published" / false→"offline") |
+
 ## spike 结论
 
-- ✅ Nacos 3.x 可起、AI Registry MCP API 在 `/nacos/v3/admin/ai/mcp/*`、信封 `{code,message,data}`、
-  分页 `pageItems`、identity-header 鉴权 —— **计划的做法 A 可行**。
-- ⏳ 适配实现需定稿 `McpServerBasicInfo` 字段(register/get 的完整 body),用 throwaway Nacos 调通。
+- ✅ Nacos 3.x 可起、AI Registry MCP API `/nacos/v3/admin/ai/mcp/*`、信封 `{code,message,data}`、
+  分页 `pageItems`、identity-header 鉴权、**localServerConfig 原样存取** —— **做法 A 可行,schema 已定稿**。
+- ⏳ `SetMCPLifecycle`(toggle enabled)的 update 端点未实测;适配先按 PUT 同端点实现,集成测试校验。
+- ⏳ prod 开 auth 时需 login 取 accessToken;dev standalone(auth off)只需 identity header,已够第一切片。
