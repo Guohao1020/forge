@@ -50,7 +50,7 @@ Multica 本身是 AI-native 平台,**已自带一套"AI 注册"**——但它是
 |------|------|------|-----------|-----------|------|
 | **N0** | Nacos 基座(容器 + `internal/nacos` 适配包) | — | — | — | [N0+N1](N0-N1-mcp-registry.md) ✅ **done** |
 | **N1** | MCP Server 中心注册表 | N0 | 最小 | **Nacos 真相源** | [N0+N1](N0-N1-mcp-registry.md) ✅ **done** |
-| **N2** | LLM provider / 模型注册表 | N0 | 中 | Nacos 真相源(shape)+ Multica 注密 | [N2](N2-provider-model-registry.md) 草案 |
+| **N2** | LLM provider / 模型注册表 | N0 | 中 | Nacos 真相源(shape)+ Multica 注密 | [N2](N2-provider-model-registry.md) ✅ 实现级 spec |
 | **N3** | Prompt/Skill/AgentSpec 治理 | N0,(参考 N1) | 中(与 Standards/Skills) | 待定(倾向 Nacos 治理 + Multica 注入) | [N3](N3-prompt-skill-agentspec-governance.md) 草案 |
 | **N4** | daemon/runtime 服务发现 + 配置中心 | N0 | 最深(load-bearing) | **只增强/双写,不替换** | [N4](N4-runtime-discovery-config.md) 草案 |
 
