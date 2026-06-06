@@ -160,3 +160,4 @@ export type {
   ForgeHealth, ForgeHealthCategoryCount, ForgeTrendPoint, ForgeHealthTrends,
   ForgeIssueRef, ForgeFixPRRef,
 } from "./forge-health";
+export type { MCPServerShape, MCPRef, MCPServerList } from "./mcp-registry";
