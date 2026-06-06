@@ -112,5 +112,11 @@ Multica DB 加 `agent.mcp_refs`(只存引用);secret 留 Multica;Nacos 故障降
 **已决**:做法 A(Nacos 真相源 + 派发解析);secret 留 Multica;namespace=workspace+shared;
 降级到缓存;消费侧零改动。
 
-**待深化(实施时定)**:Nacos AI Registry REST 的确切 MCP 资源 schema(实测 3.x 版本接口)、
-缓存的 DB 快照表是否需要(还是纯内存)、内联 vs 编目的覆盖优先级最终语义、注册到 `shared` 的权限门。
+**实施时已定(2026-06-06,见 `server/internal/nacos/REST.md`)**:
+- **REST schema**:`/nacos/v3/admin/ai/mcp/*`,信封 `{code,message,data}`,分页 `pageItems`;注册
+  POST form(`namespaceId`/`mcpName`/`serverSpecification`=McpServerBasicInfo JSON),
+  `localServerConfig`(stdio:command/args/env_keys)/ `remoteServerConfig`(url/header_keys)
+  原样存取;identity-header `nacos:nacos` 即使关 auth 也必带。实测对 v3.0.1→v3.2.2 稳定。
+- **缓存**:纯内存 `CachedQuerier`(无 DB 快照表)——`GetMCPServer` 成功回填、底层失败回退暖缓存。
+- **覆盖优先级**:编目 refs 先解析,**内联 `mcp_config` 按 name 覆盖**(本地 override 赢)。
+- **`shared` 注册权限门**:与 workspace ns 注册同一道门(owner/admin,`requireWorkspaceRole`)。

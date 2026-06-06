@@ -1,8 +1,9 @@
 # Nacos 接入 Multica AI 管理中心 —— 总体方案
 
-> **状态**:设计阶段(2026-06-05)。本目录是 Nacos 集成的**完整、可拆分方案**:一份总览
-> + 每个切片一份 spec。**N0+N1 为实现级详细设计;N2–N4 为架构级设计草案**(实施前各自按
-> N0+N1 的方式深化:clarifying → approaches → 4 节设计 → 落 spec → writing-plans)。
+> **状态**:**N0+N1 已实现(2026-06-06)**;N2–N4 仍为架构级设计草案。本目录是 Nacos 集成的
+> **完整、可拆分方案**:一份总览 + 每个切片一份 spec。N2–N4 实施前各自按 N0+N1 的方式深化
+> (clarifying → approaches → 4 节设计 → 落 spec → writing-plans)。N0+N1 实现摘要见本文件末
+> §6。
 >
 > **安全**:本仓 `origin` 为**公开** GitHub。所有文档中凭证一律占位符
 > (`<NACOS_USER>` / `<NACOS_PASSWORD>` / `<ROUTER_BASE_URL>` / `<ROUTER_API_KEY>`);
@@ -47,9 +48,9 @@ Multica 本身是 AI-native 平台,**已自带一套"AI 注册"**——但它是
 
 | 切片 | 名称 | 依赖 | 重叠/风险 | 真相源取向 | 状态 |
 |------|------|------|-----------|-----------|------|
-| **N0** | Nacos 基座(容器 + `internal/nacos` 适配包) | — | — | — | [N0+N1](N0-N1-mcp-registry.md) |
-| **N1** | MCP Server 中心注册表 | N0 | 最小 | **Nacos 真相源** | [N0+N1](N0-N1-mcp-registry.md) ✅ 实现级 |
-| **N2** | LLM provider / 模型注册表 | N0 | 中 | Nacos 真相源(shape)+ Multica 注密 | [N2](N2-provider-model-registry.md) 草案 |
+| **N0** | Nacos 基座(容器 + `internal/nacos` 适配包) | — | — | — | [N0+N1](N0-N1-mcp-registry.md) ✅ **done** |
+| **N1** | MCP Server 中心注册表 | N0 | 最小 | **Nacos 真相源** | [N0+N1](N0-N1-mcp-registry.md) ✅ **done** |
+| **N2** | LLM provider / 模型注册表 | N0 | 中 | Nacos 真相源(shape)+ Multica 注密 | [N2](N2-provider-model-registry.md) ✅ 实现级 spec |
 | **N3** | Prompt/Skill/AgentSpec 治理 | N0,(参考 N1) | 中(与 Standards/Skills) | 待定(倾向 Nacos 治理 + Multica 注入) | [N3](N3-prompt-skill-agentspec-governance.md) 草案 |
 | **N4** | daemon/runtime 服务发现 + 配置中心 | N0 | 最深(load-bearing) | **只增强/双写,不替换** | [N4](N4-runtime-discovery-config.md) 草案 |
 
@@ -80,3 +81,25 @@ TDD + **绕凭证、源码构建栈集成验收**(不依赖活体 agent 跑):起
 - **Nacos 存储后端**:dev 用 standalone + 内嵌存储;prod 接外部库(MySQL/PG)、集群、HA —— 单列运维任务,不混进功能切片。
 - **Nacos 版本依赖**:AI Registry 需 **3.x**;基座固定 3.x 镜像。
 - **与上游 Multica 的关系**:本接入是叠加层,尽量 `internal/nacos` + `mcpresolve` 等独立包 + 一处 claim 钩子,**最小侵入**既有 agent/daemon 代码,便于跟 upstream rebase。
+
+## 6. N0+N1 实现状态(2026-06-06)
+
+**iris 计划**(`docs/forge/plans/iris-2026-06-05/`)已落地,栈内 Nacos 固定 `nacos/nacos-server:v3.2.2`。
+
+| 层 | 产出 | 位置 |
+|----|------|------|
+| 基座 | compose 加 `nacos` 服务(API 8848 / 控制台 8849 / gRPC 9848);实测 REST 接口 | `docker-compose.selfhost.yml`、`server/internal/nacos/REST.md` |
+| 适配 | `NacosQuerier` 接口 + REST `Client`(identity-header)+ `CachedQuerier`(降级) | `server/internal/nacos/` |
+| 解析 | `mcpresolve.ResolveMCP`(refs→有效 mcp_config,secret 从 custom_env 注入,内联覆盖) | `server/internal/mcpresolve/` |
+| 数据 | `agent.mcp_refs` JSONB(迁移 116,可逆) | `server/migrations/116_agent_mcp_refs.*` |
+| API | `/api/mcp-registry/servers`(list/get/register/lifecycle,成员/owner-admin 门,namespace 隔离,Nacos 未配置→503) | `server/internal/handler/mcp_registry.go` |
+| 钩子 | claim 处 `resolveAgentMcpConfig`:有 refs 才解析,空 refs / 无 Nacos = 原行为,**daemon 零改动** | `server/internal/handler/daemon.go` |
+| 前端 | MCP 目录页(浏览/注册)+ agent MCP 选择器(refs + 缺-secret 预检)+ zod `parseWithFallback` | `packages/views/mcp-catalog/`、`packages/views/agents/.../inspector/mcp-picker.tsx` |
+| seed | 示例 server `voc-openapi`(shape only)入 `shared` 命名空间 | `scripts/seed-mcp.sh` |
+
+**验收证据(绕凭证、源码栈)**:`server/internal/mcpresolve/verify_e2e_test.go`(`//go:build integration`)
+对真 Nacos v3.2.2 跑通"注册→设 refs→解析出有效 mcp_config(secret 从模拟 custom_env 注入)";
+降级由 `nacos/cache_test.go` 单测 + e2e 暖缓存第二次 resolve 覆盖。三包 typecheck 绿。
+
+**贯穿原则全部守住**:前端→Multica→Nacos;namespace=workspace+shared 隔离;secret 永不进 Nacos
+(目录只存 KEY 名);适配层降级;消费侧(daemon)零改动。

@@ -49,6 +49,8 @@ import type {
   ForgeHealthTrends,
   ForgeIssueRef,
   ForgeFixPRRef,
+  MCPServerShape,
+  MCPServerList,
   PersonalAccessToken,
   CreatePersonalAccessTokenRequest,
   CreatePersonalAccessTokenResponse,
@@ -200,6 +202,8 @@ import {
   EMPTY_FORGE_TRENDS,
   ForgeIssueRefListSchema,
   ForgeFixPRRefListSchema,
+  MCPServerListSchema,
+  EMPTY_MCP_LIST,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -1641,6 +1645,39 @@ export class ApiClient {
     return parseWithFallback(raw, ForgeFixPRRefListSchema, [], {
       endpoint: "GET /api/forge/health/fix-prs",
     });
+  }
+
+  // Forge iris (N1): MCP server catalog (Nacos AI Registry). The list response
+  // crosses an external system, so it runs through parseWithFallback and
+  // degrades to an empty list rather than throwing into the catalog UI. The
+  // workspace is carried by the standard X-Workspace-ID header (set globally on
+  // the client), so these methods take no wsId argument — matching the other
+  // forge endpoints.
+  async listMCPServers(): Promise<MCPServerList> {
+    const raw = await this.fetch<unknown>("/api/mcp-registry/servers");
+    return parseWithFallback(raw, MCPServerListSchema, EMPTY_MCP_LIST, {
+      endpoint: "GET /api/mcp-registry/servers",
+    });
+  }
+
+  async registerMCPServer(server: MCPServerShape, namespace?: string): Promise<void> {
+    await this.fetch("/api/mcp-registry/servers", {
+      method: "POST",
+      body: JSON.stringify({ namespace, server }),
+    });
+  }
+
+  async setMCPLifecycle(
+    name: string,
+    version: string,
+    lifecycle: string,
+    namespace?: string,
+  ): Promise<void> {
+    const q = namespace ? `?namespace=${encodeURIComponent(namespace)}` : "";
+    await this.fetch(
+      `/api/mcp-registry/servers/${encodeURIComponent(name)}/lifecycle${q}`,
+      { method: "PUT", body: JSON.stringify({ version, lifecycle }) },
+    );
   }
 
   async importSkill(data: { url: string }): Promise<Skill> {

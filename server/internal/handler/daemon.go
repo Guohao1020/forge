@@ -1128,6 +1128,11 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		if agent.McpConfig != nil {
 			mcpConfig = json.RawMessage(agent.McpConfig)
 		}
+		// Forge iris (N1): when the agent references catalog MCP servers, swap in
+		// the effective mcp_config resolved from Nacos (secrets injected from
+		// custom_env). No-op when the agent has no mcp_refs or no Nacos is wired —
+		// see resolveAgentMcpConfig.
+		mcpConfig = h.resolveAgentMcpConfig(r.Context(), uuidToString(agent.ID), agent.McpRefs, mcpConfig, customEnv)
 		resp.Agent = &TaskAgentData{
 			ID:            uuidToString(agent.ID),
 			Name:          agent.Name,

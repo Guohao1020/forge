@@ -15,6 +15,7 @@ import type {
   CreateBillingPortalSessionResponse,
   ForgeHealth,
   GroupedIssuesResponse,
+  MCPServerList,
   ListIssuesResponse,
   ListWebhookDeliveriesResponse,
   Squad,
@@ -902,6 +903,30 @@ export const EMPTY_FORGE_HEALTH: ForgeHealth = {
   open_findings: 0, scan_runs: 0, fix_prs: { opened: 0, merged: 0, matched: 0 },
   score: 0, status: "red", no_activity: true,
 };
+
+// Forge iris (N1): MCP server catalog. This response originates from an external
+// Nacos AI Registry, so it is the highest-drift surface in the app — every field
+// is parsed leniently (string enums, .loose(), optional arrays) and a bad
+// response degrades to EMPTY_MCP_LIST instead of throwing into the catalog UI.
+export const MCPServerShapeSchema = z.object({
+  name: z.string(),
+  namespace: z.string().optional(),
+  version: z.string(),
+  transport: z.string(), // loose: backend enum drift downgrades, never crashes
+  command: z.string().optional(),
+  args: z.array(z.string()).optional(),
+  env_keys: z.array(z.string()).optional(),
+  url: z.string().optional(),
+  header_keys: z.array(z.string()).optional(),
+  lifecycle: z.string(),
+  tools: z.array(z.string()).optional(),
+}).loose();
+
+export const MCPServerListSchema = z.object({
+  servers: z.array(MCPServerShapeSchema),
+}).loose();
+
+export const EMPTY_MCP_LIST: MCPServerList = { servers: [] };
 
 const ForgeTrendPointSchema = z.object({
   date: z.string(),

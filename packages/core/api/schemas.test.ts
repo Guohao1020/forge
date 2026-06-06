@@ -5,9 +5,11 @@ import {
   DashboardUsageDailyListSchema,
   DuplicateIssueErrorBodySchema,
   EMPTY_FORGE_HEALTH,
+  EMPTY_MCP_LIST,
   EMPTY_USER,
   ForgeHealthSchema,
   ListIssuesResponseSchema,
+  MCPServerListSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByHourListSchema,
@@ -315,5 +317,65 @@ describe("Forge F5 health schemas", () => {
     // (0 / "red"), so these assertions prove the parse succeeded, not the fallback.
     expect(parsed.checks).toBe(7);
     expect(parsed.status).toBe("yellow");
+  });
+});
+
+describe("MCPServerListSchema (iris N1 catalog — highest-drift surface)", () => {
+  const wellFormed = {
+    servers: [
+      {
+        name: "voc",
+        version: "1.0.0",
+        transport: "stdio",
+        command: "voc-mcp",
+        args: ["--port", "1"],
+        env_keys: ["VOC_API_KEY"],
+        lifecycle: "published",
+      },
+    ],
+  };
+
+  it("parses a well-formed catalog list", () => {
+    const parsed = parseWithFallback(wellFormed, MCPServerListSchema, EMPTY_MCP_LIST, {
+      endpoint: "test",
+    });
+    expect(parsed.servers).toHaveLength(1);
+    expect(parsed.servers[0]?.command).toBe("voc-mcp");
+  });
+
+  it("keeps an unknown transport value (enum drift downgrades, never crashes)", () => {
+    const drifted = { servers: [{ ...wellFormed.servers[0], transport: "websocket" }] };
+    const parsed = parseWithFallback(drifted, MCPServerListSchema, EMPTY_MCP_LIST, {
+      endpoint: "test",
+    });
+    expect(parsed.servers[0]?.transport).toBe("websocket");
+  });
+
+  it("forwards unknown server fields via .loose()", () => {
+    const extra = { servers: [{ ...wellFormed.servers[0], future_field: 42 }] };
+    expect(MCPServerListSchema.safeParse(extra).success).toBe(true);
+  });
+
+  it("degrades to EMPTY_MCP_LIST when servers is the wrong type", () => {
+    const bad = { servers: "not-an-array" };
+    const parsed = parseWithFallback(bad, MCPServerListSchema, EMPTY_MCP_LIST, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_MCP_LIST);
+    expect(parsed.servers).toEqual([]);
+  });
+
+  it("degrades to EMPTY_MCP_LIST when servers is null", () => {
+    const parsed = parseWithFallback({ servers: null }, MCPServerListSchema, EMPTY_MCP_LIST, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_MCP_LIST);
+  });
+
+  it("degrades to EMPTY_MCP_LIST when the body is missing the servers field", () => {
+    const parsed = parseWithFallback({}, MCPServerListSchema, EMPTY_MCP_LIST, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_MCP_LIST);
   });
 });

@@ -44,6 +44,7 @@ type Agent struct {
 	McpConfig          []byte             `json:"mcp_config"`
 	Model              pgtype.Text        `json:"model"`
 	ThinkingLevel      pgtype.Text        `json:"thinking_level"`
+	McpRefs            []byte             `json:"mcp_refs"`
 }
 
 type AgentRuntime struct {

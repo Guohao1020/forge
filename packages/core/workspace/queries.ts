@@ -24,6 +24,7 @@ export const workspaceKeys = {
     ["workspaces", wsId, "forge-entropy-scans"] as const,
   forgeHealth: (wsId: string) => ["workspaces", wsId, "forge-health"] as const,
   forgeHealthTrends: (wsId: string) => ["workspaces", wsId, "forge-health-trends"] as const,
+  mcpRegistry: (wsId: string) => ["workspaces", wsId, "mcp-registry"] as const,
   assigneeFrequency: (wsId: string) => ["workspaces", wsId, "assignee-frequency"] as const,
 };
 
@@ -105,6 +106,13 @@ export function forgeCheckListOptions(wsId: string) {
   return queryOptions({
     queryKey: workspaceKeys.forgeChecks(wsId),
     queryFn: () => api.listForgeChecks(),
+  });
+}
+
+export function mcpServerListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: workspaceKeys.mcpRegistry(wsId),
+    queryFn: () => api.listMCPServers(),
   });
 }
 
