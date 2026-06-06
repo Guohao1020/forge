@@ -910,6 +910,7 @@ export const EMPTY_FORGE_HEALTH: ForgeHealth = {
 // response degrades to EMPTY_MCP_LIST instead of throwing into the catalog UI.
 export const MCPServerShapeSchema = z.object({
   name: z.string(),
+  namespace: z.string().optional(),
   version: z.string(),
   transport: z.string(), // loose: backend enum drift downgrades, never crashes
   command: z.string().optional(),

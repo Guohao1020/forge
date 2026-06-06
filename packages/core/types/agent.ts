@@ -1,3 +1,5 @@
+import type { MCPRef } from "./mcp-registry";
+
 export type AgentStatus = "idle" | "working" | "blocked" | "error" | "offline";
 
 export type AgentRuntimeMode = "local" | "cloud";
@@ -191,6 +193,14 @@ export interface Agent {
    * Older backends omit this field; treat `undefined` as false.
    */
   mcp_config_redacted?: boolean;
+  /**
+   * Forge iris (N1): non-secret references into the MCP catalog (Nacos AI
+   * Registry). At dispatch the server resolves these into the agent's
+   * effective mcp_config, injecting secret values from the agent's env. Unlike
+   * mcp_config these are never redacted (they name servers, not secrets).
+   * Older backends omit the field; treat `undefined` as an empty list.
+   */
+  mcp_refs?: MCPRef[];
   visibility: AgentVisibility;
   status: AgentStatus;
   max_concurrent_tasks: number;
@@ -342,6 +352,13 @@ export interface UpdateAgentRequest {
    *     validate / translate it according to their own MCP integration
    */
   mcp_config?: unknown | null;
+  /**
+   * Forge iris (N1): references into the MCP catalog. Field omitted → no
+   * change; an array (including `[]`) replaces the stored list. Unlike
+   * mcp_config there is no clear-to-null state — the column is NOT NULL with a
+   * `[]` default.
+   */
+  mcp_refs?: MCPRef[];
   visibility?: AgentVisibility;
   status?: AgentStatus;
   max_concurrent_tasks?: number;

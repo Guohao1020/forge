@@ -9,6 +9,10 @@
 // (CLAUDE.md "enum drift downgrades, not crashes").
 export interface MCPServerShape {
   name: string;
+  // namespace is metadata the list endpoint tags onto each entry (the workspace
+  // id or "shared") so the picker knows which namespace to put in an MCPRef.
+  // Absent on a single-server get / register payload.
+  namespace?: string;
   version: string;
   transport: string; // "stdio" | "sse" | "http"
   command?: string;
