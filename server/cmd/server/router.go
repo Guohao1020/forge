@@ -184,6 +184,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			idVal = "nacos"
 		}
 		h.Nacos = nacos.NewCachedQuerier(nacos.NewClient(addr, idKey, idVal))
+		// Forge prometheus (N2): the LLM-provider catalog lives in the Nacos
+		// config center (not the AI Registry); same identity header, same
+		// last-known-good cache so a transient outage degrades gracefully.
+		h.Providers = nacos.NewCachedProviderQuerier(nacos.NewProviderClient(addr, idKey, idVal))
 	}
 
 	// Cloud PAT verifier: validates mcn_ tokens against Multica Cloud
@@ -696,6 +700,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/", h.RegisterMCPCatalogServer)
 				r.Get("/{name}", h.GetMCPCatalogServer)
 				r.Put("/{name}/lifecycle", h.SetMCPCatalogLifecycle)
+			})
+
+			// Forge prometheus (N2): LLM-provider catalog backed by the Nacos
+			// config center. Reads are workspace-member gated; register /
+			// lifecycle are owner/admin only (enforced in the handlers).
+			r.Route("/api/llm-providers", func(r chi.Router) {
+				r.Get("/", h.ListLLMProviders)
+				r.Post("/", h.RegisterLLMProvider)
+				r.Get("/{name}", h.GetLLMProvider)
+				r.Put("/{name}/lifecycle", h.SetLLMProviderLifecycle)
 			})
 
 			// Forge F5: Harness health observability.
