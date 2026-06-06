@@ -93,6 +93,9 @@ func (h *Handler) ListMCPCatalog(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue // degrade: a down namespace contributes nothing, never 500s
 		}
+		for i := range list {
+			list[i].Namespace = ns // tag origin so the picker can build an MCPRef
+		}
 		out = append(out, list...)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"servers": out})

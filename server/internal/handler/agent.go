@@ -42,6 +42,10 @@ type AgentResponse struct {
 	RuntimeConfig any             `json:"runtime_config"`
 	CustomArgs    []string        `json:"custom_args"`
 	McpConfig     json.RawMessage `json:"mcp_config"`
+	// McpRefs are non-secret references into the MCP catalog (Forge iris N1).
+	// Always exposed (not redacted like mcp_config) — they name servers, not
+	// secrets. Defaults to an empty array.
+	McpRefs json.RawMessage `json:"mcp_refs"`
 	// custom_env is intentionally NOT serialized on agent resources. The
 	// agent_list/get/create/update/archive/restore responses and WS events
 	// only expose coarse metadata (has_custom_env, custom_env_key_count) so
@@ -106,6 +110,11 @@ func agentToResponse(a db.Agent) AgentResponse {
 		mcpConfig = json.RawMessage(a.McpConfig)
 	}
 
+	mcpRefs := json.RawMessage("[]")
+	if len(a.McpRefs) > 0 {
+		mcpRefs = json.RawMessage(a.McpRefs)
+	}
+
 	return AgentResponse{
 		ID:                 uuidToString(a.ID),
 		WorkspaceID:        uuidToString(a.WorkspaceID),
@@ -118,6 +127,7 @@ func agentToResponse(a db.Agent) AgentResponse {
 		RuntimeConfig:      rc,
 		CustomArgs:         customArgs,
 		McpConfig:          mcpConfig,
+		McpRefs:            mcpRefs,
 		HasCustomEnv:       envKeyCount > 0,
 		CustomEnvKeyCount:  envKeyCount,
 		Visibility:         a.Visibility,
@@ -778,6 +788,7 @@ type UpdateAgentRequest struct {
 	// secret values with literal `****`. See MUL-2600.
 	CustomArgs         *[]string        `json:"custom_args"`
 	McpConfig          *json.RawMessage `json:"mcp_config"`
+	McpRefs            *json.RawMessage `json:"mcp_refs"`
 	Visibility         *string          `json:"visibility"`
 	Status             *string          `json:"status"`
 	MaxConcurrentTasks *int32           `json:"max_concurrent_tasks"`
@@ -943,6 +954,14 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	shouldClearMcpConfig := hasMcpConfig && bytes.Equal(bytes.TrimSpace(rawMcpConfig), []byte("null"))
 	if hasMcpConfig && !shouldClearMcpConfig {
 		params.McpConfig = append([]byte(nil), rawMcpConfig...)
+	}
+
+	// Forge iris (N1): mcp_refs is a non-secret list of catalog references. Unlike
+	// mcp_config it has no "clear to NULL" semantics — the column is NOT NULL with
+	// a '[]' default, so an explicit [] empties it and a present array replaces it.
+	// Absent field leaves it untouched (COALESCE narg in UpdateAgent).
+	if rawMcpRefs, ok := rawFields["mcp_refs"]; ok && !bytes.Equal(bytes.TrimSpace(rawMcpRefs), []byte("null")) {
+		params.McpRefs = append([]byte(nil), rawMcpRefs...)
 	}
 
 	// Resolve the runtime that will be in force after this update so the

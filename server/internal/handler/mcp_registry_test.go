@@ -130,12 +130,23 @@ func TestMCPCatalog_ListMergesWorkspaceAndSharedNamespaces(t *testing.T) {
 		Servers []nacos.MCPServerShape `json:"servers"`
 	}
 	json.NewDecoder(w.Body).Decode(&resp)
-	names := map[string]bool{}
+	ns := map[string]string{}
 	for _, s := range resp.Servers {
-		names[s.Name] = true
+		ns[s.Name] = s.Namespace
 	}
-	if !names["voc"] || !names["fetch"] {
-		t.Fatalf("expected both workspace (voc) and shared (fetch) servers, got %+v", resp.Servers)
+	if _, ok := ns["voc"]; !ok {
+		t.Fatalf("expected workspace server voc, got %+v", resp.Servers)
+	}
+	if _, ok := ns["fetch"]; !ok {
+		t.Fatalf("expected shared server fetch, got %+v", resp.Servers)
+	}
+	// Each entry must be tagged with its origin namespace so the picker can
+	// build a correct MCPRef (workspace-local vs shared).
+	if ns["voc"] != testWorkspaceID {
+		t.Fatalf("voc namespace = %q, want workspace id %q", ns["voc"], testWorkspaceID)
+	}
+	if ns["fetch"] != sharedMCPNamespace {
+		t.Fatalf("fetch namespace = %q, want %q", ns["fetch"], sharedMCPNamespace)
 	}
 }
 

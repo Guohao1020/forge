@@ -4,7 +4,12 @@ package nacos
 // name the secrets (e.g. "VOC_API_KEY"); the values are injected later from
 // Multica (the agent's custom_env), never stored in Nacos.
 type MCPServerShape struct {
-	Name       string   `json:"name"`
+	Name string `json:"name"`
+	// Namespace is metadata the list endpoint tags onto each entry so callers
+	// (e.g. the agent MCP picker) know which namespace a server came from when
+	// building an MCPRef. NOT stored in Nacos and ignored on register (the
+	// namespace there comes from the request); empty on single-server get.
+	Namespace  string   `json:"namespace,omitempty"`
 	Version    string   `json:"version"`
 	Transport  string   `json:"transport"` // "stdio" | "sse" | "http"
 	Command    string   `json:"command,omitempty"`
