@@ -55,3 +55,85 @@ func TestResolve_AnthropicEnvWithSecret(t *testing.T) {
 		t.Fatalf("ANTHROPIC_MODEL: %q", res.Env["ANTHROPIC_MODEL"])
 	}
 }
+
+func TestResolve_CodexArgsAndEnv(t *testing.T) {
+	q := &fakePQ{shapes: map[string]nacos.ProviderShape{
+		"router": {Name: "router", Version: "1", Protocol: "codex-router",
+			BaseURL: "https://r/v1", AuthKey: "ROUTER_API_KEY", Lifecycle: "published"},
+	}}
+	res, warns, err := Resolve(context.Background(), q, Input{
+		Ref: ref("router"), Secrets: MapSecrets{"ROUTER_API_KEY": "sek"},
+	})
+	if err != nil || len(warns) != 0 {
+		t.Fatalf("err=%v warns=%v", err, warns)
+	}
+	want := []string{
+		"-c", "model_provider=router",
+		"-c", "model_providers.router.base_url=https://r/v1",
+		"-c", "model_providers.router.wire_api=responses",
+		"-c", "model_providers.router.env_key=ROUTER_API_KEY",
+	}
+	if len(res.Args) != len(want) {
+		t.Fatalf("args len: %v", res.Args)
+	}
+	for i := range want {
+		if res.Args[i] != want[i] {
+			t.Fatalf("arg %d = %q, want %q", i, res.Args[i], want[i])
+		}
+	}
+	if res.Env["ROUTER_API_KEY"] != "sek" {
+		t.Fatalf("key env not injected: %v", res.Env)
+	}
+}
+
+func TestResolve_MissingSecretWarns(t *testing.T) {
+	q := &fakePQ{shapes: map[string]nacos.ProviderShape{
+		"router": {Name: "router", Version: "1", Protocol: "anthropic",
+			BaseURL: "https://r", AuthKey: "ROUTER_API_KEY", Lifecycle: "published"},
+	}}
+	_, warns, err := Resolve(context.Background(), q, Input{Ref: ref("router"), Secrets: MapSecrets{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 1 {
+		t.Fatalf("want missing-secret warn, got %v", warns)
+	}
+}
+
+func TestResolve_OfflineSkipped(t *testing.T) {
+	q := &fakePQ{shapes: map[string]nacos.ProviderShape{
+		"router": {Name: "router", Version: "1", Protocol: "anthropic", Lifecycle: "offline"},
+	}}
+	res, warns, _ := Resolve(context.Background(), q, Input{Ref: ref("router"), Secrets: MapSecrets{}})
+	if len(warns) != 1 || len(res.Env) != 0 {
+		t.Fatalf("offline should skip: env=%v warns=%v", res.Env, warns)
+	}
+}
+
+func TestResolve_UnknownProtocolSkipped(t *testing.T) {
+	q := &fakePQ{shapes: map[string]nacos.ProviderShape{
+		"router": {Name: "router", Version: "1", Protocol: "bedrock", Lifecycle: "published"},
+	}}
+	res, warns, _ := Resolve(context.Background(), q, Input{Ref: ref("router"), Secrets: MapSecrets{}})
+	if len(warns) != 1 || len(res.Env) != 0 || len(res.Args) != 0 {
+		t.Fatalf("unknown protocol should skip: %+v warns=%v", res, warns)
+	}
+}
+
+func TestResolve_ExplicitModelWins(t *testing.T) {
+	q := &fakePQ{shapes: map[string]nacos.ProviderShape{
+		"router": {Name: "router", Version: "1", Protocol: "anthropic", BaseURL: "https://r",
+			AuthKey: "K", Lifecycle: "published", Models: []nacos.ProviderModel{{ID: "def", Default: true}}},
+	}}
+	res, _, _ := Resolve(context.Background(), q, Input{Ref: ref("router"), Secrets: MapSecrets{"K": "v"}, Model: "explicit"})
+	if res.Model != "explicit" || res.Env["ANTHROPIC_MODEL"] != "explicit" {
+		t.Fatalf("explicit model should win: %q / %q", res.Model, res.Env["ANTHROPIC_MODEL"])
+	}
+}
+
+func TestResolve_NilRefNoop(t *testing.T) {
+	res, warns, err := Resolve(context.Background(), &fakePQ{}, Input{Ref: nil})
+	if err != nil || warns != nil || len(res.Env) != 0 || len(res.Args) != 0 {
+		t.Fatalf("nil ref must be a clean no-op: %+v warns=%v err=%v", res, warns, err)
+	}
+}
