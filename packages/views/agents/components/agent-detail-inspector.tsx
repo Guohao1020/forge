@@ -129,6 +129,7 @@ export function AgentDetailInspector({
             runtimeId={agent.runtime_id}
             runtimeOnline={!!isOnline}
             value={agent.model ?? ""}
+            providerRef={agent.provider_ref ?? null}
             canEdit={canEdit}
             onChange={(m) => update({ model: m })}
           />

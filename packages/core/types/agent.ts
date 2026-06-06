@@ -1,4 +1,5 @@
 import type { MCPRef } from "./mcp-registry";
+import type { ProviderRef } from "./llm-provider";
 
 export type AgentStatus = "idle" | "working" | "blocked" | "error" | "offline";
 
@@ -201,6 +202,15 @@ export interface Agent {
    * Older backends omit the field; treat `undefined` as an empty list.
    */
   mcp_refs?: MCPRef[];
+  /**
+   * Forge prometheus (N2): non-secret reference into the LLM provider catalog
+   * (Nacos config center). At dispatch the server resolves this into the
+   * agent's effective provider config (base_url + the auth_key's value pulled
+   * from the agent's env). `null`/absent means "use the runtime's own provider"
+   * — the model picker then falls back to runtime-discovered models. Older
+   * backends omit the field; treat `undefined` as `null`.
+   */
+  provider_ref?: ProviderRef | null;
   visibility: AgentVisibility;
   status: AgentStatus;
   max_concurrent_tasks: number;
@@ -359,6 +369,14 @@ export interface UpdateAgentRequest {
    * `[]` default.
    */
   mcp_refs?: MCPRef[];
+  /**
+   * Forge prometheus (N2): reference into the LLM provider catalog. Tri-state:
+   *   - field omitted → no change
+   *   - `null` → clear the binding; the agent falls back to its runtime's own
+   *     provider
+   *   - object → bind the agent to this catalog provider
+   */
+  provider_ref?: ProviderRef | null;
   visibility?: AgentVisibility;
   status?: AgentStatus;
   max_concurrent_tasks?: number;
