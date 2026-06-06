@@ -1,9 +1,9 @@
 # Nacos 接入 Multica AI 管理中心 —— 总体方案
 
-> **状态**:**N0+N1 已实现(2026-06-06)**;N2–N4 仍为架构级设计草案。本目录是 Nacos 集成的
-> **完整、可拆分方案**:一份总览 + 每个切片一份 spec。N2–N4 实施前各自按 N0+N1 的方式深化
-> (clarifying → approaches → 4 节设计 → 落 spec → writing-plans)。N0+N1 实现摘要见本文件末
-> §6。
+> **状态**:**N0+N1+N2 已实现(N0+N1 2026-06-06,N2 2026-06-07)**;N3–N4 仍为架构级设计草案。
+> 本目录是 Nacos 集成的**完整、可拆分方案**:一份总览 + 每个切片一份 spec。N3–N4 实施前各自按
+> N0+N1 的方式深化(clarifying → approaches → 4 节设计 → 落 spec → writing-plans)。实现摘要见
+> 本文件末 §6。
 >
 > **安全**:本仓 `origin` 为**公开** GitHub。所有文档中凭证一律占位符
 > (`<NACOS_USER>` / `<NACOS_PASSWORD>` / `<ROUTER_BASE_URL>` / `<ROUTER_API_KEY>`);
@@ -50,7 +50,7 @@ Multica 本身是 AI-native 平台,**已自带一套"AI 注册"**——但它是
 |------|------|------|-----------|-----------|------|
 | **N0** | Nacos 基座(容器 + `internal/nacos` 适配包) | — | — | — | [N0+N1](N0-N1-mcp-registry.md) ✅ **done** |
 | **N1** | MCP Server 中心注册表 | N0 | 最小 | **Nacos 真相源** | [N0+N1](N0-N1-mcp-registry.md) ✅ **done** |
-| **N2** | LLM provider / 模型注册表 | N0 | 中 | Nacos 真相源(shape)+ Multica 注密 | [N2](N2-provider-model-registry.md) ✅ 实现级 spec |
+| **N2** | LLM provider / 模型注册表 | N0 | 中 | Nacos 真相源(shape)+ Multica 注密 | [N2](N2-provider-model-registry.md) ✅ **done** |
 | **N3** | Prompt/Skill/AgentSpec 治理 | N0,(参考 N1) | 中(与 Standards/Skills) | 待定(倾向 Nacos 治理 + Multica 注入) | [N3](N3-prompt-skill-agentspec-governance.md) 草案 |
 | **N4** | daemon/runtime 服务发现 + 配置中心 | N0 | 最深(load-bearing) | **只增强/双写,不替换** | [N4](N4-runtime-discovery-config.md) 草案 |
 
@@ -103,3 +103,31 @@ TDD + **绕凭证、源码构建栈集成验收**(不依赖活体 agent 跑):起
 
 **贯穿原则全部守住**:前端→Multica→Nacos;namespace=workspace+shared 隔离;secret 永不进 Nacos
 (目录只存 KEY 名);适配层降级;消费侧(daemon)零改动。
+
+## 7. N2 实现状态(2026-06-07)
+
+**prometheus 计划**(`docs/forge/plans/prometheus-2026-06-06/`)已落地。Provider 存进 **Nacos 配置中心**
+(`/nacos/v3/admin/cs/config*`,**`groupName`** 非 `group`;publish 是 UPSERT;get 返回信封、content
+是转义字符串需二次 unmarshal;list 的 pageItems 无 content 须逐个 get;AI Registry 确认无 provider
+资源类型),实测记 `server/internal/nacos/REST-providers.md`。
+
+| 层 | 产出 | 位置 |
+|----|------|------|
+| 适配 | `ProviderQuerier` 接口 + 配置中心 REST `ProviderClient` + `CachedProviderQuerier`(降级) | `server/internal/nacos/provider_*.go` |
+| 解析 | `providerresolve.Resolve`(provider_ref→env/args)+ `anthropic`/`codex-router` 两映射器(纯函数) | `server/internal/providerresolve/` |
+| 数据 | `agent.provider_ref` JSONB 可空(迁移 117,可逆) | `server/migrations/117_agent_provider_ref.*` |
+| API | `/api/llm-providers`(list/get/register/lifecycle,成员/owner-admin 门,namespace 隔离,未配置→503) | `server/internal/handler/llm_registry.go` |
+| 钩子 | claim 处 `resolveAgentProviderRef`:有 provider_ref 才解析,合并进 env/args(agent 显式覆盖),空 ref / 无 Nacos = 原行为,**daemon 零改动** | `server/internal/handler/daemon.go` |
+| 前端 | provider 目录页 + agent provider 选择器(单选 + 缺-secret 预检)+ **模型 picker 按 provider_ref 收敛** + zod | `packages/views/llm-providers/`、`packages/views/agents/.../inspector/{provider,model}-picker.tsx` |
+| seed | 示例 provider `flatkey-router`(shape only,base_url 占位)入 `shared` | `scripts/seed-provider.sh` |
+
+**映射器产出**:`anthropic` → env `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_MODEL`;
+`codex-router` → args `-c model_provider/base_url/wire_api/env_key` + 密钥 env。密值从 agent `custom_env`
+注入,目录只存 `auth_key` KEY 名。
+
+**验收证据(绕凭证、真 Nacos v3.2.2)**:`server/internal/providerresolve/verify_e2e_test.go`
+跑通"注册 provider→设 ref→解析出 `ANTHROPIC_*`(密值从模拟 custom_env 注入)+ 默认 model";降级由
+`nacos/provider_cache_test.go` 单测 + e2e 暖缓存第二次 resolve 覆盖。三包 typecheck 绿。
+
+> **命名注**:派发钩子叫 `resolveAgentProviderRef`(不是 `resolveAgentProvider`)—— `agent.go` 已有一个
+> 同名的 runtime-provider 查询方法(thinking_level 校验用),Go 禁止同 receiver 重名,故加 `Ref` 后缀。
