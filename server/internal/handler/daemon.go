@@ -1133,6 +1133,12 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		// custom_env). No-op when the agent has no mcp_refs or no Nacos is wired —
 		// see resolveAgentMcpConfig.
 		mcpConfig = h.resolveAgentMcpConfig(r.Context(), uuidToString(agent.ID), agent.McpRefs, mcpConfig, customEnv)
+		// Forge prometheus (N2): when the agent references a catalog LLM provider
+		// (provider_ref), merge the resolved env/args into custom_env/custom_args
+		// and fill an empty model with the provider default. No-op when the agent
+		// has no provider_ref or no Nacos is wired — see resolveAgentProviderRef.
+		customEnv, customArgs, agentModel := h.resolveAgentProviderRef(
+			r.Context(), uuidToString(agent.ID), agent.ProviderRef, customEnv, customArgs, agent.Model.String)
 		resp.Agent = &TaskAgentData{
 			ID:            uuidToString(agent.ID),
 			Name:          agent.Name,
@@ -1141,7 +1147,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			CustomEnv:     customEnv,
 			CustomArgs:    customArgs,
 			McpConfig:     mcpConfig,
-			Model:         agent.Model.String,
+			Model:         agentModel,
 			ThinkingLevel: agent.ThinkingLevel.String,
 		}
 	}

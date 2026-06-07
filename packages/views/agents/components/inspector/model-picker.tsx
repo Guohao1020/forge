@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Plus } from "lucide-react";
 import { runtimeModelsOptions } from "@multica/core/runtimes";
+import { api } from "@multica/core/api";
+import type { ProviderRef } from "@multica/core/types";
 import { Input } from "@multica/ui/components/ui/input";
 import {
   PickerItem,
@@ -28,12 +30,20 @@ export function ModelPicker({
   runtimeId,
   runtimeOnline,
   value,
+  providerRef,
   canEdit = true,
   onChange,
 }: {
   runtimeId: string | null;
   runtimeOnline: boolean;
   value: string;
+  /**
+   * Forge prometheus (N2): when set, the agent is bound to a catalog LLM
+   * provider. The picker then offers the PROVIDER's curated models
+   * (`provider.models[]`) instead of the runtime's dynamically-discovered
+   * list. Null/absent keeps the runtime-discovery behaviour unchanged.
+   */
+  providerRef?: ProviderRef | null;
   /** When false, render a static read-only display and skip the popover. */
   canEdit?: boolean;
   onChange: (next: string) => Promise<void> | void;
@@ -42,17 +52,46 @@ export function ModelPicker({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
+  // Runtime-discovered models — the default source. Disabled (null runtimeId)
+  // when a provider ref overrides it so we don't fire a needless daemon probe.
   const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
+    runtimeModelsOptions(providerRef ? null : runtimeOnline ? runtimeId : null),
   );
-  const supported = modelsQuery.data?.supported ?? true;
+
+  // Provider-catalog models — the convergence source. Only fetched when the
+  // agent is bound to a provider; otherwise the query is disabled and the
+  // runtime path above wins.
+  const providerQuery = useQuery({
+    queryKey: providerRef
+      ? ["llm-providers", providerRef.namespace, providerRef.name, providerRef.ref]
+      : ["llm-providers", "none"],
+    queryFn: () =>
+      api.getProvider(providerRef!.name, providerRef!.namespace, providerRef!.ref),
+    enabled: !!providerRef,
+    staleTime: 30_000,
+  });
+
+  const usingProvider = !!providerRef;
+  // A bound provider always "supports" per-agent model selection — its catalog
+  // IS the option list. Without a provider, defer to the runtime's bit.
+  const supported = usingProvider ? true : modelsQuery.data?.supported ?? true;
+  const isLoading = usingProvider
+    ? providerQuery.isLoading
+    : modelsQuery.isLoading;
   // Memoise the model list so every downstream useMemo gets a stable
   // reference; `?? []` would mint a fresh array on every render and
-  // invalidate filters needlessly.
-  const models = useMemo(
-    () => modelsQuery.data?.models ?? [],
-    [modelsQuery.data],
-  );
+  // invalidate filters needlessly. When bound to a provider, map its
+  // ProviderModel[] into the picker's {id,label} option shape (label falls
+  // back to id when the catalog omits a friendly label).
+  const models = useMemo(() => {
+    if (usingProvider) {
+      return (providerQuery.data?.models ?? []).map((m) => ({
+        id: m.id,
+        label: m.label || m.id,
+      }));
+    }
+    return modelsQuery.data?.models ?? [];
+  }, [usingProvider, providerQuery.data, modelsQuery.data]);
 
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -78,7 +117,7 @@ export function ModelPicker({
     if (id !== value) await onChange(id);
   };
 
-  if (!supported && !modelsQuery.isLoading) {
+  if (!supported && !isLoading) {
     return (
       <span className="truncate italic text-muted-foreground">
         {t(($) => $.pickers.model_managed_by_runtime)}
@@ -128,14 +167,14 @@ export function ModelPicker({
         </div>
       }
     >
-      {modelsQuery.isLoading && (
+      {isLoading && (
         <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin" />
           {t(($) => $.pickers.model_discovering)}
         </div>
       )}
 
-      {!modelsQuery.isLoading &&
+      {!isLoading &&
         filtered.map((m) => (
           <PickerItem
             key={m.id}
@@ -164,7 +203,7 @@ export function ModelPicker({
           </PickerItem>
         ))}
 
-      {!modelsQuery.isLoading && filtered.length === 0 && !canCreate && (
+      {!isLoading && filtered.length === 0 && !canCreate && (
         <p className="px-3 py-3 text-center text-xs text-muted-foreground">
           {t(($) => $.pickers.model_empty)}
         </p>

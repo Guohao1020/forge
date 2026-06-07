@@ -29,6 +29,7 @@ import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
 import { McpConfigTab } from "./tabs/mcp-config-tab";
 import { McpRefSection } from "./inspector/mcp-picker";
+import { ProviderRefSection } from "./inspector/provider-picker";
 import { ActorIssuesPanel } from "../../common/actor-issues-panel";
 import { useT } from "../../i18n";
 
@@ -213,6 +214,10 @@ export function AgentOverviewPane({
         {effectiveTab === "mcp_config" && (
           <TabContent>
             <div className="space-y-5">
+              <ProviderRefSection
+                agent={agent}
+                onSave={(updates) => onUpdate(agent.id, updates)}
+              />
               <McpRefSection
                 agent={agent}
                 onSave={(updates) => onUpdate(agent.id, updates)}

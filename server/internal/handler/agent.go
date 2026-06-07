@@ -46,6 +46,11 @@ type AgentResponse struct {
 	// Always exposed (not redacted like mcp_config) — they name servers, not
 	// secrets. Defaults to an empty array.
 	McpRefs json.RawMessage `json:"mcp_refs"`
+	// ProviderRef is a non-secret reference into the LLM-provider catalog
+	// (Forge prometheus N2) — a single optional {namespace,name,ref}. Like
+	// mcp_refs it names a catalog entry, not a secret, so it is always exposed
+	// (never redacted). Defaults to JSON null when the agent has no provider.
+	ProviderRef json.RawMessage `json:"provider_ref"`
 	// custom_env is intentionally NOT serialized on agent resources. The
 	// agent_list/get/create/update/archive/restore responses and WS events
 	// only expose coarse metadata (has_custom_env, custom_env_key_count) so
@@ -115,6 +120,11 @@ func agentToResponse(a db.Agent) AgentResponse {
 		mcpRefs = json.RawMessage(a.McpRefs)
 	}
 
+	providerRef := json.RawMessage("null")
+	if len(a.ProviderRef) > 0 {
+		providerRef = json.RawMessage(a.ProviderRef)
+	}
+
 	return AgentResponse{
 		ID:                 uuidToString(a.ID),
 		WorkspaceID:        uuidToString(a.WorkspaceID),
@@ -128,6 +138,7 @@ func agentToResponse(a db.Agent) AgentResponse {
 		CustomArgs:         customArgs,
 		McpConfig:          mcpConfig,
 		McpRefs:            mcpRefs,
+		ProviderRef:        providerRef,
 		HasCustomEnv:       envKeyCount > 0,
 		CustomEnvKeyCount:  envKeyCount,
 		Visibility:         a.Visibility,
@@ -789,6 +800,7 @@ type UpdateAgentRequest struct {
 	CustomArgs         *[]string        `json:"custom_args"`
 	McpConfig          *json.RawMessage `json:"mcp_config"`
 	McpRefs            *json.RawMessage `json:"mcp_refs"`
+	ProviderRef        *json.RawMessage `json:"provider_ref"`
 	Visibility         *string          `json:"visibility"`
 	Status             *string          `json:"status"`
 	MaxConcurrentTasks *int32           `json:"max_concurrent_tasks"`
@@ -962,6 +974,17 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// Absent field leaves it untouched (COALESCE narg in UpdateAgent).
 	if rawMcpRefs, ok := rawFields["mcp_refs"]; ok && !bytes.Equal(bytes.TrimSpace(rawMcpRefs), []byte("null")) {
 		params.McpRefs = append([]byte(nil), rawMcpRefs...)
+	}
+
+	// Forge prometheus (N2): provider_ref is a single optional non-secret
+	// reference. Unlike mcp_refs, an explicit JSON `null` is the clear signal,
+	// not "no change": the column is nullable JSONB and the resolver treats a
+	// `null` value as "no provider_ref", so writing the literal `null` bytes
+	// here both clears the binding and round-trips through COALESCE (which only
+	// skips a Go-nil slice, not the 4-byte `null` value). A present object
+	// replaces it; an absent field leaves the column untouched.
+	if rawProviderRef, ok := rawFields["provider_ref"]; ok {
+		params.ProviderRef = append([]byte(nil), rawProviderRef...)
 	}
 
 	// Resolve the runtime that will be in force after this update so the

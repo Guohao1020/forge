@@ -118,7 +118,10 @@ type Handler struct {
 	// the catalog API returns 503 and the claim hook leaves mcp_config as the
 	// agent's inline value, so deployments without Nacos are unaffected.
 	Nacos nacos.NacosQuerier
-	cfg   Config
+	// Providers backs the Forge LLM-provider catalog (/api/llm-providers/*) and
+	// the dispatch-time provider_ref resolver. nil when NACOS_SERVER_ADDR unset.
+	Providers nacos.ProviderQuerier
+	cfg       Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {

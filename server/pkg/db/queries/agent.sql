@@ -47,6 +47,7 @@ UPDATE agent SET
     custom_args = COALESCE(sqlc.narg('custom_args'), custom_args),
     mcp_config = COALESCE(sqlc.narg('mcp_config'), mcp_config),
     mcp_refs = COALESCE(sqlc.narg('mcp_refs'), mcp_refs),
+    provider_ref = COALESCE(sqlc.narg('provider_ref'), provider_ref),
     model = COALESCE(sqlc.narg('model'), model),
     thinking_level = COALESCE(sqlc.narg('thinking_level'), thinking_level),
     updated_at = now()

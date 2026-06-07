@@ -6,10 +6,12 @@ import {
   DuplicateIssueErrorBodySchema,
   EMPTY_FORGE_HEALTH,
   EMPTY_MCP_LIST,
+  EMPTY_PROVIDER_LIST,
   EMPTY_USER,
   ForgeHealthSchema,
   ListIssuesResponseSchema,
   MCPServerListSchema,
+  ProviderListSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByHourListSchema,
@@ -377,5 +379,66 @@ describe("MCPServerListSchema (iris N1 catalog — highest-drift surface)", () =
       endpoint: "test",
     });
     expect(parsed).toBe(EMPTY_MCP_LIST);
+  });
+});
+
+describe("ProviderListSchema (prometheus N2 catalog — highest-drift surface)", () => {
+  const wellFormed = {
+    providers: [
+      {
+        name: "claude-router",
+        version: "1.0.0",
+        protocol: "anthropic",
+        base_url: "http://localhost:0",
+        auth_key: "ANTHROPIC_AUTH_TOKEN",
+        models: [{ id: "claude-opus", label: "Opus", default: true }],
+        lifecycle: "published",
+      },
+    ],
+  };
+
+  it("parses a well-formed provider list", () => {
+    const parsed = parseWithFallback(wellFormed, ProviderListSchema, EMPTY_PROVIDER_LIST, {
+      endpoint: "test",
+    });
+    expect(parsed.providers).toHaveLength(1);
+    expect(parsed.providers[0]?.name).toBe("claude-router");
+    expect(parsed.providers[0]?.models?.[0]?.id).toBe("claude-opus");
+  });
+
+  it("keeps an unknown protocol value (enum drift downgrades, never crashes)", () => {
+    const drifted = { providers: [{ ...wellFormed.providers[0], protocol: "openai-router" }] };
+    const parsed = parseWithFallback(drifted, ProviderListSchema, EMPTY_PROVIDER_LIST, {
+      endpoint: "test",
+    });
+    expect(parsed.providers[0]?.protocol).toBe("openai-router");
+  });
+
+  it("forwards unknown provider fields via .loose()", () => {
+    const extra = { providers: [{ ...wellFormed.providers[0], future_field: 42 }] };
+    expect(ProviderListSchema.safeParse(extra).success).toBe(true);
+  });
+
+  it("degrades to EMPTY_PROVIDER_LIST when providers is the wrong type", () => {
+    const bad = { providers: "not-an-array" };
+    const parsed = parseWithFallback(bad, ProviderListSchema, EMPTY_PROVIDER_LIST, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_PROVIDER_LIST);
+    expect(parsed.providers).toEqual([]);
+  });
+
+  it("degrades to EMPTY_PROVIDER_LIST when providers is null", () => {
+    const parsed = parseWithFallback({ providers: null }, ProviderListSchema, EMPTY_PROVIDER_LIST, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_PROVIDER_LIST);
+  });
+
+  it("degrades to EMPTY_PROVIDER_LIST when the body is missing the providers field", () => {
+    const parsed = parseWithFallback({}, ProviderListSchema, EMPTY_PROVIDER_LIST, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_PROVIDER_LIST);
   });
 });

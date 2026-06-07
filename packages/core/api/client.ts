@@ -51,6 +51,8 @@ import type {
   ForgeFixPRRef,
   MCPServerShape,
   MCPServerList,
+  ProviderShape,
+  ProviderList,
   PersonalAccessToken,
   CreatePersonalAccessTokenRequest,
   CreatePersonalAccessTokenResponse,
@@ -204,6 +206,9 @@ import {
   ForgeFixPRRefListSchema,
   MCPServerListSchema,
   EMPTY_MCP_LIST,
+  ProviderListSchema,
+  ProviderShapeSchema,
+  EMPTY_PROVIDER_LIST,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -1678,6 +1683,32 @@ export class ApiClient {
       `/api/mcp-registry/servers/${encodeURIComponent(name)}/lifecycle${q}`,
       { method: "PUT", body: JSON.stringify({ version, lifecycle }) },
     );
+  }
+
+  // Forge prometheus (N2): LLM provider catalog (Nacos config center). Same
+  // pattern as the MCP catalog methods above — list/get cross an external
+  // system, so they run through parseWithFallback and degrade to an empty list
+  // / offline shell instead of throwing. The workspace rides the standard
+  // X-Workspace-ID header, so these take no wsId argument.
+  async listProviders(): Promise<ProviderList> {
+    const raw = await this.fetch<unknown>("/api/llm-providers");
+    return parseWithFallback(raw, ProviderListSchema, EMPTY_PROVIDER_LIST, { endpoint: "GET /api/llm-providers" });
+  }
+
+  async getProvider(name: string, namespace?: string, ref?: string): Promise<ProviderShape> {
+    const q = new URLSearchParams(); if (namespace) q.set("namespace", namespace); if (ref) q.set("ref", ref);
+    const qs = q.toString() ? `?${q.toString()}` : "";
+    const raw = await this.fetch<unknown>(`/api/llm-providers/${encodeURIComponent(name)}${qs}`);
+    return parseWithFallback(raw, ProviderShapeSchema, { name, version: "", protocol: "", base_url: "", auth_key: "", lifecycle: "offline" }, { endpoint: "GET /api/llm-providers/{name}" });
+  }
+
+  async registerProvider(provider: ProviderShape, namespace?: string): Promise<void> {
+    await this.fetch("/api/llm-providers", { method: "POST", body: JSON.stringify({ namespace, provider }) });
+  }
+
+  async setProviderLifecycle(name: string, version: string, lifecycle: string, namespace?: string): Promise<void> {
+    const q = namespace ? `?namespace=${encodeURIComponent(namespace)}` : "";
+    await this.fetch(`/api/llm-providers/${encodeURIComponent(name)}/lifecycle${q}`, { method: "PUT", body: JSON.stringify({ version, lifecycle }) });
   }
 
   async importSkill(data: { url: string }): Promise<Skill> {
